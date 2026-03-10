@@ -28,3 +28,6 @@ nul
 
 # Artemis data
 .artemis/
+
+# Project knowledge base (local only)
+AGENTS.md
