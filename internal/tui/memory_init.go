@@ -4,10 +4,18 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
+	"github.com/artemis-project/artemis/internal/agent"
+	"github.com/artemis-project/artemis/internal/agent/roles"
+	"github.com/artemis-project/artemis/internal/bus"
 	ghub "github.com/artemis-project/artemis/internal/github"
+	"github.com/artemis-project/artemis/internal/llm"
 	"github.com/artemis-project/artemis/internal/memory"
+	"github.com/artemis-project/artemis/internal/orchestrator"
+	"github.com/artemis-project/artemis/internal/state"
+	"github.com/artemis-project/artemis/internal/tools"
 )
 
 // initMemory initializes the persistent memory store if enabled in config.
@@ -89,8 +97,115 @@ func (a *App) initMemory() {
 			a.chat.AddMessage(ChatMessage{Role: RoleSystem, Content: msg})
 		}
 
+		// Create WorktreeManager + FixEngine
+		cwd, _ := os.Getwd()
+		wtManager := ghub.NewWorktreeManager(cwd)
+
+		var fixEngine ghub.FixEngine
+		if a.cfg.Agents.Enabled {
+			afe := ghub.NewAgentFixEngine(
+				&a.cfg,
+				a.eventBus,
+				wtManager,
+				logger,
+			)
+
+			afe.SetRunner(func(ctx context.Context, req ghub.FixRequest, wtPath string) (string, error) {
+				toolExec := tools.NewToolExecutor(wtPath)
+
+				buildProvider := func(role string) llm.Provider {
+					primaryName := a.cfg.ProviderForRole(role)
+					var primary llm.Provider
+					if a.hasAPIKey(primaryName) {
+						primary = llm.NewRetryProvider(llm.NewProvider(primaryName, &a.cfg), 2)
+					}
+
+					fbName := a.cfg.FallbackProviderForRole(role)
+					var fallback llm.Provider
+					if fbName != "" && fbName != primaryName && a.hasAPIKey(fbName) {
+						fallback = llm.NewRetryProvider(llm.NewProvider(fbName, &a.cfg), 2)
+					}
+
+					if primary == nil && fallback == nil {
+						return nil
+					}
+					if fallback == nil {
+						return primary
+					}
+					return llm.NewFallbackProvider(primary, fallback)
+				}
+
+				issuePrompt := fmt.Sprintf(`Fix GitHub issue #%d in repository %s/%s.
+
+**Issue Title**: %s
+
+**Issue Description**:
+%s
+
+Analyze the issue, find the relevant code, implement the fix, and verify it works.
+The codebase is available via your tools (read_file, grep, list_dir, etc.).`, req.IssueNumber, req.Owner, req.Repo, req.Title, req.Body)
+
+				orchProvider := buildProvider("orchestrator")
+				if orchProvider == nil {
+					return "", fmt.Errorf("no orchestrator provider available")
+				}
+
+				resp, err := orchProvider.Send(ctx, []llm.Message{
+					{Role: "system", Content: roles.OrchestratorPrompt},
+					{Role: "user", Content: issuePrompt},
+				})
+				if err != nil {
+					return "", fmt.Errorf("orchestrator LLM call: %w", err)
+				}
+
+				plan, err := orchestrator.ParsePlan(resp)
+				if err != nil {
+					return "", fmt.Errorf("parse plan: %w", err)
+				}
+
+				ss := state.NewSessionState()
+				ss.AddArtifact(state.Artifact{Type: state.ArtifactUserRequest, Source: "github-issue", Content: issuePrompt})
+				ss.AddArtifact(state.Artifact{Type: state.ArtifactOrchestratorPlan, Source: "orchestrator", Content: plan.Reasoning})
+
+				eb := bus.NewEventBus(64)
+				buildAgent := func(role string) agent.Agent {
+					provider := buildProvider(role)
+					if provider == nil {
+						eb.Emit(bus.NewEvent(bus.EventAgentFail, role, "fix", "skipped: no API key"))
+						return nil
+					}
+					ag := roles.NewRoleAgent(agent.Role(role), provider, eb, toolExec)
+					if a.memStore != nil {
+						ag.SetMemory(a.memStore)
+					}
+					if a.repoMapStore != nil {
+						ag.SetRepoMap(a.repoMapStore)
+					}
+					ag.SetMaxToolIter(a.cfg.MaxToolIter)
+					return ag
+				}
+
+				result := orchestrator.NewEngine(nil, eb).RunPlan(ctx, plan, ss, buildAgent)
+				eb.Close()
+				if !result.Completed {
+					return "", fmt.Errorf("plan execution failed: %v", result.HaltError)
+				}
+
+				var parts []string
+				for _, art := range ss.GetByType(state.ArtifactAnalysis) {
+					parts = append(parts, art.Content)
+				}
+				if len(parts) == 0 {
+					return strings.TrimSpace(plan.Reasoning), nil
+				}
+				return strings.Join(parts, "\n\n"), nil
+			})
+
+			fixEngine = afe
+		}
+
 		a.ghSyncer = ghub.NewSyncer(a.cfg.GitHub, store, logger)
-		a.ghProcessor = ghub.NewProcessor(a.cfg.GitHub, store, logger)
+		a.ghProcessor = ghub.NewProcessor(a.cfg.GitHub, store, logger, fixEngine)
 
 		a.ghSyncer.Start(context.Background())
 

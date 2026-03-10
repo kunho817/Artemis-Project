@@ -147,8 +147,7 @@ func (a App) cmdFixIssue(numStr string) (tea.Model, tea.Cmd) {
 
 	processor := a.ghProcessor
 	cmd := func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-		defer cancel()
+		ctx := context.Background()
 		return fixIssueResultMsg{issueNumber: issueNumber, err: processor.FixIssue(ctx, issueNumber)}
 	}
 	return a, cmd
