@@ -6,7 +6,6 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/bubbles/textinput"
-	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
@@ -15,24 +14,34 @@ import (
 )
 
 const (
-	tabAgents  = 4 // 5th tab index (after 4 providers)
-	tabSystem  = 5 // 6th tab: memory + tool settings
-	tabCount   = 6
+	tabAgents = 4 // 5th tab index (after 4 providers)
+	tabSystem = 5 // 6th tab: system settings sub-tabs
+	tabCount  = 6
 )
+
+const (
+	sysSubMemory     = 0
+	sysSubTools      = 1
+	sysSubVector     = 2
+	sysSubRepoMap    = 3
+	sysSubGitHub     = 4
+	sysSubAppearance = 5
+	sysSubCount      = 6
+)
+
+var sysSubLabels = []string{"Memory", "Tools", "Vector", "RepoMap", "GitHub", "Appearance"}
 
 // ConfigView is the settings screen for API and agent configuration.
 type ConfigView struct {
-	cfg          config.Config
-	tabIdx       int // 0-3 = providers, 4 = agents
-	fieldIdx     int // field within current tab
-	inputs       []textinput.Model
-	width        int
-	height       int
-	saved        bool
-	statusMsg    string
-	sysViewport  viewport.Model // scrollable viewport for System tab
-	sysVpReady   bool
-	sysFieldLines []int           // dynamically computed line offsets per field
+	cfg       config.Config
+	tabIdx    int // 0-3 = providers, 4 = agents
+	fieldIdx  int // field within current tab
+	inputs    []textinput.Model
+	width     int
+	height    int
+	saved     bool
+	statusMsg string
+	sysSubTab int
 }
 
 // tab labels: 4 providers + Agents + System
@@ -53,7 +62,22 @@ func (cv *ConfigView) fieldCountForTab() int {
 	case tabAgents:
 		return 2 // Agents toggle, Tier toggle
 	case tabSystem:
-		return 11 // Memory(2 toggles) + Facts(2 numbers) + Tools(1 number) + Vector(1 toggle + 2 inputs) + RepoMap(1 toggle + 1 number) + Appearance(1 cycle)
+		switch cv.sysSubTab {
+		case sysSubMemory:
+			return 4
+		case sysSubTools:
+			return 1
+		case sysSubVector:
+			return 3
+		case sysSubRepoMap:
+			return 2
+		case sysSubGitHub:
+			return 8
+		case sysSubAppearance:
+			return 1
+		default:
+			return 4
+		}
 	default:
 		return 3 // API Key, Endpoint, Model
 	}
@@ -71,23 +95,53 @@ func (cv *ConfigView) isOnSystemTab() bool {
 
 // systemFieldToInputIdx maps System tab fieldIdx to text input array index.
 // Returns -1 for toggle fields (no text input).
-// Layout: 0,1=toggles 2,3,4=inputs[0..2] 5=toggle 6,7=inputs[3..4] 8=toggle 9=inputs[5] 10=cycle
 func (cv *ConfigView) systemFieldToInputIdx(fieldIdx int) int {
-	switch fieldIdx {
-	case 2:
-		return 0
-	case 3:
-		return 1
-	case 4:
-		return 2
-	case 6:
-		return 3
-	case 7:
-		return 4
-	case 9:
-		return 5
+	switch cv.sysSubTab {
+	case sysSubMemory:
+		switch fieldIdx {
+		case 2:
+			return 0
+		case 3:
+			return 1
+		default:
+			return -1
+		}
+	case sysSubTools:
+		if fieldIdx == 0 {
+			return 0
+		}
+		return -1
+	case sysSubVector:
+		switch fieldIdx {
+		case 1:
+			return 0
+		case 2:
+			return 1
+		default:
+			return -1
+		}
+	case sysSubRepoMap:
+		if fieldIdx == 1 {
+			return 0
+		}
+		return -1
+	case sysSubGitHub:
+		switch fieldIdx {
+		case 1:
+			return 0
+		case 2:
+			return 1
+		case 3:
+			return 2
+		case 4:
+			return 3
+		case 7:
+			return 4
+		default:
+			return -1
+		}
 	default:
-		return -1 // toggle fields
+		return -1
 	}
 }
 
@@ -157,8 +211,7 @@ func (cv *ConfigView) buildInputs() {
 	cv.focusField()
 }
 
-
-	func (cv *ConfigView) focusField() {
+func (cv *ConfigView) focusField() {
 	for i := range cv.inputs {
 		cv.inputs[i].Blur()
 	}
@@ -243,16 +296,35 @@ func (cv *ConfigView) toggleAgentField() {
 
 // toggleSystemField handles Enter on system toggle fields.
 func (cv *ConfigView) toggleSystemField() {
-	switch cv.fieldIdx {
-	case 0: // Memory enabled
-		cv.cfg.Memory.Enabled = !cv.cfg.Memory.Enabled
-	case 1: // Consolidate on exit
-		cv.cfg.Memory.ConsolidateOnExit = !cv.cfg.Memory.ConsolidateOnExit
-	case 5: // Vector enabled
-		cv.cfg.Vector.Enabled = !cv.cfg.Vector.Enabled
-	case 8: // RepoMap enabled
-		cv.cfg.RepoMap.Enabled = !cv.cfg.RepoMap.Enabled
-	case 10: // Theme cycle
+	switch cv.sysSubTab {
+	case sysSubMemory:
+		switch cv.fieldIdx {
+		case 0:
+			cv.cfg.Memory.Enabled = !cv.cfg.Memory.Enabled
+		case 1:
+			cv.cfg.Memory.ConsolidateOnExit = !cv.cfg.Memory.ConsolidateOnExit
+		}
+	case sysSubVector:
+		if cv.fieldIdx == 0 {
+			cv.cfg.Vector.Enabled = !cv.cfg.Vector.Enabled
+		}
+	case sysSubRepoMap:
+		if cv.fieldIdx == 0 {
+			cv.cfg.RepoMap.Enabled = !cv.cfg.RepoMap.Enabled
+		}
+	case sysSubGitHub:
+		switch cv.fieldIdx {
+		case 0:
+			cv.cfg.GitHub.Enabled = !cv.cfg.GitHub.Enabled
+		case 5:
+			cv.cfg.GitHub.AutoTriage = !cv.cfg.GitHub.AutoTriage
+		case 6:
+			cv.cfg.GitHub.AutoFix = !cv.cfg.GitHub.AutoFix
+		}
+	case sysSubAppearance:
+		if cv.fieldIdx != 0 {
+			return
+		}
 		themes := theme.AvailableThemes()
 		if len(themes) == 0 {
 			return
@@ -272,6 +344,47 @@ func (cv *ConfigView) toggleSystemField() {
 	}
 }
 
+func (cv *ConfigView) isSystemToggleField() bool {
+	if !cv.isOnSystemTab() {
+		return false
+	}
+
+	switch cv.sysSubTab {
+	case sysSubMemory:
+		return cv.fieldIdx == 0 || cv.fieldIdx == 1
+	case sysSubTools:
+		return false
+	case sysSubVector:
+		return cv.fieldIdx == 0
+	case sysSubRepoMap:
+		return cv.fieldIdx == 0
+	case sysSubGitHub:
+		return cv.fieldIdx == 0 || cv.fieldIdx == 5 || cv.fieldIdx == 6
+	case sysSubAppearance:
+		return cv.fieldIdx == 0
+	default:
+		return false
+	}
+}
+
+// canSwitchSubTab returns true if ←/→ should switch sub-tabs rather than
+// move cursor in a text input. True on toggle/cycle fields or sub-tabs with
+// no toggle fields at all (e.g. Tools).
+func (cv *ConfigView) canSwitchSubTab() bool {
+	if !cv.isOnSystemTab() {
+		return false
+	}
+	if cv.isSystemToggleField() {
+		return true
+	}
+	// Sub-tabs with no toggles: always allow sub-tab switch
+	switch cv.sysSubTab {
+	case sysSubTools:
+		return true
+	}
+	return false
+}
+
 // SetSize updates dimensions.
 func (cv *ConfigView) SetSize(w, h int) {
 	cv.width = w
@@ -283,42 +396,6 @@ func (cv *ConfigView) SetSize(w, h int) {
 	for i := range cv.inputs {
 		cv.inputs[i].Width = inputWidth
 	}
-	// Size viewport for System tab: content area = height minus title/tabs/divider/help (~10 lines)
-	vpHeight := h - 10
-	if vpHeight < 4 {
-		vpHeight = 4
-	}
-	cv.sysViewport.Width = w - 4
-	cv.sysViewport.Height = vpHeight
-	cv.sysVpReady = true
-}
-
-// refreshSystemViewport renders System tab content into the viewport.
-func (cv *ConfigView) refreshSystemViewport() {
-	if !cv.sysVpReady {
-		return
-	}
-	var sb strings.Builder
-	cv.renderSystemContent(&sb)
-	cv.sysViewport.SetContent(sb.String())
-}
-
-// scrollToField auto-scrolls the System tab viewport to keep the focused field visible.
-func (cv *ConfigView) scrollToField() {
-	if !cv.isOnSystemTab() || !cv.sysVpReady {
-		return
-	}
-	if cv.fieldIdx >= len(cv.sysFieldLines) {
-		return
-	}
-	target := cv.sysFieldLines[cv.fieldIdx]
-	// Ensure target line is visible — scroll so it's roughly in top third
-	topThird := cv.sysViewport.Height / 3
-	desired := target - topThird
-	if desired < 0 {
-		desired = 0
-	}
-	cv.sysViewport.SetYOffset(desired)
 }
 
 // Update handles input for the config view.
@@ -339,7 +416,6 @@ func (cv *ConfigView) Update(msg tea.Msg) (bool, tea.Cmd) {
 			cv.applyInputsToConfig()
 			cv.fieldIdx = (cv.fieldIdx + 1) % cv.fieldCountForTab()
 			cv.focusField()
-			cv.scrollToField()
 			return false, nil
 
 		case "shift+tab", "up":
@@ -349,17 +425,32 @@ func (cv *ConfigView) Update(msg tea.Msg) (bool, tea.Cmd) {
 				cv.fieldIdx = cv.fieldCountForTab() - 1
 			}
 			cv.focusField()
-			cv.scrollToField()
 			return false, nil
+
+		case "left", "right":
+			if cv.isOnSystemTab() && cv.canSwitchSubTab() {
+				cv.applyInputsToConfig()
+				if msg.String() == "left" {
+					cv.sysSubTab--
+					if cv.sysSubTab < 0 {
+						cv.sysSubTab = sysSubCount - 1
+					}
+				} else {
+					cv.sysSubTab = (cv.sysSubTab + 1) % sysSubCount
+				}
+				cv.fieldIdx = 0
+				cv.buildInputs()
+				cv.SetSize(cv.width, cv.height)
+				return false, nil
+			}
 
 		case "enter":
 			if cv.isOnAgentsTab() {
 				cv.toggleAgentField()
 				return false, nil
 			}
-			if cv.isOnSystemTab() && (cv.fieldIdx < 2 || cv.fieldIdx == 5 || cv.fieldIdx == 8 || cv.fieldIdx == 10) {
+			if cv.isOnSystemTab() && cv.isSystemToggleField() {
 				cv.toggleSystemField()
-				cv.refreshSystemViewport()
 				return false, nil
 			}
 
@@ -381,23 +472,6 @@ func (cv *ConfigView) Update(msg tea.Msg) (bool, tea.Cmd) {
 			cv.buildInputs()
 			cv.SetSize(cv.width, cv.height)
 			return false, nil
-		}
-	}
-
-	// Forward mouse wheel and PgUp/PgDn to viewport on System tab
-	if cv.isOnSystemTab() && cv.sysVpReady {
-		switch msg := msg.(type) {
-		case tea.MouseMsg:
-			var cmd tea.Cmd
-			cv.sysViewport, cmd = cv.sysViewport.Update(msg)
-			return false, cmd
-		case tea.KeyMsg:
-			switch msg.String() {
-			case "pgup", "pgdown":
-				var cmd tea.Cmd
-				cv.sysViewport, cmd = cv.sysViewport.Update(msg)
-				return false, cmd
-			}
 		}
 	}
 
@@ -448,8 +522,9 @@ func (cv *ConfigView) View() string {
 	if cv.isOnAgentsTab() {
 		cv.renderAgentsContent(&sb)
 	} else if cv.isOnSystemTab() {
-		cv.refreshSystemViewport()
-		sb.WriteString(cv.sysViewport.View())
+		sb.WriteString(cv.renderSubTabs())
+		sb.WriteString("\n")
+		cv.renderSystemContent(&sb)
 	} else {
 		cv.renderProviderContent(&sb)
 	}
@@ -461,10 +536,10 @@ func (cv *ConfigView) View() string {
 	// Help
 	helpText := "[Tab/↑↓] Navigate  [Ctrl+←→] Switch tab  [Ctrl+S/Esc] Save & exit"
 	if cv.isOnSystemTab() {
-		if cv.fieldIdx < 2 || cv.fieldIdx == 5 || cv.fieldIdx == 8 || cv.fieldIdx == 10 {
-			helpText = "[Tab/↑↓] Navigate  [Enter] Toggle  [PgUp/PgDn] Scroll  [Ctrl+←→] Tab  [Ctrl+S/Esc] Save"
+		if cv.canSwitchSubTab() {
+			helpText = "[Tab/↑↓] Navigate  [←→] Sub-tab  [Enter] Toggle  [Ctrl+←→] Tab  [Ctrl+S/Esc] Save"
 		} else {
-			helpText = "[Tab/↑↓] Navigate  [PgUp/PgDn] Scroll  [Ctrl+←→] Switch tab  [Ctrl+S/Esc] Save & exit"
+			helpText = "[Tab/↑↓] Navigate  [←→] Sub-tab (on toggles)  [Ctrl+←→] Tab  [Ctrl+S/Esc] Save"
 		}
 	} else if cv.isOnAgentsTab() {
 		helpText = "[Tab/↑↓] Navigate  [Enter] Toggle  [Ctrl+←→] Switch tab  [Ctrl+S/Esc] Save & exit"
@@ -487,8 +562,6 @@ func (cv *ConfigView) renderTabs() string {
 				if provName == "glm" {
 					suffix = " (Coding Plan)"
 				}
-			} else if i == tabSystem {
-				suffix = " (Memory, Tools & Repo Map)"
 			}
 			tab := lipgloss.NewStyle().
 				Bold(true).
@@ -510,7 +583,7 @@ func (cv *ConfigView) renderTabs() string {
 					style = style.Foreground(ColorAccent)
 				}
 			} else if i == tabSystem {
-				if cv.cfg.Memory.Enabled || cv.cfg.Vector.Enabled || cv.cfg.RepoMap.Enabled {
+				if cv.cfg.Memory.Enabled || cv.cfg.Vector.Enabled || cv.cfg.RepoMap.Enabled || cv.cfg.GitHub.Enabled {
 					style = style.Foreground(ColorAccent)
 				}
 			}
@@ -655,49 +728,118 @@ func (cv *ConfigView) styledProviderName(name string) string {
 	return style.Render(name)
 }
 
-// --- System tab (Memory + Tool settings) ---
+func (cv *ConfigView) renderSubTabs() string {
+	parts := make([]string, 0, len(sysSubLabels))
+	for i, label := range sysSubLabels {
+		if i == cv.sysSubTab {
+			parts = append(parts, lipgloss.NewStyle().Bold(true).Foreground(ColorAccent).Render(label))
+			continue
+		}
+
+		style := lipgloss.NewStyle().Foreground(ColorDimText)
+		switch i {
+		case sysSubMemory:
+			if cv.cfg.Memory.Enabled {
+				style = style.Foreground(ColorSuccess)
+			}
+		case sysSubVector:
+			if cv.cfg.Vector.Enabled {
+				style = style.Foreground(ColorSuccess)
+			}
+		case sysSubRepoMap:
+			if cv.cfg.RepoMap.Enabled {
+				style = style.Foreground(ColorSuccess)
+			}
+		case sysSubGitHub:
+			if cv.cfg.GitHub.Enabled {
+				style = style.Foreground(ColorSuccess)
+			}
+		}
+		parts = append(parts, style.Render(label))
+	}
+
+	row := "  " + strings.Join(parts, lipgloss.NewStyle().Foreground(ColorDimText).Render(" │ "))
+	line := "  " + DividerStyle.Render(strings.Repeat("─", 42))
+	return row + "\n" + line
+}
+
+// --- System tab (sub-tabs) ---
 
 // buildSystemInputs creates text inputs for the System tab.
 func (cv *ConfigView) buildSystemInputs() {
-	// 6 text inputs: Max Fact Age, Min Fact Use, Max Tool Iter, Voyage API Key, Voyage Model, RepoMap Max Tokens
-	cv.inputs = make([]textinput.Model, 6)
+	switch cv.sysSubTab {
+	case sysSubMemory:
+		cv.inputs = make([]textinput.Model, 2)
+		cv.inputs[0] = textinput.New()
+		cv.inputs[0].Placeholder = "Days (0 = never prune)"
+		cv.inputs[0].SetValue(strconv.Itoa(cv.cfg.Memory.MaxFactAge))
+		cv.inputs[0].CharLimit = 6
 
-	// Max Fact Age (days) -> inputs[0]
-	cv.inputs[0] = textinput.New()
-	cv.inputs[0].Placeholder = "Days (0 = never prune)"
-	cv.inputs[0].SetValue(strconv.Itoa(cv.cfg.Memory.MaxFactAge))
-	cv.inputs[0].CharLimit = 6
+		cv.inputs[1] = textinput.New()
+		cv.inputs[1].Placeholder = "Minimum use count"
+		cv.inputs[1].SetValue(strconv.Itoa(cv.cfg.Memory.MinFactUseCount))
+		cv.inputs[1].CharLimit = 4
 
-	// Min Fact Use Count -> inputs[1]
-	cv.inputs[1] = textinput.New()
-	cv.inputs[1].Placeholder = "Minimum use count"
-	cv.inputs[1].SetValue(strconv.Itoa(cv.cfg.Memory.MinFactUseCount))
-	cv.inputs[1].CharLimit = 4
+	case sysSubTools:
+		cv.inputs = make([]textinput.Model, 1)
+		cv.inputs[0] = textinput.New()
+		cv.inputs[0].Placeholder = "0 = unlimited"
+		cv.inputs[0].SetValue(strconv.Itoa(cv.cfg.MaxToolIter))
+		cv.inputs[0].CharLimit = 6
 
-	// Max Tool Iterations -> inputs[2]
-	cv.inputs[2] = textinput.New()
-	cv.inputs[2].Placeholder = "0 = unlimited"
-	cv.inputs[2].SetValue(strconv.Itoa(cv.cfg.MaxToolIter))
-	cv.inputs[2].CharLimit = 6
+	case sysSubVector:
+		cv.inputs = make([]textinput.Model, 2)
+		cv.inputs[0] = textinput.New()
+		cv.inputs[0].Placeholder = "pa-..."
+		cv.inputs[0].SetValue(cv.cfg.Vector.APIKey)
+		cv.inputs[0].CharLimit = 128
+		cv.inputs[0].EchoMode = textinput.EchoPassword
+		cv.inputs[0].EchoCharacter = '•'
 
-	// Voyage API Key -> inputs[3]
-	cv.inputs[3] = textinput.New()
-	cv.inputs[3].Placeholder = "pa-..."
-	cv.inputs[3].SetValue(cv.cfg.Vector.APIKey)
-	cv.inputs[3].CharLimit = 128
-	cv.inputs[3].EchoMode = textinput.EchoPassword
+		cv.inputs[1] = textinput.New()
+		cv.inputs[1].Placeholder = "voyage-code-3"
+		cv.inputs[1].SetValue(cv.cfg.Vector.Model)
+		cv.inputs[1].CharLimit = 64
 
-	// Voyage Model -> inputs[4]
-	cv.inputs[4] = textinput.New()
-	cv.inputs[4].Placeholder = "voyage-code-3"
-	cv.inputs[4].SetValue(cv.cfg.Vector.Model)
-	cv.inputs[4].CharLimit = 64
+	case sysSubRepoMap:
+		cv.inputs = make([]textinput.Model, 1)
+		cv.inputs[0] = textinput.New()
+		cv.inputs[0].Placeholder = "2048"
+		cv.inputs[0].SetValue(strconv.Itoa(cv.cfg.RepoMap.MaxTokens))
+		cv.inputs[0].CharLimit = 6
 
-	// RepoMap Max Tokens -> inputs[5]
-	cv.inputs[5] = textinput.New()
-	cv.inputs[5].Placeholder = "2048"
-	cv.inputs[5].SetValue(strconv.Itoa(cv.cfg.RepoMap.MaxTokens))
-	cv.inputs[5].CharLimit = 6
+	case sysSubGitHub:
+		cv.inputs = make([]textinput.Model, 5)
+		cv.inputs[0] = textinput.New()
+		cv.inputs[0].Placeholder = "ghp_..."
+		cv.inputs[0].SetValue(cv.cfg.GitHub.Token)
+		cv.inputs[0].CharLimit = 256
+		cv.inputs[0].EchoMode = textinput.EchoPassword
+		cv.inputs[0].EchoCharacter = '•'
+
+		cv.inputs[1] = textinput.New()
+		cv.inputs[1].Placeholder = "username or org"
+		cv.inputs[1].SetValue(cv.cfg.GitHub.Owner)
+		cv.inputs[1].CharLimit = 64
+
+		cv.inputs[2] = textinput.New()
+		cv.inputs[2].Placeholder = "repository-name"
+		cv.inputs[2].SetValue(cv.cfg.GitHub.Repo)
+		cv.inputs[2].CharLimit = 128
+
+		cv.inputs[3] = textinput.New()
+		cv.inputs[3].Placeholder = "5"
+		cv.inputs[3].SetValue(strconv.Itoa(cv.cfg.GitHub.PollInterval))
+		cv.inputs[3].CharLimit = 4
+
+		cv.inputs[4] = textinput.New()
+		cv.inputs[4].Placeholder = "main"
+		cv.inputs[4].SetValue(cv.cfg.GitHub.BaseBranch)
+		cv.inputs[4].CharLimit = 64
+
+	default:
+		cv.inputs = nil
+	}
 
 	if cv.fieldIdx >= cv.fieldCountForTab() {
 		cv.fieldIdx = 0
@@ -707,153 +849,121 @@ func (cv *ConfigView) buildSystemInputs() {
 
 // applySystemInputs writes system tab values back to config.
 func (cv *ConfigView) applySystemInputs() {
-	if len(cv.inputs) < 6 {
-		return
-	}
-	if v, err := strconv.Atoi(strings.TrimSpace(cv.inputs[0].Value())); err == nil && v >= 0 {
-		cv.cfg.Memory.MaxFactAge = v
-	}
-	if v, err := strconv.Atoi(strings.TrimSpace(cv.inputs[1].Value())); err == nil && v >= 0 {
-		cv.cfg.Memory.MinFactUseCount = v
-	}
-	if v, err := strconv.Atoi(strings.TrimSpace(cv.inputs[2].Value())); err == nil && v >= 0 {
-		cv.cfg.MaxToolIter = v
-	}
-	cv.cfg.Vector.APIKey = strings.TrimSpace(cv.inputs[3].Value())
-	model := strings.TrimSpace(cv.inputs[4].Value())
-	if model != "" {
-		cv.cfg.Vector.Model = model
-	}
-	if v, err := strconv.Atoi(strings.TrimSpace(cv.inputs[5].Value())); err == nil && v >= 0 {
-		cv.cfg.RepoMap.MaxTokens = v
+	switch cv.sysSubTab {
+	case sysSubMemory:
+		if len(cv.inputs) < 2 {
+			return
+		}
+		if v, err := strconv.Atoi(strings.TrimSpace(cv.inputs[0].Value())); err == nil && v >= 0 {
+			cv.cfg.Memory.MaxFactAge = v
+		}
+		if v, err := strconv.Atoi(strings.TrimSpace(cv.inputs[1].Value())); err == nil && v >= 0 {
+			cv.cfg.Memory.MinFactUseCount = v
+		}
+
+	case sysSubTools:
+		if len(cv.inputs) < 1 {
+			return
+		}
+		if v, err := strconv.Atoi(strings.TrimSpace(cv.inputs[0].Value())); err == nil && v >= 0 {
+			cv.cfg.MaxToolIter = v
+		}
+
+	case sysSubVector:
+		if len(cv.inputs) < 2 {
+			return
+		}
+		cv.cfg.Vector.APIKey = strings.TrimSpace(cv.inputs[0].Value())
+		model := strings.TrimSpace(cv.inputs[1].Value())
+		if model != "" {
+			cv.cfg.Vector.Model = model
+		}
+
+	case sysSubRepoMap:
+		if len(cv.inputs) < 1 {
+			return
+		}
+		if v, err := strconv.Atoi(strings.TrimSpace(cv.inputs[0].Value())); err == nil && v >= 0 {
+			cv.cfg.RepoMap.MaxTokens = v
+		}
+
+	case sysSubGitHub:
+		if len(cv.inputs) < 5 {
+			return
+		}
+		cv.cfg.GitHub.Token = strings.TrimSpace(cv.inputs[0].Value())
+		cv.cfg.GitHub.Owner = strings.TrimSpace(cv.inputs[1].Value())
+		cv.cfg.GitHub.Repo = strings.TrimSpace(cv.inputs[2].Value())
+		if v, err := strconv.Atoi(strings.TrimSpace(cv.inputs[3].Value())); err == nil && v >= 0 {
+			cv.cfg.GitHub.PollInterval = v
+		}
+		base := strings.TrimSpace(cv.inputs[4].Value())
+		if base != "" {
+			cv.cfg.GitHub.BaseBranch = base
+		}
 	}
 }
 
-// renderSystemContent draws the System tab with Memory and Tool settings.
-// It also computes sysFieldLines for accurate viewport scrolling.
+// renderSystemContent draws the active System sub-tab.
 func (cv *ConfigView) renderSystemContent(sb *strings.Builder) {
-	line := 0
-	if cap(cv.sysFieldLines) < 11 {
-		cv.sysFieldLines = make([]int, 0, 11)
-	} else {
-		cv.sysFieldLines = cv.sysFieldLines[:0]
-	}
+	switch cv.sysSubTab {
+	case sysSubMemory:
+		cv.renderToggleField(sb, 0, "Memory", cv.cfg.Memory.Enabled, "Enabled", "Disabled")
+		cv.renderToggleField(sb, 1, "Consolidate", cv.cfg.Memory.ConsolidateOnExit, "On Exit", "Off")
+		cv.renderNumberField(sb, 2, "Fact Max Age", "days", 0)
+		cv.renderNumberField(sb, 3, "Fact Min Uses", "times", 1)
+		if cv.cfg.Memory.Enabled {
+			sb.WriteString(fmt.Sprintf("  %s %s\n",
+				lipgloss.NewStyle().Width(22).Align(lipgloss.Right).Padding(0, 1).
+					Foreground(ColorDimText).Render("DB Path:"),
+				lipgloss.NewStyle().Foreground(ColorMuted).Render(cv.cfg.MemoryDBPath()),
+			))
+		}
 
-	sb.WriteString(fmt.Sprintf("  %s\n\n",
-		SectionHeaderStyle.Render("Memory")))
-	line += 2
+	case sysSubTools:
+		cv.renderNumberField(sb, 0, "Max Iterations", "0=unlimited", 0)
 
-	// Memory Enabled toggle (fieldIdx 0)
-	cv.sysFieldLines = append(cv.sysFieldLines, line)
-	cv.renderToggleField(sb, 0, "Memory",
-		cv.cfg.Memory.Enabled, "Enabled", "Disabled")
-	line += 2
+	case sysSubVector:
+		cv.renderToggleField(sb, 0, "Vector Search", cv.cfg.Vector.Enabled, "Enabled", "Disabled")
+		cv.renderNumberField(sb, 1, "Voyage API Key", "", 0)
+		cv.renderNumberField(sb, 2, "Voyage Model", "", 1)
+		if cv.cfg.Vector.Enabled {
+			sb.WriteString(fmt.Sprintf("  %s %s\n",
+				lipgloss.NewStyle().Width(22).Align(lipgloss.Right).Padding(0, 1).
+					Foreground(ColorDimText).Render("Vec Path:"),
+				lipgloss.NewStyle().Foreground(ColorMuted).Render(cv.cfg.VectorStorePath()),
+			))
+		}
 
-	// Consolidate on Exit toggle (fieldIdx 1)
-	cv.sysFieldLines = append(cv.sysFieldLines, line)
-	cv.renderToggleField(sb, 1, "Consolidate",
-		cv.cfg.Memory.ConsolidateOnExit, "On Exit", "Off")
-	line += 2
+	case sysSubRepoMap:
+		cv.renderToggleField(sb, 0, "Repo Map", cv.cfg.RepoMap.Enabled, "Enabled", "Disabled")
+		cv.renderNumberField(sb, 1, "Max Tokens", "tokens", 0)
 
-	// Max Fact Age (fieldIdx 2 -> inputs[0])
-	cv.sysFieldLines = append(cv.sysFieldLines, line)
-	cv.renderNumberField(sb, 2, "Fact Max Age", "days", 0)
-	line += 2
+	case sysSubGitHub:
+		cv.renderToggleField(sb, 0, "GitHub", cv.cfg.GitHub.Enabled, "Enabled", "Disabled")
+		cv.renderNumberField(sb, 1, "Token", "", 0)
+		cv.renderNumberField(sb, 2, "Owner", "", 1)
+		cv.renderNumberField(sb, 3, "Repo", "", 2)
+		cv.renderNumberField(sb, 4, "Poll Interval", "minutes", 3)
+		cv.renderToggleField(sb, 5, "Auto Triage", cv.cfg.GitHub.AutoTriage, "Enabled", "Disabled")
+		cv.renderToggleField(sb, 6, "Auto Fix", cv.cfg.GitHub.AutoFix, "Enabled", "Disabled")
+		cv.renderNumberField(sb, 7, "Base Branch", "", 4)
 
-	// Min Fact Use Count (fieldIdx 3 -> inputs[1])
-	cv.sysFieldLines = append(cv.sysFieldLines, line)
-	cv.renderNumberField(sb, 3, "Fact Min Uses", "times", 1)
-	line += 2
-
-	// Divider before tool settings
-	sb.WriteString(fmt.Sprintf("\n  %s\n\n",
-		SectionHeaderStyle.Render("Tools")))
-	line += 3
-
-	// Max Tool Iterations (fieldIdx 4 -> inputs[2])
-	cv.sysFieldLines = append(cv.sysFieldLines, line)
-	cv.renderNumberField(sb, 4, "Max Iterations", "0=unlimited", 2)
-	line += 2
-
-	// Divider before vector settings
-	sb.WriteString(fmt.Sprintf("\n  %s\n\n",
-		SectionHeaderStyle.Render("Vector Search")))
-	line += 3
-
-	// Vector Enabled toggle (fieldIdx 5)
-	cv.sysFieldLines = append(cv.sysFieldLines, line)
-	cv.renderToggleField(sb, 5, "Vector Search",
-		cv.cfg.Vector.Enabled, "Enabled", "Disabled")
-	line += 2
-
-	// Voyage API Key (fieldIdx 6 -> inputs[3])
-	cv.sysFieldLines = append(cv.sysFieldLines, line)
-	cv.renderNumberField(sb, 6, "Voyage API Key", "", 3)
-	line += 2
-
-	// Voyage Model (fieldIdx 7 -> inputs[4])
-	cv.sysFieldLines = append(cv.sysFieldLines, line)
-	cv.renderNumberField(sb, 7, "Model", "", 4)
-	line += 2
-
-	// Divider before repo-map settings
-	sb.WriteString(fmt.Sprintf("\n  %s\n\n",
-		SectionHeaderStyle.Render("Repo Map")))
-	line += 3
-
-	// RepoMap Enabled toggle (fieldIdx 8)
-	cv.sysFieldLines = append(cv.sysFieldLines, line)
-	cv.renderToggleField(sb, 8, "Repo Map",
-		cv.cfg.RepoMap.Enabled, "Enabled", "Disabled")
-	line += 2
-
-	// RepoMap Max Tokens (fieldIdx 9 -> inputs[5])
-	cv.sysFieldLines = append(cv.sysFieldLines, line)
-	cv.renderNumberField(sb, 9, "Max Tokens", "tokens", 5)
-	line += 2
-
-	// Info display
-	if cv.cfg.Memory.Enabled {
-		dbPath := cv.cfg.MemoryDBPath()
-		sb.WriteString(fmt.Sprintf("\n  %s %s\n",
-			lipgloss.NewStyle().Width(22).Align(lipgloss.Right).Padding(0, 1).
-				Foreground(ColorDimText).Render("DB Path:"),
-			lipgloss.NewStyle().Foreground(ColorMuted).Render(dbPath),
-		))
-		line += 2
-	}
-	if cv.cfg.Vector.Enabled {
-		vecPath := cv.cfg.VectorStorePath()
-		sb.WriteString(fmt.Sprintf("  %s %s\n",
-			lipgloss.NewStyle().Width(22).Align(lipgloss.Right).Padding(0, 1).
-				Foreground(ColorDimText).Render("Vec Path:"),
-			lipgloss.NewStyle().Foreground(ColorMuted).Render(vecPath),
-		))
-		line += 1
-	}
-
-	// Divider before appearance settings
-	sb.WriteString(fmt.Sprintf("\n  %s\n\n",
-		SectionHeaderStyle.Render("Appearance")))
-	line += 3
-
-	// Theme cycle (fieldIdx 10)
-	cv.sysFieldLines = append(cv.sysFieldLines, line)
-	themeName := cv.cfg.Theme
-	if themeName == "" {
-		themeName = "default"
-	}
-	themeDisplay := lipgloss.NewStyle().Foreground(ColorAccent).Bold(true).Render(themeName)
-	cv.renderCustomToggle(sb, 10, "Theme", themeDisplay)
-
-	// Available themes hint
-	available := theme.AvailableThemes()
-	if len(available) > 0 {
-		hint := lipgloss.NewStyle().Foreground(ColorMuted).Render(
-			fmt.Sprintf("Available: %s", strings.Join(available, ", ")))
-		sb.WriteString(fmt.Sprintf("  %s %s\n",
-			lipgloss.NewStyle().Width(22).Render(""),
-			hint))
+	case sysSubAppearance:
+		themeName := cv.cfg.Theme
+		if themeName == "" {
+			themeName = "default"
+		}
+		themeDisplay := lipgloss.NewStyle().Foreground(ColorAccent).Bold(true).Render(themeName)
+		cv.renderCustomToggle(sb, 0, "Theme", themeDisplay)
+		available := theme.AvailableThemes()
+		if len(available) > 0 {
+			hint := lipgloss.NewStyle().Foreground(ColorMuted).Render(
+				fmt.Sprintf("Available: %s", strings.Join(available, ", ")))
+			sb.WriteString(fmt.Sprintf("  %s %s\n",
+				lipgloss.NewStyle().Width(22).Render(""),
+				hint))
+		}
 	}
 }
 
