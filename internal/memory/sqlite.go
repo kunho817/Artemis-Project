@@ -12,10 +12,11 @@ import (
 	"strings"
 	"time"
 
+	ghsync "github.com/artemis-project/artemis/internal/github"
 	_ "modernc.org/sqlite"
 )
 
-const currentSchemaVersion = 3
+const currentSchemaVersion = 4
 
 // SQLiteStore implements MemoryStore using pure-Go SQLite with FTS5.
 // Phase 2 adds optional VectorStore for hybrid search.
@@ -24,7 +25,7 @@ type SQLiteStore struct {
 	db           *sql.DB
 	dbPath       string
 	vectorStore  VectorSearcher // Phase 2: optional vector search
-	repoMapStore *RepoMapStore // Phase 3: optional repo-map indexing
+	repoMapStore *RepoMapStore  // Phase 3: optional repo-map indexing
 }
 
 // NewSQLiteStore opens (or creates) a SQLite memory database at the given path.
@@ -108,7 +109,6 @@ func (s *SQLiteStore) migrate() error {
 		}
 	}
 
-
 	if version < 2 {
 		if err := s.migrateV2(); err != nil {
 			return fmt.Errorf("v2: %w", err)
@@ -122,8 +122,15 @@ func (s *SQLiteStore) migrate() error {
 		}
 	}
 
+	// Phase 4: GitHub issue tracker tables
+	if version < 4 {
+		if err := s.migrateV4(); err != nil {
+			return fmt.Errorf("v4: %w", err)
+		}
+	}
+
 	// Future migrations go here:
-	// if version < 4 { s.migrateV4() }
+	// if version < 5 { s.migrateV5() }
 
 	return nil
 }
@@ -337,6 +344,72 @@ func (s *SQLiteStore) migrateV3() error {
 
 		// Record schema version
 		`INSERT INTO schema_version (version) VALUES (3)`,
+	}
+
+	for _, stmt := range statements {
+		if _, err := tx.Exec(stmt); err != nil {
+			return fmt.Errorf("exec %q: %w", stmt[:min(60, len(stmt))], err)
+		}
+	}
+
+	return tx.Commit()
+}
+
+// migrateV4 adds GitHub issue tracker tables and FTS5 index.
+func (s *SQLiteStore) migrateV4() error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	statements := []string{
+		`CREATE TABLE IF NOT EXISTS github_issues (
+			id              INTEGER PRIMARY KEY AUTOINCREMENT,
+			issue_number    INTEGER NOT NULL UNIQUE,
+			title           TEXT NOT NULL,
+			body            TEXT DEFAULT '',
+			state           TEXT DEFAULT 'open',
+			labels          TEXT DEFAULT '[]',
+			author          TEXT DEFAULT '',
+			triage_status   TEXT DEFAULT 'pending',
+			triage_reason   TEXT DEFAULT '',
+			pr_number       INTEGER DEFAULT 0,
+			created_at      DATETIME,
+			updated_at      DATETIME,
+			synced_at       DATETIME DEFAULT CURRENT_TIMESTAMP
+		)`,
+
+		`CREATE TABLE IF NOT EXISTS github_comments (
+			id              INTEGER PRIMARY KEY AUTOINCREMENT,
+			issue_number    INTEGER NOT NULL,
+			comment_id      INTEGER NOT NULL,
+			body            TEXT DEFAULT '',
+			author          TEXT DEFAULT '',
+			created_at      DATETIME,
+			UNIQUE(comment_id)
+		)`,
+
+		`CREATE VIRTUAL TABLE IF NOT EXISTS github_issues_fts USING fts5(
+			title, body, content=github_issues, content_rowid=id
+		)`,
+
+		`CREATE TRIGGER IF NOT EXISTS github_issues_ai AFTER INSERT ON github_issues BEGIN
+			INSERT INTO github_issues_fts(rowid, title, body)
+			VALUES (new.id, new.title, new.body);
+		END`,
+		`CREATE TRIGGER IF NOT EXISTS github_issues_ad AFTER DELETE ON github_issues BEGIN
+			INSERT INTO github_issues_fts(github_issues_fts, rowid, title, body)
+			VALUES('delete', old.id, old.title, old.body);
+		END`,
+		`CREATE TRIGGER IF NOT EXISTS github_issues_au AFTER UPDATE ON github_issues BEGIN
+			INSERT INTO github_issues_fts(github_issues_fts, rowid, title, body)
+			VALUES('delete', old.id, old.title, old.body);
+			INSERT INTO github_issues_fts(rowid, title, body)
+			VALUES (new.id, new.title, new.body);
+		END`,
+
+		`INSERT INTO schema_version (version) VALUES (4)`,
 	}
 
 	for _, stmt := range statements {
@@ -752,6 +825,188 @@ func (s *SQLiteStore) ListSessions(ctx context.Context, limit int) ([]SessionSum
 	return sessions, rows.Err()
 }
 
+// --- GitHub Issues (Issue Tracker) ---
+
+// UpsertIssue inserts or replaces a GitHub issue row by issue_number.
+func (s *SQLiteStore) UpsertIssue(ctx context.Context, issue *ghsync.StoredIssue) error {
+	if issue == nil {
+		return fmt.Errorf("memory: upsert issue: nil issue")
+	}
+
+	_, err := s.db.ExecContext(ctx,
+		`INSERT OR REPLACE INTO github_issues
+		 (issue_number, title, body, state, labels, author, triage_status, triage_reason, pr_number, created_at, updated_at, synced_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		issue.IssueNumber,
+		issue.Title,
+		issue.Body,
+		issue.State,
+		issue.Labels,
+		issue.Author,
+		string(issue.TriageStatus),
+		issue.TriageReason,
+		issue.PRNumber,
+		issue.CreatedAt,
+		issue.UpdatedAt,
+		issue.SyncedAt,
+	)
+	if err != nil {
+		return fmt.Errorf("memory: upsert issue #%d: %w", issue.IssueNumber, err)
+	}
+
+	return nil
+}
+
+// GetIssue returns a stored issue by issue number.
+func (s *SQLiteStore) GetIssue(ctx context.Context, issueNumber int) (*ghsync.StoredIssue, error) {
+	row := s.db.QueryRowContext(ctx,
+		`SELECT id, issue_number, title, body, state, labels, author, triage_status, triage_reason,
+		        pr_number, created_at, updated_at, synced_at
+		 FROM github_issues
+		 WHERE issue_number = ?`,
+		issueNumber,
+	)
+
+	var issue ghsync.StoredIssue
+	var triageStatus string
+	err := row.Scan(
+		&issue.ID,
+		&issue.IssueNumber,
+		&issue.Title,
+		&issue.Body,
+		&issue.State,
+		&issue.Labels,
+		&issue.Author,
+		&triageStatus,
+		&issue.TriageReason,
+		&issue.PRNumber,
+		&issue.CreatedAt,
+		&issue.UpdatedAt,
+		&issue.SyncedAt,
+	)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("memory: get issue #%d: %w", issueNumber, err)
+	}
+
+	issue.TriageStatus = ghsync.TriageStatus(triageStatus)
+	return &issue, nil
+}
+
+// ListIssues returns issues filtered by triage status.
+func (s *SQLiteStore) ListIssues(ctx context.Context, status ghsync.TriageStatus, limit int) ([]*ghsync.StoredIssue, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, issue_number, title, body, state, labels, author, triage_status, triage_reason,
+		        pr_number, created_at, updated_at, synced_at
+		 FROM github_issues
+		 WHERE triage_status = ?
+		 ORDER BY updated_at DESC
+		 LIMIT ?`,
+		string(status),
+		limit,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("memory: list issues by status %q: %w", status, err)
+	}
+	defer rows.Close()
+
+	issues := make([]*ghsync.StoredIssue, 0, limit)
+	for rows.Next() {
+		issue, err := scanStoredIssue(rows)
+		if err != nil {
+			return nil, fmt.Errorf("memory: list issues by status %q: %w", status, err)
+		}
+		issues = append(issues, issue)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("memory: list issues by status %q rows: %w", status, err)
+	}
+
+	return issues, nil
+}
+
+// ListAllIssues returns issues ordered by update time.
+func (s *SQLiteStore) ListAllIssues(ctx context.Context, limit int) ([]*ghsync.StoredIssue, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, issue_number, title, body, state, labels, author, triage_status, triage_reason,
+		        pr_number, created_at, updated_at, synced_at
+		 FROM github_issues
+		 ORDER BY updated_at DESC
+		 LIMIT ?`,
+		limit,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("memory: list all issues: %w", err)
+	}
+	defer rows.Close()
+
+	issues := make([]*ghsync.StoredIssue, 0, limit)
+	for rows.Next() {
+		issue, err := scanStoredIssue(rows)
+		if err != nil {
+			return nil, fmt.Errorf("memory: list all issues: %w", err)
+		}
+		issues = append(issues, issue)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("memory: list all issues rows: %w", err)
+	}
+
+	return issues, nil
+}
+
+// UpdateTriageStatus updates triage status and reason for an issue.
+func (s *SQLiteStore) UpdateTriageStatus(ctx context.Context, issueNumber int, status ghsync.TriageStatus, reason string) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE github_issues
+		 SET triage_status = ?, triage_reason = ?, synced_at = CURRENT_TIMESTAMP
+		 WHERE issue_number = ?`,
+		string(status), reason, issueNumber,
+	)
+	if err != nil {
+		return fmt.Errorf("memory: update triage status for issue #%d: %w", issueNumber, err)
+	}
+	return nil
+}
+
+// UpdatePRNumber updates linked PR number for an issue.
+func (s *SQLiteStore) UpdatePRNumber(ctx context.Context, issueNumber int, prNumber int) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE github_issues
+		 SET pr_number = ?, synced_at = CURRENT_TIMESTAMP
+		 WHERE issue_number = ?`,
+		prNumber, issueNumber,
+	)
+	if err != nil {
+		return fmt.Errorf("memory: update PR number for issue #%d: %w", issueNumber, err)
+	}
+	return nil
+}
+
+// SaveComment persists a GitHub issue comment.
+func (s *SQLiteStore) SaveComment(ctx context.Context, issueNumber int, commentID int64, body, author string, createdAt time.Time) error {
+	_, err := s.db.ExecContext(ctx,
+		`INSERT OR REPLACE INTO github_comments
+		 (issue_number, comment_id, body, author, created_at)
+		 VALUES (?, ?, ?, ?, ?)`,
+		issueNumber, commentID, body, author, createdAt,
+	)
+	if err != nil {
+		return fmt.Errorf("memory: save comment %d for issue #%d: %w", commentID, issueNumber, err)
+	}
+	return nil
+}
+
 // --- Maintenance ---
 
 // DecayFacts removes or deprioritizes stale, low-use facts.
@@ -852,6 +1107,30 @@ func scanSessions(rows *sql.Rows) ([]SessionSummary, error) {
 		sessions = append(sessions, ss)
 	}
 	return sessions, rows.Err()
+}
+
+func scanStoredIssue(rows *sql.Rows) (*ghsync.StoredIssue, error) {
+	issue := &ghsync.StoredIssue{}
+	var triageStatus string
+	if err := rows.Scan(
+		&issue.ID,
+		&issue.IssueNumber,
+		&issue.Title,
+		&issue.Body,
+		&issue.State,
+		&issue.Labels,
+		&issue.Author,
+		&triageStatus,
+		&issue.TriageReason,
+		&issue.PRNumber,
+		&issue.CreatedAt,
+		&issue.UpdatedAt,
+		&issue.SyncedAt,
+	); err != nil {
+		return nil, err
+	}
+	issue.TriageStatus = ghsync.TriageStatus(triageStatus)
+	return issue, nil
 }
 
 func min(a, b int) int {

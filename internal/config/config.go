@@ -68,6 +68,29 @@ type RepoMapConfig struct {
 	CTagsPath       string   `json:"ctags_path"`       // custom ctags binary path (empty = auto-detect)
 }
 
+// GitHubConfig holds settings for the GitHub Issue tracker integration.
+type GitHubConfig struct {
+	Enabled      bool   `json:"enabled"`
+	Token        string `json:"token"`          // Personal Access Token
+	Owner        string `json:"owner"`          // Repository owner (user or org)
+	Repo         string `json:"repo"`           // Repository name
+	PollInterval int    `json:"poll_interval"`  // Minutes between sync (0 = manual only, default: 5)
+	AutoTriage   bool   `json:"auto_triage"`    // Auto-analyze new issues on sync
+	AutoFix      bool   `json:"auto_fix"`       // Auto-fix issues classified as auto_fix
+	BaseBranch   string `json:"base_branch"`    // Target branch for PRs (default: "main")
+}
+
+// DefaultGitHubConfig returns sensible defaults for the GitHub integration.
+func DefaultGitHubConfig() GitHubConfig {
+	return GitHubConfig{
+		Enabled:      false, // opt-in
+		PollInterval: 5,
+		AutoTriage:   true,
+		AutoFix:      false, // safety: manual trigger by default
+		BaseBranch:   "main",
+	}
+}
+
 // Config is the top-level application configuration.
 type Config struct {
 	ActiveProvider string         `json:"active_provider"`
@@ -79,8 +102,9 @@ type Config struct {
 	Memory         MemoryConfig   `json:"memory"`
 	Vector         VectorConfig   `json:"vector"`
 	RepoMap        RepoMapConfig  `json:"repo_map"`
-	MaxToolIter    int            `json:"max_tool_iterations"` // 0 = unlimited (default)
-	Theme          string         `json:"theme"`               // Theme name (default: "default")
+	GitHub         GitHubConfig   `json:"github"`
+	MaxToolIter    int            `json:"max_tool_iterations"`
+	Theme          string         `json:"theme"`
 }
 
 // DefaultConfig returns a config with sensible defaults.
@@ -111,6 +135,7 @@ func DefaultConfig() Config {
 		Memory:  DefaultMemoryConfig(),
 		Vector:  DefaultVectorConfig(),
 		RepoMap: DefaultRepoMapConfig(),
+		GitHub:  DefaultGitHubConfig(),
 		Theme:   "default",
 	}
 }

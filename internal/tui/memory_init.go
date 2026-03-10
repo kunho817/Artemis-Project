@@ -6,6 +6,7 @@ import (
 	"os"
 	"time"
 
+	ghub "github.com/artemis-project/artemis/internal/github"
 	"github.com/artemis-project/artemis/internal/memory"
 )
 
@@ -82,6 +83,37 @@ func (a *App) initMemory() {
 		}
 	}
 
+	// Phase 4: GitHub issue tracker
+	if a.cfg.GitHub.Enabled && a.cfg.GitHub.Token != "" {
+		logger := func(msg string) {
+			a.chat.AddMessage(ChatMessage{Role: RoleSystem, Content: msg})
+		}
+
+		a.ghSyncer = ghub.NewSyncer(a.cfg.GitHub, store, logger)
+		a.ghProcessor = ghub.NewProcessor(a.cfg.GitHub, store, logger)
+
+		a.ghSyncer.Start(context.Background())
+
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+
+			if a.cfg.GitHub.AutoTriage {
+				autoFix, needsHuman, notApplicable, triageErr := a.ghProcessor.TriageAll(ctx)
+				if triageErr != nil {
+					logger(fmt.Sprintf("GitHub triage error: %v", triageErr))
+				} else {
+					logger(fmt.Sprintf("GitHub triage complete: auto_fix=%d, needs_human=%d, not_applicable=%d", autoFix, needsHuman, notApplicable))
+				}
+			}
+
+			report, err := a.ghSyncer.GetPendingReport(ctx)
+			if err == nil && report != "No issues require human triage." {
+				logger(report)
+			}
+		}()
+	}
+
 	// Load memory stats for status display
 	if stats, err := store.Stats(context.Background()); err == nil {
 		vecStatus := ""
@@ -147,6 +179,10 @@ func (a *App) shutdownMemory() {
 	// Close vector store
 	if a.vectorStore != nil {
 		a.vectorStore.Close()
+	}
+
+	if a.ghSyncer != nil {
+		a.ghSyncer.Stop()
 	}
 
 	a.memStore.Close()

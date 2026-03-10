@@ -17,6 +17,7 @@ import (
 
 	"github.com/artemis-project/artemis/internal/bus"
 	"github.com/artemis-project/artemis/internal/config"
+	ghub "github.com/artemis-project/artemis/internal/github"
 	"github.com/artemis-project/artemis/internal/llm"
 	"github.com/artemis-project/artemis/internal/memory"
 	"github.com/artemis-project/artemis/internal/tools"
@@ -94,7 +95,9 @@ type App struct {
 	vectorStore  memory.VectorSearcher // Phase 2: vector search
 	consolidator *memory.Consolidator
 	repoMapStore *memory.RepoMapStore // Phase 3: repo-map
-	sessionID    string               // unique ID for current session
+	ghSyncer     *ghub.Syncer
+	ghProcessor  *ghub.Processor
+	sessionID    string // unique ID for current session
 
 	focused FocusedPanel
 
@@ -330,6 +333,14 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case PipelineCompleteMsg:
 		return a.handlePipelineComplete(msg)
+
+	case fixIssueResultMsg:
+		if msg.err != nil {
+			a.chat.AddMessage(ChatMessage{Role: RoleSystem, Content: fmt.Sprintf("Fix failed for issue #%d: %v", msg.issueNumber, msg.err)})
+		} else {
+			a.chat.AddMessage(ChatMessage{Role: RoleSystem, Content: fmt.Sprintf("Fix pipeline scaffold completed for issue #%d.", msg.issueNumber)})
+		}
+		return a, nil
 
 	case OrchestratorPlanMsg:
 		return a.handleOrchestratorPlan(msg)
