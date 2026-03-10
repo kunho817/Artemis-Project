@@ -32,6 +32,7 @@ type ConfigView struct {
 	statusMsg    string
 	sysViewport  viewport.Model // scrollable viewport for System tab
 	sysVpReady   bool
+	sysFieldLines []int           // dynamically computed line offsets per field
 }
 
 // tab labels: 4 providers + Agents + System
@@ -307,16 +308,10 @@ func (cv *ConfigView) scrollToField() {
 	if !cv.isOnSystemTab() || !cv.sysVpReady {
 		return
 	}
-	// Approximate line offset per field in System tab content.
-	// Each section header ~3 lines, each field ~2 lines + blank line.
-	// Layout:  field 0 ~line 3, field 1 ~6, field 2 ~9, field 3 ~12,
-	//          field 4 ~18 (section), field 5 ~24, field 6 ~27, field 7 ~30,
-	//          field 8 ~36 (section), field 9 ~39, field 10 ~48 (section)
-	fieldLineOffsets := []int{3, 6, 9, 12, 18, 24, 27, 30, 36, 39, 48}
-	if cv.fieldIdx >= len(fieldLineOffsets) {
+	if cv.fieldIdx >= len(cv.sysFieldLines) {
 		return
 	}
-	target := fieldLineOffsets[cv.fieldIdx]
+	target := cv.sysFieldLines[cv.fieldIdx]
 	// Ensure target line is visible — scroll so it's roughly in top third
 	topThird := cv.sysViewport.Height / 3
 	desired := target - topThird
@@ -735,56 +730,87 @@ func (cv *ConfigView) applySystemInputs() {
 }
 
 // renderSystemContent draws the System tab with Memory and Tool settings.
+// It also computes sysFieldLines for accurate viewport scrolling.
 func (cv *ConfigView) renderSystemContent(sb *strings.Builder) {
+	line := 0
+	if cap(cv.sysFieldLines) < 11 {
+		cv.sysFieldLines = make([]int, 0, 11)
+	} else {
+		cv.sysFieldLines = cv.sysFieldLines[:0]
+	}
+
 	sb.WriteString(fmt.Sprintf("  %s\n\n",
 		SectionHeaderStyle.Render("Memory")))
+	line += 2
 
 	// Memory Enabled toggle (fieldIdx 0)
+	cv.sysFieldLines = append(cv.sysFieldLines, line)
 	cv.renderToggleField(sb, 0, "Memory",
 		cv.cfg.Memory.Enabled, "Enabled", "Disabled")
+	line += 2
 
 	// Consolidate on Exit toggle (fieldIdx 1)
+	cv.sysFieldLines = append(cv.sysFieldLines, line)
 	cv.renderToggleField(sb, 1, "Consolidate",
 		cv.cfg.Memory.ConsolidateOnExit, "On Exit", "Off")
+	line += 2
 
-	// Max Fact Age (fieldIdx 2 → inputs[0])
+	// Max Fact Age (fieldIdx 2 -> inputs[0])
+	cv.sysFieldLines = append(cv.sysFieldLines, line)
 	cv.renderNumberField(sb, 2, "Fact Max Age", "days", 0)
+	line += 2
 
-	// Min Fact Use Count (fieldIdx 3 → inputs[1])
+	// Min Fact Use Count (fieldIdx 3 -> inputs[1])
+	cv.sysFieldLines = append(cv.sysFieldLines, line)
 	cv.renderNumberField(sb, 3, "Fact Min Uses", "times", 1)
+	line += 2
 
 	// Divider before tool settings
 	sb.WriteString(fmt.Sprintf("\n  %s\n\n",
 		SectionHeaderStyle.Render("Tools")))
+	line += 3
 
-	// Max Tool Iterations (fieldIdx 4 → inputs[2])
+	// Max Tool Iterations (fieldIdx 4 -> inputs[2])
+	cv.sysFieldLines = append(cv.sysFieldLines, line)
 	cv.renderNumberField(sb, 4, "Max Iterations", "0=unlimited", 2)
+	line += 2
 
 	// Divider before vector settings
 	sb.WriteString(fmt.Sprintf("\n  %s\n\n",
 		SectionHeaderStyle.Render("Vector Search")))
+	line += 3
 
 	// Vector Enabled toggle (fieldIdx 5)
+	cv.sysFieldLines = append(cv.sysFieldLines, line)
 	cv.renderToggleField(sb, 5, "Vector Search",
 		cv.cfg.Vector.Enabled, "Enabled", "Disabled")
+	line += 2
 
-	// Voyage API Key (fieldIdx 6 → inputs[3])
+	// Voyage API Key (fieldIdx 6 -> inputs[3])
+	cv.sysFieldLines = append(cv.sysFieldLines, line)
 	cv.renderNumberField(sb, 6, "Voyage API Key", "", 3)
+	line += 2
 
-	// Voyage Model (fieldIdx 7 → inputs[4])
+	// Voyage Model (fieldIdx 7 -> inputs[4])
+	cv.sysFieldLines = append(cv.sysFieldLines, line)
 	cv.renderNumberField(sb, 7, "Model", "", 4)
-
+	line += 2
 
 	// Divider before repo-map settings
 	sb.WriteString(fmt.Sprintf("\n  %s\n\n",
 		SectionHeaderStyle.Render("Repo Map")))
+	line += 3
 
 	// RepoMap Enabled toggle (fieldIdx 8)
+	cv.sysFieldLines = append(cv.sysFieldLines, line)
 	cv.renderToggleField(sb, 8, "Repo Map",
 		cv.cfg.RepoMap.Enabled, "Enabled", "Disabled")
+	line += 2
 
 	// RepoMap Max Tokens (fieldIdx 9 -> inputs[5])
+	cv.sysFieldLines = append(cv.sysFieldLines, line)
 	cv.renderNumberField(sb, 9, "Max Tokens", "tokens", 5)
+	line += 2
 
 	// Info display
 	if cv.cfg.Memory.Enabled {
@@ -794,6 +820,7 @@ func (cv *ConfigView) renderSystemContent(sb *strings.Builder) {
 				Foreground(ColorDimText).Render("DB Path:"),
 			lipgloss.NewStyle().Foreground(ColorMuted).Render(dbPath),
 		))
+		line += 2
 	}
 	if cv.cfg.Vector.Enabled {
 		vecPath := cv.cfg.VectorStorePath()
@@ -802,13 +829,16 @@ func (cv *ConfigView) renderSystemContent(sb *strings.Builder) {
 				Foreground(ColorDimText).Render("Vec Path:"),
 			lipgloss.NewStyle().Foreground(ColorMuted).Render(vecPath),
 		))
+		line += 1
 	}
 
 	// Divider before appearance settings
 	sb.WriteString(fmt.Sprintf("\n  %s\n\n",
 		SectionHeaderStyle.Render("Appearance")))
+	line += 3
 
 	// Theme cycle (fieldIdx 10)
+	cv.sysFieldLines = append(cv.sysFieldLines, line)
 	themeName := cv.cfg.Theme
 	if themeName == "" {
 		themeName = "default"
