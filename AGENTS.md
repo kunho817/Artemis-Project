@@ -380,12 +380,17 @@ D:\Artemis_Project\
 3. 미구현 항목과 최근 세션 히스토리를 확인한다
 
 ### 세션 종료 시 (또는 유의미한 작업 완료 시)
-1. **디렉토리 구조**: 파일/폴더 추가·삭제·이동이 있었으면 갱신
-2. **설계 결정 로그**: 새로운 아키텍처/기술 결정이 있었으면 추가
-3. **현재 상태**: 구현 완료 / 미구현 체크리스트 갱신
-4. **세션 히스토리**: 현재 세션의 작업 내용 기록
-5. **LLM 프로바이더**: 연동 상태 변경 시 갱신
-6. **키바인딩**: 추가·변경 시 갱신
+1. **AGENTS.md 갱신**: 아래 항목을 확인하고 변경된 부분을 갱신한다
+   - **디렉토리 구조**: 파일/폴더 추가·삭제·이동이 있었으면 갱신
+   - **설계 결정 로그**: 새로운 아키텍처/기술 결정이 있었으면 추가
+   - **현재 상태**: 구현 완료 / 미구현 체크리스트 갱신
+   - **세션 히스토리**: 현재 세션의 작업 내용 기록
+   - **LLM 프로바이더**: 연동 상태 변경 시 갱신
+   - **키바인딩**: 추가·변경 시 갱신
+2. **Git Commit + Push**: AGENTS.md 갱신 후, 모든 변경사항을 commit하고 origin/main에 push한다
+   - 커밋 메시지 형식: `feat/fix/refactor/chore: 세션 #N — 작업 요약`
+   - 예시: `feat: session #14 — add streaming cost calculator + AGENTS.md update`
+   - AGENTS.md만 변경된 경우: `chore: update AGENTS.md for session #N`
 
 ### 갱신 트리거 질문 (에이전트 자체 점검용)
 - [ ] 이번 세션에서 새 파일이나 디렉토리를 만들었는가?
@@ -395,3 +400,11 @@ D:\Artemis_Project\
 - [ ] AGENTS.md에 기록되지 않은 새로운 컨텍스트가 있는가?
 
 > 하나라도 **예**라면 AGENTS.md를 갱신한다.
+
+### Git 커밋 규칙
+> 세션 종료 시 반드시 `git add -A && git commit && git push origin main`을 수행한다.
+
+- **Remote**: `origin` → `https://github.com/kunho817/Artemis-Project.git`
+- **Branch**: `main`
+- **커밋 메시지 Prefix**: `feat:` | `fix:` | `refactor:` | `chore:` | `docs:`
+- **제외 파일**: `.gitignore`에 정의됨 (바이너리, IDE, OS 아티팩트, .artemis/)
