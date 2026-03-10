@@ -1,0 +1,22 @@
+{
+  "name": "dracula",
+  "colors": {
+    "primary": "#BD93F9",
+    "secondary": "#FF79C6",
+    "accent": "#8BE9FD",
+    "success": "#50FA7B",
+    "warning": "#F1FA8C",
+    "error": "#FF5555",
+    "text": "#F8F8F2",
+    "dim_text": "#BFBFBF",
+    "muted": "#6272A4",
+    "background": "#282A36",
+    "panel": "#44475A",
+    "surface": "#383A59",
+    "border": "#6272A4",
+    "agent_analysis": "#BD93F9",
+    "agent_plan": "#50FA7B",
+    "agent_code": "#FF79C6",
+    "agent_verify": "#F1FA8C"
+  }
+}

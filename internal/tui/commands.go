@@ -1,0 +1,194 @@
+package tui
+
+import (
+	"context"
+	"fmt"
+	"strings"
+	"time"
+
+	tea "github.com/charmbracelet/bubbletea"
+
+	"github.com/artemis-project/artemis/internal/llm"
+)
+
+// handleCommand processes slash commands (e.g., /sessions, /load).
+func (a App) handleCommand(text string) (tea.Model, tea.Cmd) {
+	parts := strings.Fields(text)
+	if len(parts) == 0 {
+		return a, nil
+	}
+
+	switch parts[0] {
+	case "/sessions":
+		return a.cmdListSessions()
+	case "/load":
+		if len(parts) < 2 {
+			a.chat.AddMessage(ChatMessage{
+				Role:    RoleSystem,
+				Content: "Usage: /load <session_id>",
+			})
+			return a, nil
+		}
+		return a.cmdLoadSession(parts[1])
+	case "/help":
+		a.chat.AddMessage(ChatMessage{
+			Role:    RoleSystem,
+			Content: "Commands:\n  /sessions — List recent sessions\n  /load <id> — Resume a previous session\n  /help — Show this help",
+		})
+		return a, nil
+	default:
+		a.chat.AddMessage(ChatMessage{
+			Role:    RoleSystem,
+			Content: fmt.Sprintf("Unknown command: %s. Type /help for available commands.", parts[0]),
+		})
+		return a, nil
+	}
+}
+
+// cmdListSessions shows recent sessions from the memory store.
+func (a App) cmdListSessions() (tea.Model, tea.Cmd) {
+	if a.memStore == nil {
+		a.chat.AddMessage(ChatMessage{
+			Role:    RoleSystem,
+			Content: "Memory system is not enabled. Enable it in settings (Ctrl+S).",
+		})
+		return a, nil
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	sessions, err := a.memStore.ListSessions(ctx, 20)
+	if err != nil {
+		a.chat.AddMessage(ChatMessage{
+			Role:    RoleSystem,
+			Content: fmt.Sprintf("Error listing sessions: %v", err),
+		})
+		return a, nil
+	}
+
+	if len(sessions) == 0 {
+		a.chat.AddMessage(ChatMessage{
+			Role:    RoleSystem,
+			Content: "No previous sessions found.",
+		})
+		return a, nil
+	}
+
+	// Format session list
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("Recent sessions (%d):\n", len(sessions)))
+	for i, s := range sessions {
+		dateStr := s.CreatedAt.Format("2006-01-02 15:04")
+		preview := s.Summary
+		if preview == "" {
+			preview = "(no summary)"
+		} else if len(preview) > 80 {
+			preview = preview[:77] + "..."
+		}
+		// Mark current session
+		marker := "  "
+		if s.SessionID == a.sessionID {
+			marker = "▸ "
+		}
+		sb.WriteString(fmt.Sprintf("%s%d. [%s] %s (%d msgs)\n   ID: %s\n",
+			marker, i+1, dateStr, preview, s.MessageCount, s.SessionID))
+	}
+	sb.WriteString("\nUse /load <session_id> to resume a session.")
+
+	a.chat.AddMessage(ChatMessage{
+		Role:    RoleSystem,
+		Content: sb.String(),
+	})
+	return a, nil
+}
+
+// cmdLoadSession loads a previous session's messages into the current chat.
+func (a App) cmdLoadSession(sessionID string) (tea.Model, tea.Cmd) {
+	if a.memStore == nil {
+		a.chat.AddMessage(ChatMessage{
+			Role:    RoleSystem,
+			Content: "Memory system is not enabled.",
+		})
+		return a, nil
+	}
+
+	// Don't allow loading while we have an active conversation with history
+	if len(a.history) > 0 {
+		a.chat.AddMessage(ChatMessage{
+			Role:    RoleSystem,
+			Content: "Clear the current conversation first (Ctrl+L), then load a session.",
+		})
+		return a, nil
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	messages, err := a.memStore.GetSessionMessages(ctx, sessionID)
+	if err != nil {
+		a.chat.AddMessage(ChatMessage{
+			Role:    RoleSystem,
+			Content: fmt.Sprintf("Error loading session: %v", err),
+		})
+		return a, nil
+	}
+
+	if len(messages) == 0 {
+		a.chat.AddMessage(ChatMessage{
+			Role:    RoleSystem,
+			Content: fmt.Sprintf("Session %q not found or has no messages.", sessionID),
+		})
+		return a, nil
+	}
+
+	// Switch to the loaded session
+	a.sessionID = sessionID
+	a.history = nil
+	a.chat = NewChatPanel()
+	a.recalcLayout()
+
+	a.chat.AddMessage(ChatMessage{
+		Role:    RoleSystem,
+		Content: fmt.Sprintf("Loaded session %s (%d messages)", sessionID, len(messages)),
+	})
+
+	// Replay messages into chat panel and history
+	for _, m := range messages {
+		switch m.Role {
+		case "user":
+			a.chat.AddMessage(ChatMessage{
+				Role:    RoleUser,
+				Content: m.Content,
+			})
+			a.history = append(a.history, llm.Message{Role: "user", Content: m.Content})
+		case "assistant":
+			if m.AgentRole != "" && m.AgentRole != "pipeline" {
+				a.chat.AddMessage(ChatMessage{
+					Role:      RoleAgent,
+					Content:   m.Content,
+					AgentName: agentDisplayName(m.AgentRole),
+					AgentRole: m.AgentRole,
+				})
+			} else {
+				a.chat.AddMessage(ChatMessage{
+					Role:    RoleAssistant,
+					Content: m.Content,
+				})
+			}
+			a.history = append(a.history, llm.Message{Role: "assistant", Content: m.Content})
+		case "system":
+			a.chat.AddMessage(ChatMessage{
+				Role:    RoleSystem,
+				Content: m.Content,
+			})
+		}
+	}
+
+	a.chat.AddMessage(ChatMessage{
+		Role:    RoleSystem,
+		Content: "Session resumed. Continue the conversation.",
+	})
+
+	return a, nil
+}

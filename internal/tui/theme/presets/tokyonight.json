@@ -1,0 +1,22 @@
+{
+  "name": "tokyonight",
+  "colors": {
+    "primary": "#7AA2F7",
+    "secondary": "#BB9AF7",
+    "accent": "#7DCFFF",
+    "success": "#9ECE6A",
+    "warning": "#E0AF68",
+    "error": "#F7768E",
+    "text": "#C0CAF5",
+    "dim_text": "#565F89",
+    "muted": "#414868",
+    "background": "#1A1B26",
+    "panel": "#24283B",
+    "surface": "#292E42",
+    "border": "#3B4261",
+    "agent_analysis": "#BB9AF7",
+    "agent_plan": "#9ECE6A",
+    "agent_code": "#F7768E",
+    "agent_verify": "#E0AF68"
+  }
+}
