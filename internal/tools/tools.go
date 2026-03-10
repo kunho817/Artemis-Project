@@ -53,9 +53,14 @@ func NewToolExecutor(workDir string) *ToolExecutor {
 	}
 	te.Register(&ReadFileTool{baseDir: workDir})
 	te.Register(&WriteFileTool{baseDir: workDir})
+	te.Register(&PatchFileTool{baseDir: workDir})
 	te.Register(&ListDirTool{baseDir: workDir})
-	te.Register(&ShellExecTool{baseDir: workDir})
 	te.Register(&SearchFilesTool{baseDir: workDir})
+	te.Register(&GrepTool{baseDir: workDir})
+	te.Register(&ShellExecTool{baseDir: workDir})
+	te.Register(&GitStatusTool{baseDir: workDir})
+	te.Register(&GitDiffTool{baseDir: workDir})
+	te.Register(&GitLogTool{baseDir: workDir})
 	return te
 }
 
@@ -96,7 +101,7 @@ func (te *ToolExecutor) ToolDescriptions() string {
 
 // toolList returns tools in a stable order for consistent prompt generation.
 func (te *ToolExecutor) toolList() []Tool {
-	order := []string{"read_file", "write_file", "list_dir", "search_files", "shell_exec"}
+	order := []string{"read_file", "write_file", "patch_file", "list_dir", "search_files", "grep", "shell_exec", "git_status", "git_diff", "git_log"}
 	var result []Tool
 	for _, name := range order {
 		if tool, ok := te.tools[name]; ok {

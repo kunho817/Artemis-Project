@@ -15,7 +15,7 @@ import (
 type Consolidator struct {
 	store       MemoryStore
 	provider    llm.Provider
-	vectorStore *VectorStore // Phase 2: optional, for semantic dedup
+	vectorStore VectorSearcher // Phase 2: optional, for semantic dedup
 }
 
 // NewConsolidator creates a consolidator with the given memory store and LLM provider.
@@ -25,7 +25,7 @@ func NewConsolidator(store MemoryStore, provider llm.Provider) *Consolidator {
 
 // SetVectorStore attaches a VectorStore for semantic deduplication.
 // When set, isSimilarFact uses cosine similarity instead of word overlap.
-func (c *Consolidator) SetVectorStore(vs *VectorStore) {
+func (c *Consolidator) SetVectorStore(vs VectorSearcher) {
 	c.vectorStore = vs
 }
 

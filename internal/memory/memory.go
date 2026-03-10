@@ -5,6 +5,25 @@ import (
 	"time"
 )
 
+// VectorSearcher defines the interface for vector-based similarity search.
+// Phase 2 uses chromem-go; future migration to sqlite-vec only requires
+// a new implementation of this interface.
+type VectorSearcher interface {
+	// --- Indexing ---
+	AddFact(ctx context.Context, factID int64, content string, tags []string) error
+	AddSession(ctx context.Context, sessionID, summary string) error
+	AddDecision(ctx context.Context, decisionID int64, content string, tags []string) error
+
+	// --- Search ---
+	QueryFacts(ctx context.Context, query string, limit int) ([]VectorResult, error)
+	QuerySessions(ctx context.Context, query string, limit int) ([]VectorResult, error)
+	QueryDecisions(ctx context.Context, query string, limit int) ([]VectorResult, error)
+
+	// --- Utility ---
+	SimilarityScore(ctx context.Context, text1, text2 string) (float32, error)
+	Close() error
+}
+
 // MemoryStore defines the interface for persistent memory.
 // Designed to be backend-agnostic: Phase 1 uses SQLite+FTS5,
 // Phase 2 can add vector search, Phase 3 can add repo-map indexing.

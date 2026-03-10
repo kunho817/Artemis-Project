@@ -16,8 +16,9 @@ import (
 // GLM implements the Provider interface for ZhipuAI's GLM Coding Plan API.
 // This provider uses the Coding Plan endpoint exclusively.
 type GLM struct {
-	cfg    config.GLMConfig
-	client *http.Client
+	cfg       config.GLMConfig
+	client    *http.Client
+	lastUsage *TokenUsage
 }
 
 // NewGLM creates a new GLM Coding Plan provider.
@@ -49,6 +50,11 @@ type glmResponse struct {
 			ReasoningContent string `json:"reasoning_content"`
 		} `json:"message"`
 	} `json:"choices"`
+	Usage *struct {
+		PromptTokens     int `json:"prompt_tokens"`
+		CompletionTokens int `json:"completion_tokens"`
+		TotalTokens      int `json:"total_tokens"`
+	} `json:"usage"`
 	Error *struct {
 		Message string `json:"message"`
 	} `json:"error"`
@@ -59,6 +65,7 @@ func (g *GLM) Send(ctx context.Context, messages []Message) (string, error) {
 	if g.cfg.APIKey == "" {
 		return "", fmt.Errorf("glm: API key not configured")
 	}
+	g.lastUsage = nil
 
 	var msgs []glmMessage
 	for _, m := range messages {
@@ -113,6 +120,16 @@ func (g *GLM) Send(ctx context.Context, messages []Message) (string, error) {
 		return "", fmt.Errorf("glm: empty response")
 	}
 
+	if result.Usage != nil {
+		g.lastUsage = &TokenUsage{
+			PromptTokens:     result.Usage.PromptTokens,
+			CompletionTokens: result.Usage.CompletionTokens,
+			TotalTokens:      result.Usage.TotalTokens,
+		}
+	} else {
+		g.lastUsage = nil
+	}
+
 	choice := result.Choices[0].Message
 	if choice.ReasoningContent != "" {
 		return choice.ReasoningContent + "\n\n" + choice.Content, nil
@@ -124,6 +141,7 @@ func (g *GLM) Stream(ctx context.Context, messages []Message) (<-chan StreamChun
 	if g.cfg.APIKey == "" {
 		return nil, fmt.Errorf("glm: API key not configured")
 	}
+	g.lastUsage = nil
 
 	var msgs []glmMessage
 	for _, m := range messages {
@@ -163,6 +181,7 @@ func (g *GLM) Stream(ctx context.Context, messages []Message) (<-chan StreamChun
 	go func() {
 		defer close(ch)
 		defer resp.Body.Close()
+		var usage *TokenUsage
 		scanner := bufio.NewScanner(resp.Body)
 		for scanner.Scan() {
 			line := scanner.Text()
@@ -171,10 +190,23 @@ func (g *GLM) Stream(ctx context.Context, messages []Message) (<-chan StreamChun
 			}
 			data := strings.TrimPrefix(line, "data: ")
 			if data == "[DONE]" {
-				ch <- StreamChunk{Done: true}
+				ch <- StreamChunk{Done: true, Usage: usage}
 				return
 			}
-			var event struct {
+			var event glmResponse
+			if err := json.Unmarshal([]byte(data), &event); err != nil {
+				continue
+			}
+			if event.Usage != nil {
+				usage = &TokenUsage{
+					PromptTokens:     event.Usage.PromptTokens,
+					CompletionTokens: event.Usage.CompletionTokens,
+					TotalTokens:      event.Usage.TotalTokens,
+				}
+				g.lastUsage = usage
+			}
+
+			var deltaEvent struct {
 				Choices []struct {
 					Delta struct {
 						Content          string `json:"content"`
@@ -182,11 +214,11 @@ func (g *GLM) Stream(ctx context.Context, messages []Message) (<-chan StreamChun
 					} `json:"delta"`
 				} `json:"choices"`
 			}
-			if err := json.Unmarshal([]byte(data), &event); err != nil {
+			if err := json.Unmarshal([]byte(data), &deltaEvent); err != nil {
 				continue
 			}
-			if len(event.Choices) > 0 {
-				delta := event.Choices[0].Delta
+			if len(deltaEvent.Choices) > 0 {
+				delta := deltaEvent.Choices[0].Delta
 				if delta.Content != "" || delta.ReasoningContent != "" {
 					ch <- StreamChunk{
 						Content:   delta.Content,
@@ -195,7 +227,7 @@ func (g *GLM) Stream(ctx context.Context, messages []Message) (<-chan StreamChun
 				}
 			}
 		}
-		ch <- StreamChunk{Done: true}
+		ch <- StreamChunk{Done: true, Usage: usage}
 	}()
 
 	return ch, nil

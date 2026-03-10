@@ -107,6 +107,16 @@ func (a *App) shutdownMemory() {
 		return
 	}
 
+	// COLD tier: archive raw messages before consolidation (preserves full conversation)
+	var archiver *memory.Archiver
+	if a.cfg.Memory.ArchiveEnabled && len(a.history) > 0 {
+		arc, err := memory.NewArchiver(a.cfg.ArchivePath())
+		if err == nil {
+			archiver = arc
+			_ = archiver.ArchiveMessages(a.sessionID, a.history)
+		}
+	}
+
 	// Run consolidation if enabled and we have conversation history
 	if a.consolidator != nil && a.cfg.Memory.ConsolidateOnExit && len(a.history) > 2 {
 		// Collect files touched during this session from activity panel
@@ -117,7 +127,10 @@ func (a *App) shutdownMemory() {
 
 		result, err := a.consolidator.Consolidate(ctx, a.sessionID, a.history, filesTouched)
 		if err == nil && result != nil {
-			_ = result // consolidation results are stored in DB automatically
+			// COLD tier: archive consolidation results
+			if archiver != nil {
+				_ = archiver.ArchiveConsolidation(result)
+			}
 		}
 	}
 

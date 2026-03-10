@@ -20,6 +20,7 @@ type StreamChunkMsg struct {
 	Content string
 	Done    bool
 	Error   error
+	Usage   *llm.TokenUsage
 }
 
 // streamStartMsg carries the stream channel from the initial Stream() call.
@@ -81,14 +82,15 @@ func (a App) handleSingleSubmit(text string) (tea.Model, tea.Cmd) {
 // handleLLMResponse processes the response from a single-provider LLM call.
 func (a App) handleLLMResponse(msg LLMResponseMsg) (tea.Model, tea.Cmd) {
 	if msg.Error != nil {
+		fe := llm.ClassifyError(msg.Error, a.cfg.ActiveProvider)
 		a.activity.UpdateLastActivity(StatusError)
 		a.activity.AddActivity(ActivityItem{
 			Status: StatusError,
-			Text:   msg.Error.Error(),
+			Text:   fe.Message,
 		})
 		a.chat.AddMessage(ChatMessage{
 			Role:    RoleSystem,
-			Content: "Error: " + msg.Error.Error(),
+			Content: "Error: " + fe.Error(),
 		})
 	} else {
 		a.activity.UpdateLastActivity(StatusDone)
@@ -113,12 +115,13 @@ func (a App) handleStreamStart(msg streamStartMsg) (tea.Model, tea.Cmd) {
 // handleStreamChunk processes a single streaming chunk from the LLM.
 func (a App) handleStreamChunk(msg StreamChunkMsg) (tea.Model, tea.Cmd) {
 	if msg.Error != nil {
+		fe := llm.ClassifyError(msg.Error, a.cfg.ActiveProvider)
 		a.streamCh = nil
 		a.streamingContent = ""
 		a.activity.UpdateLastActivity(StatusError)
 		a.chat.AddMessage(ChatMessage{
 			Role:    RoleSystem,
-			Content: "Stream error: " + msg.Error.Error(),
+			Content: "Stream error: " + fe.Error(),
 		})
 		return a, nil
 	}
@@ -127,6 +130,7 @@ func (a App) handleStreamChunk(msg StreamChunkMsg) (tea.Model, tea.Cmd) {
 		a.streamCh = nil
 		a.chat.FinishStreaming()
 		a.activity.UpdateLastActivity(StatusDone)
+		a.addUsage(msg.Usage, a.cfg.GetActiveModel())
 		if a.streamingContent != "" {
 			a.history = append(a.history, llm.Message{Role: "assistant", Content: a.streamingContent})
 			a.saveMessageToDB("assistant", a.streamingContent, "")
@@ -152,6 +156,6 @@ func (a App) nextStreamChunk() tea.Cmd {
 		if !ok {
 			return StreamChunkMsg{Done: true}
 		}
-		return StreamChunkMsg{Content: chunk.Content, Done: chunk.Done, Error: chunk.Error}
+		return StreamChunkMsg{Content: chunk.Content, Done: chunk.Done, Error: chunk.Error, Usage: chunk.Usage}
 	}
 }

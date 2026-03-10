@@ -15,8 +15,9 @@ import (
 
 // Gemini implements the Provider interface for Google's Gemini API.
 type Gemini struct {
-	cfg    config.ProviderConfig
-	client *http.Client
+	cfg       config.ProviderConfig
+	client    *http.Client
+	lastUsage *TokenUsage
 }
 
 // NewGemini creates a new Gemini provider.
@@ -50,6 +51,11 @@ type geminiResponse struct {
 			Parts []geminiPart `json:"parts"`
 		} `json:"content"`
 	} `json:"candidates"`
+	UsageMetadata *struct {
+		PromptTokenCount     int `json:"promptTokenCount"`
+		CandidatesTokenCount int `json:"candidatesTokenCount"`
+		TotalTokenCount      int `json:"totalTokenCount"`
+	} `json:"usageMetadata"`
 	Error *struct {
 		Message string `json:"message"`
 	} `json:"error"`
@@ -59,6 +65,7 @@ func (g *Gemini) Send(ctx context.Context, messages []Message) (string, error) {
 	if g.cfg.APIKey == "" {
 		return "", fmt.Errorf("gemini: API key not configured")
 	}
+	g.lastUsage = nil
 
 	// Extract system prompt and build contents
 	var systemInstruction *geminiContent
@@ -127,6 +134,16 @@ func (g *Gemini) Send(ctx context.Context, messages []Message) (string, error) {
 		return "", fmt.Errorf("gemini: empty response")
 	}
 
+	if result.UsageMetadata != nil {
+		g.lastUsage = &TokenUsage{
+			PromptTokens:     result.UsageMetadata.PromptTokenCount,
+			CompletionTokens: result.UsageMetadata.CandidatesTokenCount,
+			TotalTokens:      result.UsageMetadata.TotalTokenCount,
+		}
+	} else {
+		g.lastUsage = nil
+	}
+
 	return result.Candidates[0].Content.Parts[0].Text, nil
 }
 
@@ -134,6 +151,7 @@ func (g *Gemini) Stream(ctx context.Context, messages []Message) (<-chan StreamC
 	if g.cfg.APIKey == "" {
 		return nil, fmt.Errorf("gemini: API key not configured")
 	}
+	g.lastUsage = nil
 
 	// Extract system prompt and build contents (same as Send)
 	var systemInstruction *geminiContent
@@ -190,6 +208,7 @@ func (g *Gemini) Stream(ctx context.Context, messages []Message) (<-chan StreamC
 	go func() {
 		defer close(ch)
 		defer resp.Body.Close()
+		var usage *TokenUsage
 		scanner := bufio.NewScanner(resp.Body)
 		for scanner.Scan() {
 			line := scanner.Text()
@@ -208,6 +227,14 @@ func (g *Gemini) Stream(ctx context.Context, messages []Message) (<-chan StreamC
 				return
 			}
 
+			if chunk.UsageMetadata != nil {
+				usage = &TokenUsage{
+					PromptTokens:     chunk.UsageMetadata.PromptTokenCount,
+					CompletionTokens: chunk.UsageMetadata.CandidatesTokenCount,
+					TotalTokens:      chunk.UsageMetadata.TotalTokenCount,
+				}
+			}
+
 			if len(chunk.Candidates) > 0 && len(chunk.Candidates[0].Content.Parts) > 0 {
 				text := chunk.Candidates[0].Content.Parts[0].Text
 				if text != "" {
@@ -216,7 +243,7 @@ func (g *Gemini) Stream(ctx context.Context, messages []Message) (<-chan StreamC
 			}
 		}
 		// Connection closed — stream complete
-		ch <- StreamChunk{Done: true}
+		ch <- StreamChunk{Done: true, Usage: usage}
 	}()
 
 	return ch, nil

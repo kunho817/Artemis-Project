@@ -41,44 +41,46 @@ type AgentConfig struct {
 
 // MemoryConfig holds settings for the persistent memory system.
 type MemoryConfig struct {
-	Enabled         bool   `json:"enabled"`
-	DBPath          string `json:"db_path"`           // SQLite database path (default: ~/.artemis/memory.db)
-	ConsolidateOnExit bool `json:"consolidate_on_exit"` // Run LLM consolidation when session ends
-	MaxFactAge      int    `json:"max_fact_age_days"`   // Days before unused facts are pruned (0=never)
-	MinFactUseCount int    `json:"min_fact_use_count"`  // Minimum use_count to survive pruning
+	Enabled           bool   `json:"enabled"`
+	DBPath            string `json:"db_path"`             // SQLite database path (default: ~/.artemis/memory.db)
+	ConsolidateOnExit bool   `json:"consolidate_on_exit"` // Run LLM consolidation when session ends
+	MaxFactAge        int    `json:"max_fact_age_days"`   // Days before unused facts are pruned (0=never)
+	MinFactUseCount   int    `json:"min_fact_use_count"`  // Minimum use_count to survive pruning
+	ArchiveEnabled    bool   `json:"archive_enabled"`     // Enable COLD tier JSONL archiving (default: true)
+	ArchivePath       string `json:"archive_path"`        // JSONL archive directory (empty = ~/.artemis/archive/)
 }
 
 // VectorConfig holds settings for the Phase 2 vector search system.
 type VectorConfig struct {
 	Enabled   bool   `json:"enabled"`
-	Provider  string `json:"provider"`    // embedding provider: "voyage" (default)
+	Provider  string `json:"provider"` // embedding provider: "voyage" (default)
 	APIKey    string `json:"api_key"`
-	Model     string `json:"model"`       // embedding model: "voyage-code-3" (default)
+	Model     string `json:"model"`      // embedding model: "voyage-code-3" (default)
 	StorePath string `json:"store_path"` // chromem-go data path (empty = ~/.artemis/vectors/)
 }
 
 // RepoMapConfig holds settings for the Phase 3 repo-map system.
 type RepoMapConfig struct {
 	Enabled         bool     `json:"enabled"`
-	MaxTokens       int      `json:"max_tokens"`        // max tokens for prompt injection (default: 2048)
-	UpdateOnWrite   bool     `json:"update_on_write"`   // auto-reindex after write_file tool
+	MaxTokens       int      `json:"max_tokens"`       // max tokens for prompt injection (default: 2048)
+	UpdateOnWrite   bool     `json:"update_on_write"`  // auto-reindex after write_file tool
 	ExcludePatterns []string `json:"exclude_patterns"` // glob patterns to skip (e.g., vendor/, node_modules/)
-	CTagsPath       string   `json:"ctags_path"`        // custom ctags binary path (empty = auto-detect)
+	CTagsPath       string   `json:"ctags_path"`       // custom ctags binary path (empty = auto-detect)
 }
 
 // Config is the top-level application configuration.
 type Config struct {
-	ActiveProvider   string         `json:"active_provider"`
-	Claude           ProviderConfig `json:"claude"`
-	Gemini           ProviderConfig `json:"gemini"`
-	GPT              ProviderConfig `json:"gpt"`
-	GLM              GLMConfig      `json:"glm"`
-	Agents           AgentConfig    `json:"agents"`
-	Memory           MemoryConfig   `json:"memory"`
-	Vector           VectorConfig   `json:"vector"`
-	RepoMap          RepoMapConfig  `json:"repo_map"`
-	MaxToolIter      int            `json:"max_tool_iterations"` // 0 = unlimited (default)
-	Theme           string        `json:"theme"`              // Theme name (default: "default")
+	ActiveProvider string         `json:"active_provider"`
+	Claude         ProviderConfig `json:"claude"`
+	Gemini         ProviderConfig `json:"gemini"`
+	GPT            ProviderConfig `json:"gpt"`
+	GLM            GLMConfig      `json:"glm"`
+	Agents         AgentConfig    `json:"agents"`
+	Memory         MemoryConfig   `json:"memory"`
+	Vector         VectorConfig   `json:"vector"`
+	RepoMap        RepoMapConfig  `json:"repo_map"`
+	MaxToolIter    int            `json:"max_tool_iterations"` // 0 = unlimited (default)
+	Theme          string         `json:"theme"`               // Theme name (default: "default")
 }
 
 // DefaultConfig returns a config with sensible defaults.
@@ -105,18 +107,20 @@ func DefaultConfig() Config {
 			Model:    "glm-5",
 			Enabled:  false,
 		},
-		Agents: DefaultAgentConfig(),
-		Memory:         DefaultMemoryConfig(),
-		Vector:          DefaultVectorConfig(),
-		RepoMap:         DefaultRepoMapConfig(),
-		Theme:           "default",
+		Agents:  DefaultAgentConfig(),
+		Memory:  DefaultMemoryConfig(),
+		Vector:  DefaultVectorConfig(),
+		RepoMap: DefaultRepoMapConfig(),
+		Theme:   "default",
 	}
 }
 
 // DefaultAgentConfig returns the standard tiered role-to-provider mappings.
 //
 // Premium: Claude=Coder/Engineer, GPT=Orchestrator/Architect/Explorer,
-//          Gemini=Planner/Analyzer/Designer, GLM=Searcher/QA/Tester
+//
+//	Gemini=Planner/Analyzer/Designer, GLM=Searcher/QA/Tester
+//
 // Budget:  Gemini=사고 역할(계획/분석/설계/코딩), GLM=실행 역할(탐색/엔지니어링/QA/테스트)
 func DefaultAgentConfig() AgentConfig {
 	return AgentConfig{
@@ -157,8 +161,10 @@ func DefaultMemoryConfig() MemoryConfig {
 		Enabled:           true,
 		DBPath:            "", // empty = use default (~/.artemis/memory.db)
 		ConsolidateOnExit: true,
-		MaxFactAge:        90, // prune facts unused for 90 days
-		MinFactUseCount:   2,  // facts used <2 times get pruned
+		MaxFactAge:        90,   // prune facts unused for 90 days
+		MinFactUseCount:   2,    // facts used <2 times get pruned
+		ArchiveEnabled:    true,  // COLD tier on by default
+		ArchivePath:       "", // empty = use default (~/.artemis/archive/)
 	}
 }
 
@@ -217,6 +223,19 @@ func (c *Config) MemoryDBPath() string {
 		return "memory.db" // fallback to current directory
 	}
 	return filepath.Join(dir, "memory.db")
+}
+
+// ArchivePath returns the resolved JSONL archive directory.
+// If not set in config, uses the default location in the Artemis config directory.
+func (c *Config) ArchivePath() string {
+	if c.Memory.ArchivePath != "" {
+		return c.Memory.ArchivePath
+	}
+	dir, err := configDir()
+	if err != nil {
+		return "archive" // fallback to current directory
+	}
+	return filepath.Join(dir, "archive")
 }
 
 // configDir returns the configuration directory path.
@@ -306,6 +325,17 @@ func (c *Config) GetProvider(name string) *ProviderConfig {
 // GetGLM returns the GLM Coding Plan config.
 func (c *Config) GetGLM() *GLMConfig {
 	return &c.GLM
+}
+
+// GetActiveModel returns model name for currently active single-provider mode.
+func (c *Config) GetActiveModel() string {
+	if c.ActiveProvider == "glm" {
+		return c.GLM.Model
+	}
+	if p := c.GetProvider(c.ActiveProvider); p != nil {
+		return p.Model
+	}
+	return "unknown"
 }
 
 // ProviderForRole returns the provider name for a role based on the active tier.

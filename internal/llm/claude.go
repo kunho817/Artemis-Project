@@ -15,8 +15,9 @@ import (
 
 // Claude implements the Provider interface for Anthropic's Claude API.
 type Claude struct {
-	cfg    config.ProviderConfig
-	client *http.Client
+	cfg       config.ProviderConfig
+	client    *http.Client
+	lastUsage *TokenUsage
 }
 
 // NewClaude creates a new Claude provider.
@@ -48,6 +49,10 @@ type claudeResponse struct {
 	Content []struct {
 		Text string `json:"text"`
 	} `json:"content"`
+	Usage *struct {
+		InputTokens  int `json:"input_tokens"`
+		OutputTokens int `json:"output_tokens"`
+	} `json:"usage"`
 	Error *struct {
 		Message string `json:"message"`
 	} `json:"error"`
@@ -57,6 +62,7 @@ func (c *Claude) Send(ctx context.Context, messages []Message) (string, error) {
 	if c.cfg.APIKey == "" {
 		return "", fmt.Errorf("claude: API key not configured")
 	}
+	c.lastUsage = nil
 
 	// Extract system prompt and convert messages
 	var systemPrompt string
@@ -121,6 +127,16 @@ func (c *Claude) Send(ctx context.Context, messages []Message) (string, error) {
 		return "", fmt.Errorf("claude: empty response")
 	}
 
+	if result.Usage != nil {
+		c.lastUsage = &TokenUsage{
+			PromptTokens:     result.Usage.InputTokens,
+			CompletionTokens: result.Usage.OutputTokens,
+			TotalTokens:      result.Usage.InputTokens + result.Usage.OutputTokens,
+		}
+	} else {
+		c.lastUsage = nil
+	}
+
 	return result.Content[0].Text, nil
 }
 
@@ -128,6 +144,7 @@ func (c *Claude) Stream(ctx context.Context, messages []Message) (<-chan StreamC
 	if c.cfg.APIKey == "" {
 		return nil, fmt.Errorf("claude: API key not configured")
 	}
+	c.lastUsage = nil
 
 	// Extract system prompt and convert messages
 	var systemPrompt string
@@ -176,6 +193,9 @@ func (c *Claude) Stream(ctx context.Context, messages []Message) (<-chan StreamC
 	go func() {
 		defer close(ch)
 		defer resp.Body.Close()
+		var promptTokens int
+		var completionTokens int
+		var usageSeen bool
 		scanner := bufio.NewScanner(resp.Body)
 		for scanner.Scan() {
 			line := scanner.Text()
@@ -184,23 +204,59 @@ func (c *Claude) Stream(ctx context.Context, messages []Message) (<-chan StreamC
 			}
 			data := strings.TrimPrefix(line, "data: ")
 			var event struct {
-				Type  string `json:"type"`
+				Type    string `json:"type"`
+				Message struct {
+					Usage *struct {
+						InputTokens int `json:"input_tokens"`
+					} `json:"usage"`
+				} `json:"message"`
 				Delta struct {
 					Type string `json:"type"`
 					Text string `json:"text"`
 				} `json:"delta"`
+				Usage *struct {
+					OutputTokens int `json:"output_tokens"`
+				} `json:"usage"`
 			}
 			if err := json.Unmarshal([]byte(data), &event); err != nil {
 				continue
 			}
+			if event.Type == "message_start" && event.Message.Usage != nil {
+				promptTokens = event.Message.Usage.InputTokens
+				usageSeen = true
+			}
+			if event.Type == "message_delta" && event.Usage != nil {
+				if event.Usage.OutputTokens > completionTokens {
+					completionTokens = event.Usage.OutputTokens
+				}
+				usageSeen = true
+			}
 			if event.Type == "content_block_delta" && event.Delta.Text != "" {
 				ch <- StreamChunk{Content: event.Delta.Text}
 			} else if event.Type == "message_stop" {
-				ch <- StreamChunk{Done: true}
+				var usage *TokenUsage
+				if usageSeen {
+					usage = &TokenUsage{
+						PromptTokens:     promptTokens,
+						CompletionTokens: completionTokens,
+						TotalTokens:      promptTokens + completionTokens,
+					}
+					c.lastUsage = usage
+				}
+				ch <- StreamChunk{Done: true, Usage: usage}
 				return
 			}
 		}
-		ch <- StreamChunk{Done: true}
+		var usage *TokenUsage
+		if usageSeen {
+			usage = &TokenUsage{
+				PromptTokens:     promptTokens,
+				CompletionTokens: completionTokens,
+				TotalTokens:      promptTokens + completionTokens,
+			}
+			c.lastUsage = usage
+		}
+		ch <- StreamChunk{Done: true, Usage: usage}
 	}()
 
 	return ch, nil

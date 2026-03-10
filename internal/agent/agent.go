@@ -77,10 +77,10 @@ type BaseAgent struct {
 	system       string // system prompt defining persona
 	eventBus     *bus.EventBus
 	critical     bool
-	overrideTask string           // task assigned by Orchestrator (overrides default)
-	toolExec     *tools.ToolExecutor // tool executor for file/shell operations
-	memStore     memory.MemoryStore  // persistent memory (nil if disabled)
-	maxToolIter  int                 // max tool iterations (0 = unlimited)
+	overrideTask string               // task assigned by Orchestrator (overrides default)
+	toolExec     *tools.ToolExecutor  // tool executor for file/shell operations
+	memStore     memory.MemoryStore   // persistent memory (nil if disabled)
+	maxToolIter  int                  // max tool iterations (0 = unlimited)
 	repoMap      *memory.RepoMapStore // Phase 3: repo-map (nil if disabled)
 }
 
@@ -97,12 +97,12 @@ func NewBaseAgent(name string, role Role, provider llm.Provider, systemPrompt st
 	}
 }
 
-func (b *BaseAgent) Name() string    { return b.name }
-func (b *BaseAgent) Role() Role      { return b.role }
-func (b *BaseAgent) Critical() bool  { return b.critical }
-func (b *BaseAgent) SetTask(task string)    { b.overrideTask = task }
-func (b *BaseAgent) SetCritical(c bool)     { b.critical = c }
-func (b *BaseAgent) OverrideTask() string   { return b.overrideTask }
+func (b *BaseAgent) Name() string                      { return b.name }
+func (b *BaseAgent) Role() Role                        { return b.role }
+func (b *BaseAgent) Critical() bool                    { return b.critical }
+func (b *BaseAgent) SetTask(task string)               { b.overrideTask = task }
+func (b *BaseAgent) SetCritical(c bool)                { b.critical = c }
+func (b *BaseAgent) OverrideTask() string              { return b.overrideTask }
 func (b *BaseAgent) ToolExecutor() *tools.ToolExecutor { return b.toolExec }
 
 // SetMemory attaches a MemoryStore to this agent for persistent memory access.
@@ -178,6 +178,15 @@ func (b *BaseAgent) EmitStreamDone(phase string) {
 	}
 }
 
+// EmitUsage sends token usage information to the TUI.
+func (b *BaseAgent) EmitUsage(phase string, usage *llm.TokenUsage) {
+	if b.eventBus != nil && usage != nil {
+		e := bus.NewEvent(bus.EventAgentUsage, b.name, phase, "")
+		e.Data = usage
+		b.eventBus.Emit(e)
+	}
+}
+
 // CallLLM sends a prompt to the agent's LLM provider with the system prompt.
 func (b *BaseAgent) CallLLM(ctx context.Context, userPrompt string) (string, error) {
 	if b.provider == nil {
@@ -233,17 +242,22 @@ func (b *BaseAgent) CallLLMWithTools(ctx context.Context, userPrompt string, pha
 	if maxIter <= 0 {
 		maxIter = 0 // unlimited
 	}
+	totalUsage := &llm.TokenUsage{}
 	for i := 0; maxIter == 0 || i < maxIter; i++ {
 		// Stream the LLM response, accumulating the full text
-		response, err := b.streamAndAccumulate(ctx, messages, phase)
+		response, usage, err := b.streamAndAccumulate(ctx, messages, phase)
 		if err != nil {
 			return "", err
 		}
+		totalUsage.Add(usage)
 
 		// Parse tool invocations from the accumulated response
 		invocations, cleanResponse := tools.ParseToolInvocations(response)
 		if len(invocations) == 0 {
 			// No tool calls — this is the final response
+			if totalUsage.TotalTokens > 0 {
+				b.EmitUsage(phase, totalUsage)
+			}
 			return cleanResponse, nil
 		}
 
@@ -278,28 +292,30 @@ func (b *BaseAgent) CallLLMWithTools(ctx context.Context, userPrompt string, pha
 
 // streamAndAccumulate streams an LLM response, emitting chunks to the TUI
 // while accumulating the full response text. Returns the complete response.
-func (b *BaseAgent) streamAndAccumulate(ctx context.Context, messages []llm.Message, phase string) (string, error) {
+func (b *BaseAgent) streamAndAccumulate(ctx context.Context, messages []llm.Message, phase string) (string, *llm.TokenUsage, error) {
 	ch, err := b.provider.Stream(ctx, messages)
 	if err != nil {
 		// Fallback to Send() if streaming fails (e.g. provider doesn't support it)
 		resp, sendErr := b.provider.Send(ctx, messages)
 		if sendErr != nil {
-			return "", sendErr
+			return "", nil, sendErr
 		}
 		// Emit the full response as a single output event (non-streaming fallback)
 		b.EmitOutput(phase, resp)
-		return resp, nil
+		return resp, nil, nil
 	}
 
 	b.EmitStreamStart(phase)
 
 	var buf strings.Builder
+	var usage *llm.TokenUsage
 	for chunk := range ch {
 		if chunk.Error != nil {
 			b.EmitStreamDone(phase)
-			return "", chunk.Error
+			return "", nil, chunk.Error
 		}
 		if chunk.Done {
+			usage = chunk.Usage
 			break
 		}
 		if chunk.Content != "" {
@@ -309,7 +325,7 @@ func (b *BaseAgent) streamAndAccumulate(ctx context.Context, messages []llm.Mess
 	}
 
 	b.EmitStreamDone(phase)
-	return buf.String(), nil
+	return buf.String(), usage, nil
 }
 
 // BuildPromptWithContext creates a prompt that includes relevant session state,

@@ -3,6 +3,7 @@ package theme
 import (
 	"embed"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 
@@ -261,7 +262,10 @@ func init() {
 //  2. Embedded presets/{name}.json     (built-in)
 //
 // Falls back to "default" if the requested theme is not found.
+// User themes with missing color fields inherit from the default theme.
 func Load(name string) error {
+	defaults := DefaultTheme()
+
 	// 1. Try user override
 	userPath, err := userThemePath(name)
 	if err == nil {
@@ -269,6 +273,7 @@ func Load(name string) error {
 		if readErr == nil {
 			var t Theme
 			if jsonErr := json.Unmarshal(data, &t); jsonErr == nil {
+				mergeDefaults(&t.Colors, &defaults.Colors)
 				Active = t
 				S = BuildStyles(&Active)
 				return nil
@@ -378,4 +383,106 @@ func userThemePath(name string) (string, error) {
 		return "", err
 	}
 	return filepath.Join(dir, name+".json"), nil
+}
+
+// EnsureThemeDir creates the user themes directory if it doesn't exist.
+// Returns the directory path.
+func EnsureThemeDir() (string, error) {
+	dir, err := userThemeDir()
+	if err != nil {
+		return "", err
+	}
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return "", err
+	}
+	return dir, nil
+}
+
+// ExportTheme saves the currently active theme to the user themes directory.
+// If a file with the same name exists, it appends "-custom" to avoid overwriting.
+// Returns the path of the exported file.
+func ExportTheme(name string) (string, error) {
+	dir, err := EnsureThemeDir()
+	if err != nil {
+		return "", fmt.Errorf("cannot create themes directory: %w", err)
+	}
+
+	// Avoid overwriting existing file
+	fileName := name
+	path := filepath.Join(dir, fileName+".json")
+	if _, err := os.Stat(path); err == nil {
+		// File exists — use name-custom
+		fileName = name + "-custom"
+		path = filepath.Join(dir, fileName+".json")
+	}
+
+	// Export active theme with the (possibly new) name
+	exported := Active
+	exported.Name = fileName
+
+	data, err := json.MarshalIndent(exported, "", "  ")
+	if err != nil {
+		return "", fmt.Errorf("cannot marshal theme: %w", err)
+	}
+
+	if err := os.WriteFile(path, data, 0644); err != nil {
+		return "", fmt.Errorf("cannot write theme file: %w", err)
+	}
+
+	return path, nil
+}
+
+// mergeDefaults fills zero-value color fields in target with values from defaults.
+func mergeDefaults(target, defaults *ThemeColors) {
+	if target.Primary == "" {
+		target.Primary = defaults.Primary
+	}
+	if target.Secondary == "" {
+		target.Secondary = defaults.Secondary
+	}
+	if target.Accent == "" {
+		target.Accent = defaults.Accent
+	}
+	if target.Success == "" {
+		target.Success = defaults.Success
+	}
+	if target.Warning == "" {
+		target.Warning = defaults.Warning
+	}
+	if target.Error == "" {
+		target.Error = defaults.Error
+	}
+	if target.Text == "" {
+		target.Text = defaults.Text
+	}
+	if target.DimText == "" {
+		target.DimText = defaults.DimText
+	}
+	if target.Muted == "" {
+		target.Muted = defaults.Muted
+	}
+	if target.Background == "" {
+		target.Background = defaults.Background
+	}
+	if target.Panel == "" {
+		target.Panel = defaults.Panel
+	}
+	if target.Surface == "" {
+		target.Surface = defaults.Surface
+	}
+	if target.Border == "" {
+		target.Border = defaults.Border
+	}
+	if target.AgentAnalysis == "" {
+		target.AgentAnalysis = defaults.AgentAnalysis
+	}
+	if target.AgentPlan == "" {
+		target.AgentPlan = defaults.AgentPlan
+	}
+	if target.AgentCode == "" {
+		target.AgentCode = defaults.AgentCode
+	}
+	if target.AgentVerify == "" {
+		target.AgentVerify = defaults.AgentVerify
+	}
 }

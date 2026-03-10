@@ -6,22 +6,23 @@ import "time"
 type EventType int
 
 const (
-	EventAgentStart    EventType = iota // Agent began execution
-	EventAgentProgress                  // Agent intermediate update
-	EventAgentComplete                  // Agent finished successfully
-	EventAgentFail                      // Agent encountered an error
-	EventAgentOutput                    // Agent produced displayable output
-	EventPhaseStart                     // Pipeline phase began
-	EventPhaseComplete                  // Pipeline phase finished
-	EventPipelineDone                   // Entire pipeline completed
-	EventOrchestratorStart              // Orchestrator began planning
-	EventOrchestratorPlanReady          // Orchestrator produced an execution plan
-	EventStepStart                      // Dynamic plan step began
-	EventStepComplete                   // Dynamic plan step finished
-	EventFileChanged                    // Agent modified a file via tool
-	EventAgentStreamStart               // Agent began streaming a response
-	EventAgentStreamChunk               // Agent streaming chunk (partial text)
-	EventAgentStreamDone                // Agent streaming completed
+	EventAgentStart            EventType = iota // Agent began execution
+	EventAgentProgress                          // Agent intermediate update
+	EventAgentComplete                          // Agent finished successfully
+	EventAgentFail                              // Agent encountered an error
+	EventAgentOutput                            // Agent produced displayable output
+	EventPhaseStart                             // Pipeline phase began
+	EventPhaseComplete                          // Pipeline phase finished
+	EventPipelineDone                           // Entire pipeline completed
+	EventOrchestratorStart                      // Orchestrator began planning
+	EventOrchestratorPlanReady                  // Orchestrator produced an execution plan
+	EventStepStart                              // Dynamic plan step began
+	EventStepComplete                           // Dynamic plan step finished
+	EventFileChanged                            // Agent modified a file via tool
+	EventAgentStreamStart                       // Agent began streaming a response
+	EventAgentStreamChunk                       // Agent streaming chunk (partial text)
+	EventAgentStreamDone                        // Agent streaming completed
+	EventAgentUsage                             // Agent reported token usage
 )
 
 // AgentEvent carries status updates from agents to the TUI.
@@ -30,6 +31,7 @@ type AgentEvent struct {
 	AgentName string
 	Phase     string
 	Message   string
+	Data      interface{} // optional structured payload (e.g., *llm.TokenUsage)
 	Error     error
 	Timestamp time.Time
 }

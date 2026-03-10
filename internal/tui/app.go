@@ -91,7 +91,7 @@ type App struct {
 
 	// Persistent memory
 	memStore     memory.MemoryStore
-	vectorStore  *memory.VectorStore // Phase 2: vector search
+	vectorStore  memory.VectorSearcher // Phase 2: vector search
 	consolidator *memory.Consolidator
 	repoMapStore *memory.RepoMapStore // Phase 3: repo-map
 	sessionID    string               // unique ID for current session
@@ -109,6 +109,10 @@ type App struct {
 	pipelineOutputs  []string                    // accumulates agent output during pipeline run
 	streamCh         <-chan llm.StreamChunk      // active stream channel (single mode)
 	agentStreams     map[string]*agentStreamInfo // per-agent streaming state (multi-agent mode)
+
+	// Cost tracking
+	totalTokens int
+	totalCost   float64
 
 	overlayKind OverlayKind
 	overlay     Overlay
@@ -149,6 +153,8 @@ func NewApp() App {
 		cfg:          cfg,
 		toolExecutor: tools.NewToolExecutor(cwd),
 		sessionID:    fmt.Sprintf("ses_%d", time.Now().UnixNano()),
+		totalTokens:  0,
+		totalCost:    0,
 	}
 	app.statusBar.SetKeyHints([]KeyHint{
 		{Key: "^↵", Desc: "Send"},
@@ -165,15 +171,22 @@ func NewApp() App {
 
 	// Initialize persistent memory
 	app.initMemory()
-	// Determine welcome message based on mode
+	// Determine welcome message based on mode and provider status
 	mode := "single-provider"
 	if cfg.Agents.Enabled {
 		mode = "multi-agent orchestrator"
 	}
-	app.chat.AddMessage(ChatMessage{
-		Role:    RoleSystem,
-		Content: fmt.Sprintf("Welcome to Artemis (%s mode). Type a message to begin. [Ctrl+S] for settings.", mode),
-	})
+	if app.provider != nil {
+		app.chat.AddMessage(ChatMessage{
+			Role:    RoleSystem,
+			Content: fmt.Sprintf("Welcome to Artemis (%s mode). Type a message to begin.", mode),
+		})
+	} else {
+		app.chat.AddMessage(ChatMessage{
+			Role:    RoleSystem,
+			Content: "⚠ No LLM provider configured. Press [Ctrl+S] to set up API keys.",
+		})
+	}
 
 	return app
 }
@@ -186,6 +199,7 @@ func (a *App) initProvider() {
 		a.statusBar.SetModel(cases.Title(language.English).String(raw.Name()))
 	} else {
 		a.provider = nil
+		a.statusBar.SetModel("No Provider")
 	}
 
 	// Update mode/tier in status bar
@@ -572,9 +586,24 @@ func (a *App) clearChatState() {
 	a.history = nil
 	a.pipelineOutputs = nil
 	a.agentStreams = nil
+	a.totalTokens = 0
+	a.totalCost = 0
+	a.statusBar.SetTokens(0)
+	a.statusBar.SetCost(0)
 	a.focused = FocusChat
 	a.layoutMode = LayoutSingle
 	a.recalcLayout()
+}
+
+func (a *App) addUsage(usage *llm.TokenUsage, model string) {
+	if usage == nil {
+		return
+	}
+	a.totalTokens += usage.TotalTokens
+	pricing := llm.GetPricing(model)
+	a.totalCost += llm.CalculateCost(usage, pricing)
+	a.statusBar.SetTokens(a.totalTokens)
+	a.statusBar.SetCost(a.totalCost)
 }
 
 func (a *App) handleOverlayResult(result OverlayResult) {
@@ -643,6 +672,18 @@ func (a *App) handleOverlayResult(result OverlayResult) {
 		_ = theme.Load(a.cfg.Theme)
 		RefreshStyles()
 		a.chat.AddMessage(ChatMessage{Role: RoleSystem, Content: fmt.Sprintf("Theme switched to %s.", a.cfg.Theme)})
+
+	case "export_theme":
+		currentName := a.cfg.Theme
+		if currentName == "" {
+			currentName = "default"
+		}
+		path, err := theme.ExportTheme(currentName)
+		if err != nil {
+			a.chat.AddMessage(ChatMessage{Role: RoleSystem, Content: fmt.Sprintf("Failed to export theme: %v", err)})
+			return
+		}
+		a.chat.AddMessage(ChatMessage{Role: RoleSystem, Content: fmt.Sprintf("Theme exported to %s — edit and restart to apply.", path)})
 
 	case "agents_changed":
 		if sel, ok := a.overlay.(*AgentSelector); ok {

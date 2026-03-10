@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/bubbles/textinput"
+	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
@@ -21,14 +22,16 @@ const (
 
 // ConfigView is the settings screen for API and agent configuration.
 type ConfigView struct {
-	cfg       config.Config
-	tabIdx    int // 0-3 = providers, 4 = agents
-	fieldIdx  int // field within current tab
-	inputs    []textinput.Model
-	width     int
-	height    int
-	saved     bool
-	statusMsg string
+	cfg          config.Config
+	tabIdx       int // 0-3 = providers, 4 = agents
+	fieldIdx     int // field within current tab
+	inputs       []textinput.Model
+	width        int
+	height       int
+	saved        bool
+	statusMsg    string
+	sysViewport  viewport.Model // scrollable viewport for System tab
+	sysVpReady   bool
 }
 
 // tab labels: 4 providers + Agents + System
@@ -279,6 +282,48 @@ func (cv *ConfigView) SetSize(w, h int) {
 	for i := range cv.inputs {
 		cv.inputs[i].Width = inputWidth
 	}
+	// Size viewport for System tab: content area = height minus title/tabs/divider/help (~10 lines)
+	vpHeight := h - 10
+	if vpHeight < 4 {
+		vpHeight = 4
+	}
+	cv.sysViewport.Width = w - 4
+	cv.sysViewport.Height = vpHeight
+	cv.sysVpReady = true
+}
+
+// refreshSystemViewport renders System tab content into the viewport.
+func (cv *ConfigView) refreshSystemViewport() {
+	if !cv.sysVpReady {
+		return
+	}
+	var sb strings.Builder
+	cv.renderSystemContent(&sb)
+	cv.sysViewport.SetContent(sb.String())
+}
+
+// scrollToField auto-scrolls the System tab viewport to keep the focused field visible.
+func (cv *ConfigView) scrollToField() {
+	if !cv.isOnSystemTab() || !cv.sysVpReady {
+		return
+	}
+	// Approximate line offset per field in System tab content.
+	// Each section header ~3 lines, each field ~2 lines + blank line.
+	// Layout:  field 0 ~line 3, field 1 ~6, field 2 ~9, field 3 ~12,
+	//          field 4 ~18 (section), field 5 ~24, field 6 ~27, field 7 ~30,
+	//          field 8 ~36 (section), field 9 ~39, field 10 ~48 (section)
+	fieldLineOffsets := []int{3, 6, 9, 12, 18, 24, 27, 30, 36, 39, 48}
+	if cv.fieldIdx >= len(fieldLineOffsets) {
+		return
+	}
+	target := fieldLineOffsets[cv.fieldIdx]
+	// Ensure target line is visible — scroll so it's roughly in top third
+	topThird := cv.sysViewport.Height / 3
+	desired := target - topThird
+	if desired < 0 {
+		desired = 0
+	}
+	cv.sysViewport.SetYOffset(desired)
 }
 
 // Update handles input for the config view.
@@ -299,6 +344,7 @@ func (cv *ConfigView) Update(msg tea.Msg) (bool, tea.Cmd) {
 			cv.applyInputsToConfig()
 			cv.fieldIdx = (cv.fieldIdx + 1) % cv.fieldCountForTab()
 			cv.focusField()
+			cv.scrollToField()
 			return false, nil
 
 		case "shift+tab", "up":
@@ -308,6 +354,7 @@ func (cv *ConfigView) Update(msg tea.Msg) (bool, tea.Cmd) {
 				cv.fieldIdx = cv.fieldCountForTab() - 1
 			}
 			cv.focusField()
+			cv.scrollToField()
 			return false, nil
 
 		case "enter":
@@ -317,6 +364,7 @@ func (cv *ConfigView) Update(msg tea.Msg) (bool, tea.Cmd) {
 			}
 			if cv.isOnSystemTab() && (cv.fieldIdx < 2 || cv.fieldIdx == 5 || cv.fieldIdx == 8 || cv.fieldIdx == 10) {
 				cv.toggleSystemField()
+				cv.refreshSystemViewport()
 				return false, nil
 			}
 
@@ -338,6 +386,23 @@ func (cv *ConfigView) Update(msg tea.Msg) (bool, tea.Cmd) {
 			cv.buildInputs()
 			cv.SetSize(cv.width, cv.height)
 			return false, nil
+		}
+	}
+
+	// Forward mouse wheel and PgUp/PgDn to viewport on System tab
+	if cv.isOnSystemTab() && cv.sysVpReady {
+		switch msg := msg.(type) {
+		case tea.MouseMsg:
+			var cmd tea.Cmd
+			cv.sysViewport, cmd = cv.sysViewport.Update(msg)
+			return false, cmd
+		case tea.KeyMsg:
+			switch msg.String() {
+			case "pgup", "pgdown":
+				var cmd tea.Cmd
+				cv.sysViewport, cmd = cv.sysViewport.Update(msg)
+				return false, cmd
+			}
 		}
 	}
 
@@ -388,7 +453,8 @@ func (cv *ConfigView) View() string {
 	if cv.isOnAgentsTab() {
 		cv.renderAgentsContent(&sb)
 	} else if cv.isOnSystemTab() {
-		cv.renderSystemContent(&sb)
+		cv.refreshSystemViewport()
+		sb.WriteString(cv.sysViewport.View())
 	} else {
 		cv.renderProviderContent(&sb)
 	}
@@ -399,7 +465,13 @@ func (cv *ConfigView) View() string {
 
 	// Help
 	helpText := "[Tab/↑↓] Navigate  [Ctrl+←→] Switch tab  [Ctrl+S/Esc] Save & exit"
-	if cv.isOnAgentsTab() || (cv.isOnSystemTab() && (cv.fieldIdx < 2 || cv.fieldIdx == 5 || cv.fieldIdx == 8)) {
+	if cv.isOnSystemTab() {
+		if cv.fieldIdx < 2 || cv.fieldIdx == 5 || cv.fieldIdx == 8 || cv.fieldIdx == 10 {
+			helpText = "[Tab/↑↓] Navigate  [Enter] Toggle  [PgUp/PgDn] Scroll  [Ctrl+←→] Tab  [Ctrl+S/Esc] Save"
+		} else {
+			helpText = "[Tab/↑↓] Navigate  [PgUp/PgDn] Scroll  [Ctrl+←→] Switch tab  [Ctrl+S/Esc] Save & exit"
+		}
+	} else if cv.isOnAgentsTab() {
 		helpText = "[Tab/↑↓] Navigate  [Enter] Toggle  [Ctrl+←→] Switch tab  [Ctrl+S/Esc] Save & exit"
 	}
 	help := lipgloss.NewStyle().Foreground(ColorDimText).Padding(1, 2).Render(helpText)

@@ -18,6 +18,7 @@ type StreamChunk struct {
 	Reasoning string // GLM reasoning_content (thinking mode)
 	Done      bool
 	Error     error
+	Usage     *TokenUsage // populated on Done=true chunk with total usage
 }
 
 // Provider defines the interface all LLM providers must implement.

@@ -15,8 +15,9 @@ import (
 
 // GPT implements the Provider interface for OpenAI's GPT API.
 type GPT struct {
-	cfg    config.ProviderConfig
-	client *http.Client
+	cfg       config.ProviderConfig
+	client    *http.Client
+	lastUsage *TokenUsage
 }
 
 // NewGPT creates a new GPT provider.
@@ -31,9 +32,12 @@ func (g *GPT) Name() string { return "gpt" }
 
 // OpenAI API types
 type gptRequest struct {
-	Model    string       `json:"model"`
-	Messages []gptMessage `json:"messages"`
-	Stream   bool         `json:"stream,omitempty"`
+	Model         string       `json:"model"`
+	Messages      []gptMessage `json:"messages"`
+	Stream        bool         `json:"stream,omitempty"`
+	StreamOptions *struct {
+		IncludeUsage bool `json:"include_usage"`
+	} `json:"stream_options,omitempty"`
 }
 
 type gptMessage struct {
@@ -47,6 +51,11 @@ type gptResponse struct {
 			Content string `json:"content"`
 		} `json:"message"`
 	} `json:"choices"`
+	Usage *struct {
+		PromptTokens     int `json:"prompt_tokens"`
+		CompletionTokens int `json:"completion_tokens"`
+		TotalTokens      int `json:"total_tokens"`
+	} `json:"usage"`
 	Error *struct {
 		Message string `json:"message"`
 	} `json:"error"`
@@ -56,6 +65,7 @@ func (g *GPT) Send(ctx context.Context, messages []Message) (string, error) {
 	if g.cfg.APIKey == "" {
 		return "", fmt.Errorf("gpt: API key not configured")
 	}
+	g.lastUsage = nil
 
 	var msgs []gptMessage
 	for _, m := range messages {
@@ -110,6 +120,16 @@ func (g *GPT) Send(ctx context.Context, messages []Message) (string, error) {
 		return "", fmt.Errorf("gpt: empty response")
 	}
 
+	if result.Usage != nil {
+		g.lastUsage = &TokenUsage{
+			PromptTokens:     result.Usage.PromptTokens,
+			CompletionTokens: result.Usage.CompletionTokens,
+			TotalTokens:      result.Usage.TotalTokens,
+		}
+	} else {
+		g.lastUsage = nil
+	}
+
 	return result.Choices[0].Message.Content, nil
 }
 
@@ -117,6 +137,7 @@ func (g *GPT) Stream(ctx context.Context, messages []Message) (<-chan StreamChun
 	if g.cfg.APIKey == "" {
 		return nil, fmt.Errorf("gpt: API key not configured")
 	}
+	g.lastUsage = nil
 
 	var msgs []gptMessage
 	for _, m := range messages {
@@ -127,6 +148,9 @@ func (g *GPT) Stream(ctx context.Context, messages []Message) (<-chan StreamChun
 		Model:    g.cfg.Model,
 		Messages: msgs,
 		Stream:   true,
+		StreamOptions: &struct {
+			IncludeUsage bool `json:"include_usage"`
+		}{IncludeUsage: true},
 	}
 
 	body, err := json.Marshal(reqBody)
@@ -156,6 +180,7 @@ func (g *GPT) Stream(ctx context.Context, messages []Message) (<-chan StreamChun
 	go func() {
 		defer close(ch)
 		defer resp.Body.Close()
+		var usage *TokenUsage
 		scanner := bufio.NewScanner(resp.Body)
 		for scanner.Scan() {
 			line := scanner.Text()
@@ -164,24 +189,36 @@ func (g *GPT) Stream(ctx context.Context, messages []Message) (<-chan StreamChun
 			}
 			data := strings.TrimPrefix(line, "data: ")
 			if data == "[DONE]" {
-				ch <- StreamChunk{Done: true}
+				ch <- StreamChunk{Done: true, Usage: usage}
 				return
 			}
-			var event struct {
+			var event gptResponse
+			if err := json.Unmarshal([]byte(data), &event); err != nil {
+				continue
+			}
+			if event.Usage != nil {
+				usage = &TokenUsage{
+					PromptTokens:     event.Usage.PromptTokens,
+					CompletionTokens: event.Usage.CompletionTokens,
+					TotalTokens:      event.Usage.TotalTokens,
+				}
+				g.lastUsage = usage
+			}
+			var delta struct {
 				Choices []struct {
 					Delta struct {
 						Content string `json:"content"`
 					} `json:"delta"`
 				} `json:"choices"`
 			}
-			if err := json.Unmarshal([]byte(data), &event); err != nil {
+			if err := json.Unmarshal([]byte(data), &delta); err != nil {
 				continue
 			}
-			if len(event.Choices) > 0 && event.Choices[0].Delta.Content != "" {
-				ch <- StreamChunk{Content: event.Choices[0].Delta.Content}
+			if len(delta.Choices) > 0 && delta.Choices[0].Delta.Content != "" {
+				ch <- StreamChunk{Content: delta.Choices[0].Delta.Content}
 			}
 		}
-		ch <- StreamChunk{Done: true}
+		ch <- StreamChunk{Done: true, Usage: usage}
 	}()
 
 	return ch, nil

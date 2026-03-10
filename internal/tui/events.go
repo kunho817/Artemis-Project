@@ -97,9 +97,20 @@ func (a App) handleAgentEvent(msg AgentEventMsg) (tea.Model, tea.Cmd) {
 		})
 
 	case bus.EventAgentFail:
+		errText := event.Message
+		// Classify engine errors for user-friendly display
+		if event.AgentName == "engine" {
+			// Engine errors are LLM/provider errors — classify them
+			providerName := a.cfg.ProviderForRole(event.Phase)
+			if providerName == "" {
+				providerName = a.cfg.ActiveProvider
+			}
+			fe := llm.ClassifyError(fmt.Errorf("%s", event.Message), providerName)
+			errText = fe.Error()
+		}
 		a.activity.AddActivity(ActivityItem{
 			Status: StatusError,
-			Text:   fmt.Sprintf("  %s: %s", event.AgentName, event.Message),
+			Text:   fmt.Sprintf("  %s: %s", event.AgentName, errText),
 		})
 
 	case bus.EventPhaseComplete:
@@ -162,6 +173,12 @@ func (a App) handleAgentEvent(msg AgentEventMsg) (tea.Model, tea.Cmd) {
 					fmt.Sprintf("[%s]\n%s", info.name, info.content))
 			}
 			delete(a.agentStreams, event.AgentName)
+		}
+
+	case bus.EventAgentUsage:
+		if usage, ok := event.Data.(*llm.TokenUsage); ok && usage != nil {
+			model := a.modelForRole(event.AgentName)
+			a.addUsage(usage, model)
 		}
 	}
 
@@ -247,4 +264,18 @@ func agentDisplayName(role string) string {
 	default:
 		return cases.Title(language.English).String(role)
 	}
+}
+
+func (a *App) modelForRole(role string) string {
+	providerName := a.cfg.ProviderForRole(role)
+	if providerName == "" {
+		return a.cfg.GetActiveModel()
+	}
+	if providerName == "glm" {
+		return a.cfg.GLM.Model
+	}
+	if p := a.cfg.GetProvider(providerName); p != nil {
+		return p.Model
+	}
+	return a.cfg.GetActiveModel()
 }

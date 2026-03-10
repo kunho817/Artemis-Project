@@ -23,7 +23,7 @@ const currentSchemaVersion = 3
 type SQLiteStore struct {
 	db           *sql.DB
 	dbPath       string
-	vectorStore  *VectorStore  // Phase 2: optional vector search
+	vectorStore  VectorSearcher // Phase 2: optional vector search
 	repoMapStore *RepoMapStore // Phase 3: optional repo-map indexing
 }
 
@@ -65,7 +65,7 @@ func NewSQLiteStore(dbPath string) (*SQLiteStore, error) {
 // SetVectorStore attaches a VectorStore for hybrid search capability.
 // When set, SaveFact/SaveSession/SaveDecision auto-embed content,
 // and QueryFacts uses RRF hybrid search (FTS5 + vector).
-func (s *SQLiteStore) SetVectorStore(vs *VectorStore) {
+func (s *SQLiteStore) SetVectorStore(vs VectorSearcher) {
 	s.vectorStore = vs
 }
 

@@ -130,6 +130,7 @@ func (a App) executePlan(plan *orchestrator.ExecutionPlan, userText string) (tea
 	buildAgent := func(role string) agent.Agent {
 		provider := a.buildProviderWithFallback(role)
 		if provider == nil {
+			eb.Emit(bus.NewEvent(bus.EventAgentFail, role, "plan", "skipped: no API key configured"))
 			return nil
 		}
 		ag := roles.NewRoleAgent(agent.Role(role), provider, eb, a.toolExecutor)
@@ -147,7 +148,10 @@ func (a App) executePlan(plan *orchestrator.ExecutionPlan, userText string) (tea
 	engine := orchestrator.NewEngine(nil, eb)
 
 	go func() {
-		_ = engine.RunPlan(ctx, plan, ss, buildAgent)
+		result := engine.RunPlan(ctx, plan, ss, buildAgent)
+		if !result.Completed && result.HaltError != nil {
+			eb.Emit(bus.NewEvent(bus.EventAgentFail, "engine", "plan", result.HaltError.Error()))
+		}
 		eb.Close()
 	}()
 
@@ -201,7 +205,10 @@ func (a App) executeLegacyPipeline(text string) (tea.Model, tea.Cmd) {
 	engine := orchestrator.NewEngine(pipeline, eb)
 
 	go func() {
-		_ = engine.Run(ctx, ss)
+		result := engine.Run(ctx, ss)
+		if !result.Completed && result.HaltError != nil {
+			eb.Emit(bus.NewEvent(bus.EventAgentFail, "engine", "pipeline", result.HaltError.Error()))
+		}
 		eb.Close()
 	}()
 
@@ -216,6 +223,7 @@ func (a *App) buildAgentsForPhase(eb *bus.EventBus, agentRoles ...agent.Role) []
 	for _, role := range agentRoles {
 		provider := a.buildProviderWithFallback(string(role))
 		if provider == nil {
+			eb.Emit(bus.NewEvent(bus.EventAgentFail, string(role), "init", "skipped: no API key configured"))
 			continue
 		}
 		ag := roles.NewRoleAgent(role, provider, eb, a.toolExecutor)
