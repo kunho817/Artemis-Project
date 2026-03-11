@@ -2,8 +2,10 @@ package github
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/artemis-project/artemis/internal/config"
 )
@@ -15,10 +17,38 @@ type Processor struct {
 	cfg       config.GitHubConfig
 	logger    func(string)
 	fixEngine FixEngine
+	triageLLM TriageLLM
+}
+
+// TriageLLM sends a classification request to an LLM.
+// Returns the raw response text. Injected to avoid github/ depending on llm/.
+type TriageLLM func(ctx context.Context, systemPrompt, userPrompt string) (string, error)
+
+const triagePrompt = `You are a GitHub issue triage classifier. Analyze the issue and classify it into exactly one category.
+
+CATEGORIES:
+- "auto_fix": Bug reports, error reports, crashes, broken functionality — issues describing specific code problems with enough detail for automated fixing.
+- "needs_human": Security vulnerabilities, complex architectural changes, unclear/ambiguous requirements, insufficient description, or issues too risky for automated fixing.
+- "not_applicable": Feature requests, enhancement suggestions, questions, help requests, documentation requests — anything that is NOT a code-fixing issue.
+
+RULES:
+- Security issues (CVE, vulnerability, exploit) → ALWAYS "needs_human"
+- Feature requests / enhancements → ALWAYS "not_applicable"
+- Questions / how-to requests → ALWAYS "not_applicable"
+- Very short descriptions with no actionable detail → "needs_human"
+- Clear bug reports with error messages or reproduction steps → "auto_fix"
+- When uncertain, prefer "needs_human" over "auto_fix"
+
+Respond with ONLY this JSON (no markdown, no code blocks, no extra text):
+{"status": "auto_fix", "reason": "one sentence explanation"}`
+
+type triageResponse struct {
+	Status string `json:"status"`
+	Reason string `json:"reason"`
 }
 
 // NewProcessor creates a new issue processor.
-func NewProcessor(cfg config.GitHubConfig, store IssueStore, logger func(string), fixEngine FixEngine) *Processor {
+func NewProcessor(cfg config.GitHubConfig, store IssueStore, logger func(string), fixEngine FixEngine, triageLLM TriageLLM) *Processor {
 	if logger == nil {
 		logger = func(string) {}
 	}
@@ -34,10 +64,11 @@ func NewProcessor(cfg config.GitHubConfig, store IssueStore, logger func(string)
 		cfg:       cfg,
 		logger:    logger,
 		fixEngine: fixEngine,
+		triageLLM: triageLLM,
 	}
 }
 
-// TriageIssue classifies an issue using lightweight heuristics.
+// TriageIssue classifies an issue using LLM-first triage with heuristic fallback.
 func (p *Processor) TriageIssue(ctx context.Context, issue *StoredIssue) (TriageStatus, string, error) {
 	if issue == nil {
 		return TriageNeedsHuman, "invalid issue payload", fmt.Errorf("triage: issue is nil")
@@ -46,28 +77,28 @@ func (p *Processor) TriageIssue(ctx context.Context, issue *StoredIssue) (Triage
 		return TriageNeedsHuman, "store unavailable", fmt.Errorf("triage: store not configured")
 	}
 
-	content := strings.ToLower(strings.TrimSpace(issue.Title + "\n" + issue.Body))
-	bodyLen := len(strings.TrimSpace(issue.Body))
+	var status TriageStatus
+	var reason string
 
-	status := TriageNeedsHuman
-	reason := "unable to determine fix approach"
+	// Try LLM triage first.
+	if p.triageLLM != nil {
+		s, r, err := p.llmTriage(ctx, issue)
+		if err == nil {
+			status = s
+			reason = fmt.Sprintf("[LLM] %s", r)
+		} else {
+			p.logger(fmt.Sprintf("LLM triage failed for #%d: %v, using heuristic", issue.IssueNumber, err))
+		}
+	}
 
-	switch {
-	case containsAny(content, "feature request", "enhancement", "suggestion"):
-		status = TriageNotApplicable
-		reason = "feature/enhancement request is not part of auto-fix pipeline"
-	case containsAny(content, "question", "how to", "help"):
-		status = TriageNotApplicable
-		reason = "question/help request is not a code-fix issue"
-	case bodyLen < 30:
-		status = TriageNeedsHuman
-		reason = "insufficient description"
-	case containsAny(content, "security", "vulnerability", "cve"):
-		status = TriageNeedsHuman
-		reason = "security issue requires manual review"
-	case containsAny(content, "crash", "panic", "error", "bug", "fix", "broken", "fail"):
-		status = TriageAutoFix
-		reason = "issue appears to be a bug/error suitable for automated scaffolding"
+	// Fallback to heuristic if LLM unavailable or failed.
+	if status == "" {
+		s, r, err := p.heuristicTriage(ctx, issue)
+		if err != nil {
+			return s, r, err
+		}
+		status = s
+		reason = fmt.Sprintf("[heuristic] %s", r)
 	}
 
 	if err := p.store.UpdateTriageStatus(ctx, issue.IssueNumber, status, reason); err != nil {
@@ -75,6 +106,77 @@ func (p *Processor) TriageIssue(ctx context.Context, issue *StoredIssue) (Triage
 	}
 
 	return status, reason, nil
+}
+
+func (p *Processor) heuristicTriage(_ context.Context, issue *StoredIssue) (TriageStatus, string, error) {
+	content := strings.ToLower(strings.TrimSpace(issue.Title + "\n" + issue.Body))
+	bodyLen := len(strings.TrimSpace(issue.Body))
+
+	switch {
+	case containsAny(content, "feature request", "enhancement", "suggestion"):
+		return TriageNotApplicable, "feature/enhancement request is not part of auto-fix pipeline", nil
+	case containsAny(content, "question", "how to", "help"):
+		return TriageNotApplicable, "question/help request is not a code-fix issue", nil
+	case bodyLen < 30:
+		return TriageNeedsHuman, "insufficient description", nil
+	case containsAny(content, "security", "vulnerability", "cve"):
+		return TriageNeedsHuman, "security issue requires manual review", nil
+	case containsAny(content, "crash", "panic", "error", "bug", "fix", "broken", "fail"):
+		return TriageAutoFix, "issue appears to be a bug/error suitable for automated scaffolding", nil
+	default:
+		return TriageNeedsHuman, "unable to determine fix approach", nil
+	}
+}
+
+func (p *Processor) llmTriage(ctx context.Context, issue *StoredIssue) (TriageStatus, string, error) {
+	triageCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	userPrompt := fmt.Sprintf("Issue #%d\nTitle: %s\nBody:\n%s", issue.IssueNumber, issue.Title, issue.Body)
+
+	response, err := p.triageLLM(triageCtx, triagePrompt, userPrompt)
+	if err != nil {
+		return "", "", fmt.Errorf("LLM triage: %w", err)
+	}
+
+	response = strings.TrimSpace(response)
+	// Strip markdown code blocks if present
+	if strings.HasPrefix(response, "```") {
+		lines := strings.Split(response, "\n")
+		if len(lines) > 2 {
+			lines = lines[1:]
+			if strings.TrimSpace(lines[len(lines)-1]) == "```" {
+				lines = lines[:len(lines)-1]
+			}
+			response = strings.Join(lines, "\n")
+		}
+	}
+
+	var result triageResponse
+	if err := json.Unmarshal([]byte(response), &result); err != nil {
+		return "", "", fmt.Errorf("parse triage response: %w", err)
+	}
+
+	status := mapTriageStatus(result.Status)
+	reason := result.Reason
+	if reason == "" {
+		reason = "LLM classification"
+	}
+
+	return status, reason, nil
+}
+
+func mapTriageStatus(s string) TriageStatus {
+	switch strings.TrimSpace(strings.ToLower(s)) {
+	case "auto_fix":
+		return TriageAutoFix
+	case "needs_human":
+		return TriageNeedsHuman
+	case "not_applicable":
+		return TriageNotApplicable
+	default:
+		return TriageNeedsHuman
+	}
 }
 
 // TriageAll triages all pending issues and returns status counts.
