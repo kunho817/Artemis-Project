@@ -33,10 +33,11 @@ type RoleMapping struct {
 // Budget uses only cost-effective providers (Gemini 종량제, GLM 구독제).
 // When Tier="premium", failed calls fall back to the Budget mapping for that role.
 type AgentConfig struct {
-	Enabled bool          `json:"enabled"`
-	Tier    string        `json:"tier"`    // "premium" or "budget"
-	Premium []RoleMapping `json:"premium"` // all 4 providers
-	Budget  []RoleMapping `json:"budget"`  // gemini + glm only
+	Enabled        bool              `json:"enabled"`
+	Tier           string            `json:"tier"`             // "premium" or "budget"
+	Premium        []RoleMapping     `json:"premium"`           // all 4 providers
+	Budget         []RoleMapping     `json:"budget"`            // gemini + glm only
+	ModelOverrides map[string]string `json:"model_overrides,omitempty"` // per-role model override (e.g., "scout": "gemini-3-flash-preview")
 }
 
 // MemoryConfig holds settings for the persistent memory system.
@@ -163,6 +164,8 @@ func DefaultAgentConfig() AgentConfig {
 			{Role: "engineer", Provider: "claude"},
 			{Role: "qa", Provider: "glm"},
 			{Role: "tester", Provider: "glm"},
+			{Role: "scout", Provider: "gemini"},
+			{Role: "consultant", Provider: "gpt"},
 		},
 		Budget: []RoleMapping{
 			{Role: "orchestrator", Provider: "gemini"},
@@ -176,6 +179,11 @@ func DefaultAgentConfig() AgentConfig {
 			{Role: "engineer", Provider: "glm"},
 			{Role: "qa", Provider: "glm"},
 			{Role: "tester", Provider: "glm"},
+			{Role: "scout", Provider: "gemini"},
+			{Role: "consultant", Provider: "gemini"},
+		},
+		ModelOverrides: map[string]string{
+			"scout": "gemini-3-flash-preview", // fast model for exploration
 		},
 	}
 }
@@ -386,6 +394,15 @@ func (c *Config) FallbackProviderForRole(role string) string {
 		if m.Role == role {
 			return m.Provider
 		}
+	}
+	return ""
+}
+
+// ModelForRole returns the model override for a role, if any.
+// Returns empty string if no override exists (use provider default).
+func (c *Config) ModelForRole(role string) string {
+	if c.Agents.ModelOverrides != nil {
+		return c.Agents.ModelOverrides[role]
 	}
 	return ""
 }

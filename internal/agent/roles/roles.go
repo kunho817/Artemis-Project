@@ -123,6 +123,12 @@ func (r *RoleAgent) taskDescription(ss *state.SessionState) string {
 	case agent.RoleTester:
 		return "Create and run tests for the implemented code."
 
+	case agent.RoleScout:
+		return "Analyze the codebase and gather information relevant to this request."
+
+	case agent.RoleConsultant:
+		return "Provide expert analysis and recommendations for this request."
+
 	default:
 		return "Execute your assigned task."
 	}
@@ -151,7 +157,18 @@ func roleConfig(role agent.Role) (name string, prompt string, artifactType state
 		return "QA", QAPrompt, state.ArtifactQAReport, true
 	case agent.RoleTester:
 		return "Tester", TesterPrompt, state.ArtifactTestResult, true
+	case agent.RoleScout:
+		return "Scout", ScoutPrompt, state.ArtifactExploration, false
+	case agent.RoleConsultant:
+		return "Consultant", ConsultantPrompt, state.ArtifactConsultation, false
 	default:
 		return string(role), "", state.ArtifactError, false
 	}
+}
+
+// SystemPromptForRole returns the system prompt for a given agent role.
+// Used by the TUI for direct routing (trivial intent) without creating a full RoleAgent.
+func SystemPromptForRole(role agent.Role) string {
+	_, prompt, _, _ := roleConfig(role)
+	return prompt
 }

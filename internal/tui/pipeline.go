@@ -15,16 +15,16 @@ import (
 	"github.com/artemis-project/artemis/internal/state"
 )
 
-// OrchestratorPlanMsg carries the Orchestrator's routing plan back to the Update loop.
+// OrchestratorPlanMsg carries the Orchestrator's routing decision back to the Update loop.
 type OrchestratorPlanMsg struct {
-	Plan     *orchestrator.ExecutionPlan
+	Response *orchestrator.OrchestratorResponse
 	UserText string // original user input for context + fallback
 	Error    error
 }
 
-// handleOrchestratedSubmit sends the user message to the Orchestrator first.
-// The Orchestrator analyzes intent and creates an execution plan specifying
-// which agents to invoke, with what tasks, in what order.
+// handleOrchestratedSubmit sends the user message to the Orchestrator for intent classification.
+// The Orchestrator classifies intent (trivial/conversational/exploratory/complex) and
+// creates a routing decision. Layout stays single until intent is known.
 func (a App) handleOrchestratedSubmit(text string) (tea.Model, tea.Cmd) {
 	// Build Orchestrator provider
 	orchProvider := a.buildProviderWithFallback("orchestrator")
@@ -36,20 +36,18 @@ func (a App) handleOrchestratedSubmit(text string) (tea.Model, tea.Cmd) {
 		return a, nil
 	}
 
-	// Show orchestrator activity
+	// Track orchestrator activity (visible when/if layout switches to split)
 	a.activity.AddActivity(ActivityItem{
 		Status: StatusRunning,
-		Text:   "Orchestrator: analyzing request...",
+		Text:   "Orchestrator: classifying intent...",
 	})
 	a.activity.SetSessionInfo(a.sessionID, a.statusBar.model)
 	a.activity.SetAgentCount(1)
 	a.pipelineRunning = true
-	a.layoutMode = LayoutSplit
-	a.recalcLayout()
+	// Layout stays single — handleOrchestratorPlan decides based on intent
 
 	// Fire async Orchestrator LLM call
 	userText := text
-	// Build messages: system prompt + full conversation history
 	history := make([]llm.Message, 0, len(a.history)+1)
 	history = append(history, llm.Message{Role: "system", Content: roles.OrchestratorPrompt})
 	history = append(history, a.history...)
@@ -60,15 +58,16 @@ func (a App) handleOrchestratedSubmit(text string) (tea.Model, tea.Cmd) {
 		if err != nil {
 			return OrchestratorPlanMsg{UserText: userText, Error: err}
 		}
-		plan, parseErr := orchestrator.ParsePlan(resp)
-		return OrchestratorPlanMsg{Plan: plan, UserText: userText, Error: parseErr}
+		orchResp, parseErr := orchestrator.ParseOrchestratorResponse(resp)
+		return OrchestratorPlanMsg{Response: orchResp, UserText: userText, Error: parseErr}
 	}
 
 	return a, cmd
 }
 
-// handleOrchestratorPlan processes the Orchestrator's routing decision.
-// On success, it executes the dynamic plan. On failure, it falls back to the legacy pipeline.
+// handleOrchestratorPlan processes the Orchestrator's intent classification and routing.
+// Routes based on intent: trivial (direct stream), conversational (single agent with tools),
+// exploratory (placeholder → complex), complex (full multi-agent pipeline).
 func (a App) handleOrchestratorPlan(msg OrchestratorPlanMsg) (tea.Model, tea.Cmd) {
 	if msg.Error != nil {
 		// Orchestrator failed — fall back to legacy fixed pipeline
@@ -76,29 +75,75 @@ func (a App) handleOrchestratorPlan(msg OrchestratorPlanMsg) (tea.Model, tea.Cmd
 			Status: StatusError,
 			Text:   fmt.Sprintf("Orchestrator: %s (falling back to pipeline)", msg.Error),
 		})
+		a.layoutMode = LayoutSplit
+		a.recalcLayout()
 		return a.executeLegacyPipeline(msg.UserText)
 	}
 
-	plan := msg.Plan
+	resp := msg.Response
 
-	// Show plan summary in activity
+	// Show intent classification in activity
 	a.activity.AddActivity(ActivityItem{
 		Status: StatusDone,
-		Text:   fmt.Sprintf("Orchestrator: plan ready (%d steps, %d agents)", len(plan.Steps), plan.TotalTasks()),
+		Text:   fmt.Sprintf("Orchestrator: intent=%s", resp.Intent),
 	})
-	a.activity.SetSessionInfo(a.sessionID, a.statusBar.model)
-	a.activity.SetAgentCount(plan.TotalTasks())
 
-	// Show orchestrator reasoning in chat
-	if plan.Reasoning != "" {
-		a.chat.AddMessage(ChatMessage{
-			Role:    RoleSystem,
-			Content: plan.Reasoning,
-		})
+	switch resp.Intent {
+	case orchestrator.IntentTrivial:
+		// Direct streaming — no tools, no split layout, no Engine
+		return a.executeTrivial(resp.DirectAgent, resp.DirectTask)
+
+	case orchestrator.IntentConversational:
+		// Single agent with tools — use executePlan with 1-step plan, stay single
+		plan := resp.ToExecutionPlan()
+		if plan == nil {
+			a.layoutMode = LayoutSplit
+			a.recalcLayout()
+			return a.executeLegacyPipeline(msg.UserText)
+		}
+		a.activity.SetAgentCount(1)
+		return a.executePlan(plan, msg.UserText)
+
+	case orchestrator.IntentExploratory:
+		// Phase 3 placeholder — treat as complex for now
+		plan := resp.ToExecutionPlan()
+		if plan == nil {
+			a.layoutMode = LayoutSplit
+			a.recalcLayout()
+			return a.executeLegacyPipeline(msg.UserText)
+		}
+		a.layoutMode = LayoutSplit
+		a.recalcLayout()
+		a.activity.SetSessionInfo(a.sessionID, a.statusBar.model)
+		a.activity.SetAgentCount(plan.TotalTasks())
+		if resp.Reasoning != "" {
+			a.chat.AddMessage(ChatMessage{Role: RoleSystem, Content: resp.Reasoning})
+		}
+		return a.executePlan(plan, msg.UserText)
+
+	case orchestrator.IntentComplex:
+		// Full multi-agent pipeline — switch to split layout
+		plan := resp.ToExecutionPlan()
+		if plan == nil {
+			a.layoutMode = LayoutSplit
+			a.recalcLayout()
+			return a.executeLegacyPipeline(msg.UserText)
+		}
+		a.layoutMode = LayoutSplit
+		a.recalcLayout()
+		a.activity.SetSessionInfo(a.sessionID, a.statusBar.model)
+		a.activity.SetAgentCount(plan.TotalTasks())
+		if resp.Reasoning != "" {
+			a.chat.AddMessage(ChatMessage{Role: RoleSystem, Content: resp.Reasoning})
+		}
+		return a.executePlan(plan, msg.UserText)
+
+	default:
+		// Unknown intent — fall back to legacy pipeline
+		a.layoutMode = LayoutSplit
+		a.recalcLayout()
+		return a.executeLegacyPipeline(msg.UserText)
 	}
-
-	// Execute the dynamic plan
-	return a.executePlan(plan, msg.UserText)
 }
 
 // executePlan runs a dynamic ExecutionPlan from the Orchestrator.
@@ -156,6 +201,43 @@ func (a App) executePlan(plan *orchestrator.ExecutionPlan, userText string) (tea
 	}()
 
 	return a, a.waitForEvent(eb)
+}
+
+// executeTrivial handles trivial intent — direct LLM streaming without Engine or tools.
+// Stays in single layout for a lightweight, fast response path.
+func (a App) executeTrivial(agentRole, task string) (tea.Model, tea.Cmd) {
+	provider := a.buildProviderWithFallback(agentRole)
+	if provider == nil {
+		a.pipelineRunning = false
+		a.chat.AddMessage(ChatMessage{
+			Role:    RoleSystem,
+			Content: fmt.Sprintf("No provider available for %s.", agentRole),
+		})
+		return a, nil
+	}
+
+	a.pipelineRunning = false // No pipeline — just direct streaming
+
+	// Build messages with role-specific system prompt + conversation history
+	systemPrompt := roles.SystemPromptForRole(agent.Role(agentRole))
+	messages := make([]llm.Message, 0, len(a.history)+1)
+	if systemPrompt != "" {
+		messages = append(messages, llm.Message{Role: "system", Content: systemPrompt})
+	}
+	messages = append(messages, a.history...)
+
+	// Start streaming (reuses single-mode streaming path)
+	a.chat.AddMessage(ChatMessage{Role: RoleAssistant, Content: ""})
+	cmd := func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+		defer cancel()
+		ch, err := provider.Stream(ctx, messages)
+		if err != nil {
+			return LLMResponseMsg{Error: err}
+		}
+		return streamStartMsg{channel: ch}
+	}
+	return a, cmd
 }
 
 // executeLegacyPipeline runs the fixed 5-phase pipeline as a fallback
@@ -245,11 +327,16 @@ func (a *App) buildAgentsForPhase(eb *bus.EventBus, agentRoles ...agent.Role) []
 // Returns nil only if no provider has an API key.
 func (a *App) buildProviderWithFallback(role string) llm.Provider {
 	primaryName := a.cfg.ProviderForRole(role)
+	modelOverride := a.cfg.ModelForRole(role)
 
 	// Build primary with retry (nil if no API key)
 	var primary llm.Provider
 	if a.hasAPIKey(primaryName) {
-		primary = llm.NewRetryProvider(llm.NewProvider(primaryName, &a.cfg), 2)
+		if modelOverride != "" {
+			primary = llm.NewRetryProvider(llm.NewProviderWithModel(primaryName, &a.cfg, modelOverride), 2)
+		} else {
+			primary = llm.NewRetryProvider(llm.NewProvider(primaryName, &a.cfg), 2)
+		}
 	}
 
 	// Build fallback from budget tier (only when on premium), also with retry

@@ -21,6 +21,7 @@ const (
 	ArtifactQAReport         ArtifactType = "QA_REPORT"
 	ArtifactOrchestratorPlan ArtifactType = "ORCHESTRATOR_PLAN"
 	ArtifactError            ArtifactType = "ERROR"
+	ArtifactConsultation     ArtifactType = "CONSULTATION"
 )
 
 // Artifact represents a piece of data produced by an agent.

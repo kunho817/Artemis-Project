@@ -28,6 +28,67 @@ type AgentTask struct {
 	Critical bool   `json:"critical"` // If true, failure stops the plan
 }
 
+// IntentType classifies the user's request intent.
+type IntentType string
+
+const (
+	IntentTrivial        IntentType = "trivial"        // Simple greeting or question — no tools needed
+	IntentConversational IntentType = "conversational"  // Single agent task — may use tools
+	IntentExploratory    IntentType = "exploratory"     // Needs codebase/external exploration first
+	IntentComplex        IntentType = "complex"         // Full multi-agent pipeline
+)
+
+// ExplorationTask defines a pre-execution exploration query (Phase 3).
+type ExplorationTask struct {
+	Query string `json:"query"`
+	Scope string `json:"scope"` // "codebase" or "external"
+}
+
+// OrchestratorResponse wraps the intent classification and routing decision.
+type OrchestratorResponse struct {
+	Intent    IntentType `json:"intent"`
+	Reasoning string     `json:"reasoning"`
+
+	// For trivial/conversational — single-agent routing
+	DirectAgent string `json:"direct_agent,omitempty"`
+	DirectTask  string `json:"direct_task,omitempty"`
+
+	// For exploratory — pre-execution exploration tasks (Phase 3)
+	ExplorationTasks []ExplorationTask `json:"exploration_tasks,omitempty"`
+
+	// For exploratory/complex — full execution plan steps
+	Steps []ExecutionStep `json:"steps,omitempty"`
+}
+
+// ToExecutionPlan converts an OrchestratorResponse to an ExecutionPlan.
+// For trivial/conversational, it creates a minimal 1-step plan.
+func (r *OrchestratorResponse) ToExecutionPlan() *ExecutionPlan {
+	switch r.Intent {
+	case IntentTrivial, IntentConversational:
+		if r.DirectAgent == "" {
+			return nil
+		}
+		return &ExecutionPlan{
+			Reasoning: r.Reasoning,
+			Steps: []ExecutionStep{
+				{Tasks: []AgentTask{
+					{Agent: r.DirectAgent, Task: r.DirectTask, Critical: true},
+				}},
+			},
+		}
+	case IntentExploratory, IntentComplex:
+		if len(r.Steps) == 0 {
+			return nil
+		}
+		return &ExecutionPlan{
+			Reasoning: r.Reasoning,
+			Steps:     r.Steps,
+		}
+	default:
+		return nil
+	}
+}
+
 // TotalTasks returns the total number of tasks across all steps.
 func (p *ExecutionPlan) TotalTasks() int {
 	total := 0
@@ -149,4 +210,81 @@ func isWorkerRole(name string) bool {
 		}
 	}
 	return false
+}
+
+// ParseOrchestratorResponse extracts an OrchestratorResponse from the LLM output.
+// It supports the new intent-based format and falls back to the legacy ExecutionPlan format.
+func ParseOrchestratorResponse(response string) (*OrchestratorResponse, error) {
+	response = strings.TrimSpace(response)
+
+	// Try direct JSON parse as OrchestratorResponse
+	var resp OrchestratorResponse
+	if err := json.Unmarshal([]byte(response), &resp); err == nil {
+		if err := validateOrchestratorResponse(&resp); err == nil {
+			return &resp, nil
+		}
+	}
+
+	// Try extracting JSON from markdown or prose
+	extracted := extractJSON(response)
+	if extracted != "" {
+		if err := json.Unmarshal([]byte(extracted), &resp); err == nil {
+			if err := validateOrchestratorResponse(&resp); err == nil {
+				return &resp, nil
+			}
+		}
+	}
+
+	// Backward compatibility: try parsing as legacy ExecutionPlan format
+	plan, err := ParsePlan(response)
+	if err == nil {
+		return &OrchestratorResponse{
+			Intent:    IntentComplex,
+			Reasoning: plan.Reasoning,
+			Steps:     plan.Steps,
+		}, nil
+	}
+
+	return nil, fmt.Errorf("failed to parse orchestrator response")
+}
+
+// validateOrchestratorResponse checks structural validity of the response.
+func validateOrchestratorResponse(resp *OrchestratorResponse) error {
+	switch resp.Intent {
+	case IntentTrivial, IntentConversational:
+		if resp.DirectAgent == "" {
+			return fmt.Errorf("%s intent requires direct_agent", resp.Intent)
+		}
+		if resp.DirectTask == "" {
+			return fmt.Errorf("%s intent requires direct_task", resp.Intent)
+		}
+		if !isWorkerRole(resp.DirectAgent) {
+			return fmt.Errorf("unknown agent role %q", resp.DirectAgent)
+		}
+		return nil
+
+	case IntentExploratory:
+		// Exploratory may or may not have steps yet
+		if len(resp.Steps) > 0 {
+			plan := &ExecutionPlan{Steps: resp.Steps}
+			return validatePlan(plan)
+		}
+		return nil
+
+	case IntentComplex:
+		if len(resp.Steps) == 0 {
+			return fmt.Errorf("complex intent requires at least one step")
+		}
+		plan := &ExecutionPlan{Steps: resp.Steps}
+		return validatePlan(plan)
+
+	default:
+		// If intent is empty but has steps, treat as complex (backward compat)
+		if len(resp.Steps) > 0 {
+			resp.Intent = IntentComplex
+			plan := &ExecutionPlan{Steps: resp.Steps}
+			return validatePlan(plan)
+		}
+		return fmt.Errorf("unknown intent type %q", resp.Intent)
+	}
 }

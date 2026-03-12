@@ -48,3 +48,30 @@ func NewProvider(name string, cfg *config.Config) Provider {
 		return nil
 	}
 }
+
+// NewProviderWithModel creates a provider with a model override.
+// The provider's default model (from config) is replaced with the specified model.
+// This enables per-role model selection (e.g., Scout using gemini-3-flash-preview
+// while other Gemini roles use gemini-3.1-pro-preview).
+func NewProviderWithModel(name string, cfg *config.Config, model string) Provider {
+	switch name {
+	case "claude":
+		override := cfg.Claude
+		override.Model = model
+		return NewClaude(override)
+	case "gemini":
+		override := cfg.Gemini
+		override.Model = model
+		return NewGemini(override)
+	case "gpt":
+		override := cfg.GPT
+		override.Model = model
+		return NewGPT(override)
+	case "glm":
+		override := cfg.GLM
+		override.Model = model
+		return NewGLM(override)
+	default:
+		return nil
+	}
+}

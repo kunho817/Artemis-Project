@@ -170,6 +170,8 @@ var RoleTagMap = map[string][]string{
 	"engineer":     {"code", "impl", "infra", "build"},
 	"qa":           {"test", "bug", "quality", "verify"},
 	"tester":       {"test", "bug", "quality", "verify"},
+	"scout":       {"code", "impl", "arch", "pattern", "search"},
+	"consultant":  nil, // access to all tags (like orchestrator)
 }
 
 // --- Phase 3: Repo-Map ---
@@ -218,4 +220,6 @@ var RepoMapRoleFilter = map[string]func(Symbol) bool{
 	"engineer":     func(s Symbol) bool { return true },
 	"qa":           func(s Symbol) bool { return s.Kind == KindFunction || s.Kind == KindMethod },
 	"tester":       func(s Symbol) bool { return s.Kind == KindFunction || s.Kind == KindMethod },
+	"scout":      func(s Symbol) bool { return true },
+	"consultant": func(s Symbol) bool { return s.Exported },
 }

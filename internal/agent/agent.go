@@ -27,6 +27,8 @@ const (
 	RoleEngineer     Role = "engineer"
 	RoleQA           Role = "qa"
 	RoleTester       Role = "tester"
+	RoleScout       Role = "scout"
+	RoleConsultant  Role = "consultant"
 )
 
 // AllRoles returns all defined agent roles.
@@ -34,7 +36,7 @@ func AllRoles() []Role {
 	return []Role{
 		RoleOrchestrator, RolePlanner, RoleAnalyzer, RoleSearcher,
 		RoleExplorer, RoleArchitect, RoleCoder, RoleDesigner,
-		RoleEngineer, RoleQA, RoleTester,
+		RoleEngineer, RoleQA, RoleTester, RoleScout, RoleConsultant,
 	}
 }
 

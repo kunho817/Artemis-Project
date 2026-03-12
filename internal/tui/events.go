@@ -261,12 +261,20 @@ func agentDisplayName(role string) string {
 		return "QA"
 	case "tester":
 		return "Tester"
+	case "scout":
+		return "Scout"
+	case "consultant":
+		return "Consultant"
 	default:
 		return cases.Title(language.English).String(role)
 	}
 }
 
 func (a *App) modelForRole(role string) string {
+	// Check for per-role model override first
+	if override := a.cfg.ModelForRole(role); override != "" {
+		return override
+	}
 	providerName := a.cfg.ProviderForRole(role)
 	if providerName == "" {
 		return a.cfg.GetActiveModel()
