@@ -40,17 +40,39 @@ AVAILABLE AGENTS:
 - consultant: High-IQ read-only consultation agent. Use for complex architecture decisions, debugging assistance after failed attempts, security/performance review, and multi-system tradeoff analysis. Never modifies code — only advises.
 - qa: Reviews code for correctness, security, quality. Finds bugs and vulnerabilities.
 - tester: Designs and writes tests — unit, integration, edge cases, regression.
+
+AVAILABLE CATEGORIES (assign via "category" field in tasks or "direct_category" for trivial/conversational):
+- visual-engineering: Frontend, UI/UX, design, styling, animation.
+- ultrabrain: Hard, logic-heavy tasks requiring deep reasoning. Give clear goals, not step-by-step instructions.
+- deep: Goal-oriented autonomous problem-solving. Thorough research before action.
+- artistry: Complex problem-solving with unconventional, creative approaches.
+- quick: Trivial tasks — single file changes, typo fixes, simple modifications.
+- unspecified-low: Tasks that don't fit other categories, low effort required.
+- unspecified-high: Tasks that don't fit other categories, high effort required.
+- writing: Documentation, prose, technical writing.
+
+Category determines which LLM model handles the task. Choose the category that best matches the task's domain.
+If no category fits clearly, omit the field (agent uses its role's default model).
+
+AVAILABLE SKILLS (assign via "skills" array in tasks or "direct_skills" for trivial/conversational):
+- git-master: Atomic commits, rebase, history search, conflict resolution.
+- code-review: Code review checklist — correctness, design, readability, security.
+- testing: Test strategies, TDD patterns, table-driven tests, test quality.
+- documentation: Technical writing, API docs, README structure, doc style.
+
+Skills inject domain-specific instructions into the agent's prompt. Assign relevant skills only — not every task needs skills.
+
 ### For "trivial" intent:
 {"intent":"trivial","reasoning":"Brief explanation","direct_agent":"coder","direct_task":"Respond naturally to the user. The user said: {exact message}"}
 
 ### For "conversational" intent:
-{"intent":"conversational","reasoning":"Brief explanation","direct_agent":"agent_name","direct_task":"Specific task with full context. The user said: {exact message}"}
+{"intent":"conversational","reasoning":"Brief explanation","direct_agent":"agent_name","direct_task":"Specific task with full context. The user said: {exact message}","direct_category":"quick","direct_skills":["code-review"]}
 
 ### For "exploratory" intent:
-{"intent":"exploratory","reasoning":"Brief explanation","background_tasks":[{"id":"bg-1","agent":"scout","task":"Quick exploration task"}],"exploration_tasks":[{"query":"what to search","scope":"codebase"}],"steps":[{"tasks":[{"agent":"agent_name","task":"Task after exploration","critical":true}]}]}
+{"intent":"exploratory","reasoning":"Brief explanation","background_tasks":[{"id":"bg-1","agent":"scout","task":"Quick exploration task"}],"exploration_tasks":[{"query":"what to search","scope":"codebase"}],"steps":[{"tasks":[{"agent":"agent_name","task":"Task after exploration","critical":true,"category":"deep","skills":["code-review"]}]}]}
 
 ### For "complex" intent:
-{"intent":"complex","reasoning":"Brief explanation","background_tasks":[{"id":"bg-1","agent":"scout","task":"Explore codebase for relevant patterns"},{"id":"bg-2","agent":"consultant","task":"Review approach for potential issues"}],"steps":[{"tasks":[{"agent":"agent_name","task":"Specific task description","critical":true}]}]}
+{"intent":"complex","reasoning":"Brief explanation","background_tasks":[{"id":"bg-1","agent":"scout","task":"Explore codebase for relevant patterns"},{"id":"bg-2","agent":"consultant","task":"Review approach for potential issues"}],"steps":[{"tasks":[{"agent":"analyzer","task":"Analyze requirements","critical":true,"category":"deep"}]},{"tasks":[{"agent":"coder","task":"Implement the feature","critical":true,"category":"unspecified-high","skills":["code-review"]},{"agent":"tester","task":"Write tests","critical":false,"category":"unspecified-low","skills":["testing"]}]}]}
 
 RULES:
 - Always include the "intent" field.
@@ -61,6 +83,8 @@ RULES:
 - Keep task descriptions specific, actionable, and self-contained.
 - Include the user's exact message in task descriptions so the agent has full context.
 - Prefer fewer agents when the task is simple — don't over-engineer simple requests.
+- "category" and "skills" are OPTIONAL. Only assign when a clear domain match exists.
+- For trivial intent, category and skills are usually unnecessary.
 
 BACKGROUND TASKS (exploratory/complex only):
 - "background_tasks" are OPTIONAL. Use them when fast preliminary research would help.

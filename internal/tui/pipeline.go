@@ -91,7 +91,7 @@ func (a App) handleOrchestratorPlan(msg OrchestratorPlanMsg) (tea.Model, tea.Cmd
 	switch resp.Intent {
 	case orchestrator.IntentTrivial:
 		// Direct streaming — no tools, no split layout, no Engine
-		return a.executeTrivial(resp.DirectAgent, resp.DirectTask)
+		return a.executeTrivial(resp.DirectAgent, resp.DirectTask, resp.DirectCategory, resp.DirectSkills)
 
 	case orchestrator.IntentConversational:
 		// Single agent with tools — use executePlan with 1-step plan, stay single
@@ -171,14 +171,15 @@ func (a App) executePlan(plan *orchestrator.ExecutionPlan, userText string) (tea
 		Content: plan.Reasoning,
 	})
 
-	// Agent builder: creates agents on demand from the plan
-	buildAgent := func(role string) agent.Agent {
-		provider := a.buildProviderWithFallback(role)
+	// Agent builder: creates fully-configured agents from Orchestrator plan tasks.
+	// Handles category-based provider override, skills injection, memory, and repo-map.
+	buildAgent := func(task orchestrator.AgentTask) agent.Agent {
+		provider := a.buildProviderForTask(task.Agent, task.Category)
 		if provider == nil {
-			eb.Emit(bus.NewEvent(bus.EventAgentFail, role, "plan", "skipped: no API key configured"))
+			eb.Emit(bus.NewEvent(bus.EventAgentFail, task.Agent, "plan", "skipped: no API key configured"))
 			return nil
 		}
-		ag := roles.NewRoleAgent(agent.Role(role), provider, eb, a.toolExecutor)
+		ag := roles.NewRoleAgent(agent.Role(task.Agent), provider, eb, a.toolExecutor)
 		if a.memStore != nil {
 			ag.SetMemory(a.memStore)
 		}
@@ -186,6 +187,15 @@ func (a App) executePlan(plan *orchestrator.ExecutionPlan, userText string) (tea
 			ag.SetRepoMap(a.repoMapStore)
 		}
 		ag.SetMaxToolIter(a.cfg.MaxToolIter)
+		// Apply task, criticality, category, and skills
+		ag.SetTask(task.Task)
+		ag.SetCritical(task.Critical)
+		if task.Category != "" {
+			ag.SetCategory(agent.TaskCategory(task.Category))
+		}
+		if len(task.Skills) > 0 && a.skillRegistry != nil {
+			ag.SetSkills(a.skillRegistry.Resolve(task.Skills))
+		}
 		return ag
 	}
 
@@ -215,8 +225,10 @@ func (a App) executePlan(plan *orchestrator.ExecutionPlan, userText string) (tea
 
 // executeTrivial handles trivial intent — direct LLM streaming without Engine or tools.
 // Stays in single layout for a lightweight, fast response path.
-func (a App) executeTrivial(agentRole, task string) (tea.Model, tea.Cmd) {
-	provider := a.buildProviderWithFallback(agentRole)
+// Optional category/skills from OrchestratorResponse are used for provider/prompt selection.
+func (a App) executeTrivial(agentRole, task, category string, skills []string) (tea.Model, tea.Cmd) {
+	// Use category-based provider if specified, otherwise role-based
+	provider := a.buildProviderForTask(agentRole, category)
 	if provider == nil {
 		a.pipelineRunning = false
 		a.chat.AddMessage(ChatMessage{
@@ -230,6 +242,22 @@ func (a App) executeTrivial(agentRole, task string) (tea.Model, tea.Cmd) {
 
 	// Build messages with role-specific system prompt + conversation history
 	systemPrompt := roles.SystemPromptForRole(agent.Role(agentRole))
+
+	// Append category behavioral prompt if specified
+	if category != "" {
+		if catPrompt := agent.PromptForCategory(agent.TaskCategory(category)); catPrompt != "" {
+			systemPrompt += "\n\n" + catPrompt
+		}
+	}
+
+	// Append skill content if specified
+	if len(skills) > 0 && a.skillRegistry != nil {
+		resolved := a.skillRegistry.Resolve(skills)
+		if content := agent.FormatSkillsContent(resolved); content != "" {
+			systemPrompt += "\n\n## Skills\n" + content
+		}
+	}
+
 	messages := make([]llm.Message, 0, len(a.history)+1)
 	if systemPrompt != "" {
 		messages = append(messages, llm.Message{Role: "system", Content: systemPrompt})
@@ -367,6 +395,34 @@ func (a *App) buildProviderWithFallback(role string) llm.Provider {
 	}
 
 	return llm.NewFallbackProvider(primary, fallback)
+}
+
+// buildProviderForTask creates a provider with optional category-based override.
+// If a valid category is provided, its provider/model mapping is used instead of the role's.
+// Falls back to role-based provider selection if category has no override or no API key.
+func (a *App) buildProviderForTask(role, category string) llm.Provider {
+	if category != "" && agent.IsValidCategory(category) {
+		tier := a.cfg.Agents.Tier
+		catProvider := agent.ProviderForCategory(agent.TaskCategory(category), tier)
+		catModel := agent.ModelForCategory(agent.TaskCategory(category), tier)
+		if catProvider != "" && a.hasAPIKey(catProvider) {
+			var p llm.Provider
+			if catModel != "" {
+				p = llm.NewRetryProvider(llm.NewProviderWithModel(catProvider, &a.cfg, catModel), 2)
+			} else {
+				p = llm.NewRetryProvider(llm.NewProvider(catProvider, &a.cfg), 2)
+			}
+			// Add role-based fallback
+			fbName := a.cfg.FallbackProviderForRole(role)
+			if fbName != "" && fbName != catProvider && a.hasAPIKey(fbName) {
+				fallback := llm.NewRetryProvider(llm.NewProvider(fbName, &a.cfg), 2)
+				return llm.NewFallbackProvider(p, fallback)
+			}
+			return p
+		}
+	}
+	// No category or category provider unavailable — fall back to role-based
+	return a.buildProviderWithFallback(role)
 }
 
 // hasAPIKey checks if a provider has an API key configured.

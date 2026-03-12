@@ -103,16 +103,17 @@ func (m *BackgroundTaskManager) runTask(
 	buildAgent AgentBuilder,
 	userRequest string,
 ) {
-	// Build the agent
-	ag := buildAgent(def.Agent)
+	// Build the agent via AgentTask
+	agentTask := AgentTask{
+		Agent:    def.Agent,
+		Task:     def.Task,
+		Critical: false, // background tasks are never pipeline-critical
+	}
+	ag := buildAgent(agentTask)
 	if ag == nil {
 		m.setFailed(task, fmt.Errorf("no provider available for %s", def.Agent))
 		return
 	}
-
-	// Configure the agent
-	ag.SetTask(def.Task)
-	ag.SetCritical(false) // background tasks are never pipeline-critical
 
 	// Mark running
 	m.mu.Lock()

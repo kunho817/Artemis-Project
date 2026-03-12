@@ -24,9 +24,11 @@ type ExecutionStep struct {
 
 // AgentTask is a single agent assignment from the Orchestrator.
 type AgentTask struct {
-	Agent    string `json:"agent"`    // Role name (e.g., "coder", "analyzer")
-	Task     string `json:"task"`     // Specific task description
-	Critical bool   `json:"critical"` // If true, failure stops the plan
+	Agent    string   `json:"agent"`              // Role name (e.g., "coder", "analyzer")
+	Task     string   `json:"task"`               // Specific task description
+	Critical bool     `json:"critical"`           // If true, failure stops the plan
+	Category string   `json:"category,omitempty"` // Task category for model/prompt override
+	Skills   []string `json:"skills,omitempty"`   // Skill IDs to load into agent prompt
 }
 
 // IntentType classifies the user's request intent.
@@ -51,8 +53,10 @@ type OrchestratorResponse struct {
 	Reasoning string     `json:"reasoning"`
 
 	// For trivial/conversational — single-agent routing
-	DirectAgent string `json:"direct_agent,omitempty"`
-	DirectTask  string `json:"direct_task,omitempty"`
+	DirectAgent    string   `json:"direct_agent,omitempty"`
+	DirectTask     string   `json:"direct_task,omitempty"`
+	DirectCategory string   `json:"direct_category,omitempty"` // category for direct agent
+	DirectSkills   []string `json:"direct_skills,omitempty"`   // skills for direct agent
 
 	// For exploratory — pre-execution exploration tasks
 	ExplorationTasks []ExplorationTask `json:"exploration_tasks,omitempty"`
@@ -63,7 +67,6 @@ type OrchestratorResponse struct {
 	// For exploratory/complex — full execution plan steps
 	Steps []ExecutionStep `json:"steps,omitempty"`
 }
-
 // ToExecutionPlan converts an OrchestratorResponse to an ExecutionPlan.
 // For trivial/conversational, it creates a minimal 1-step plan.
 func (r *OrchestratorResponse) ToExecutionPlan() *ExecutionPlan {
@@ -76,7 +79,7 @@ func (r *OrchestratorResponse) ToExecutionPlan() *ExecutionPlan {
 			Reasoning: r.Reasoning,
 			Steps: []ExecutionStep{
 				{Tasks: []AgentTask{
-					{Agent: r.DirectAgent, Task: r.DirectTask, Critical: true},
+					{Agent: r.DirectAgent, Task: r.DirectTask, Critical: true, Category: r.DirectCategory, Skills: r.DirectSkills},
 				}},
 			},
 		}
@@ -188,7 +191,7 @@ func validatePlan(plan *ExecutionPlan) error {
 		if len(step.Tasks) == 0 {
 			return fmt.Errorf("step %d has no tasks", i+1)
 		}
-		for _, task := range step.Tasks {
+		for j, task := range step.Tasks {
 			if task.Agent == "" {
 				return fmt.Errorf("step %d: task has empty agent name", i+1)
 			}
@@ -197,6 +200,10 @@ func validatePlan(plan *ExecutionPlan) error {
 			}
 			if !isWorkerRole(task.Agent) {
 				return fmt.Errorf("step %d: unknown or invalid agent role %q", i+1, task.Agent)
+			}
+			// Lenient category validation: strip invalid categories silently
+			if task.Category != "" && !agent.IsValidCategory(task.Category) {
+				plan.Steps[i].Tasks[j].Category = ""
 			}
 		}
 	}
@@ -265,6 +272,10 @@ func validateOrchestratorResponse(resp *OrchestratorResponse) error {
 		}
 		if !isWorkerRole(resp.DirectAgent) {
 			return fmt.Errorf("unknown agent role %q", resp.DirectAgent)
+		}
+		// Lenient category validation: strip invalid direct_category silently
+		if resp.DirectCategory != "" && !agent.IsValidCategory(resp.DirectCategory) {
+			resp.DirectCategory = ""
 		}
 		return nil
 

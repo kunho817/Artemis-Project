@@ -118,13 +118,13 @@ The codebase is available via your tools (read_file, grep, list_dir, etc.).`, re
 			ss.AddArtifact(state.Artifact{Type: state.ArtifactOrchestratorPlan, Source: "orchestrator", Content: plan.Reasoning})
 
 			eb := bus.NewEventBus(64)
-			buildAgent := func(role string) agent.Agent {
-				provider := buildProvider(role)
+			buildAgent := func(task orchestrator.AgentTask) agent.Agent {
+				provider := buildProvider(task.Agent)
 				if provider == nil {
-					eb.Emit(bus.NewEvent(bus.EventAgentFail, role, "fix", "skipped: no API key"))
+					eb.Emit(bus.NewEvent(bus.EventAgentFail, task.Agent, "fix", "skipped: no API key"))
 					return nil
 				}
-				ag := roles.NewRoleAgent(agent.Role(role), provider, eb, toolExec)
+				ag := roles.NewRoleAgent(agent.Role(task.Agent), provider, eb, toolExec)
 				if a.memStore != nil {
 					ag.SetMemory(a.memStore)
 				}
@@ -132,6 +132,8 @@ The codebase is available via your tools (read_file, grep, list_dir, etc.).`, re
 					ag.SetRepoMap(a.repoMapStore)
 				}
 				ag.SetMaxToolIter(a.cfg.MaxToolIter)
+				ag.SetTask(task.Task)
+				ag.SetCritical(task.Critical)
 				return ag
 			}
 

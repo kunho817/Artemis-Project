@@ -15,6 +15,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/artemis-project/artemis/internal/agent"
 	"github.com/artemis-project/artemis/internal/bus"
 	"github.com/artemis-project/artemis/internal/config"
 	ghub "github.com/artemis-project/artemis/internal/github"
@@ -89,6 +90,7 @@ type App struct {
 
 	// Tool executor
 	toolExecutor *tools.ToolExecutor
+	skillRegistry *agent.SkillRegistry // Phase 4: skill resolution
 
 	// Persistent memory
 	memStore     memory.MemoryStore
@@ -145,19 +147,22 @@ func NewApp() App {
 	// Initialize tool executor
 	cwd, _ := os.Getwd()
 
+	// Initialize skill registry
+	skillReg := agent.NewSkillRegistry()
 	app := App{
-		chat:         NewChatPanel(),
-		activity:     NewActivityPanel(),
-		statusBar:    NewStatusBar(),
-		input:        ta,
-		focused:      FocusChat,
-		viewMode:     ViewChat,
-		layoutMode:   LayoutSingle,
-		cfg:          cfg,
-		toolExecutor: tools.NewToolExecutor(cwd),
-		sessionID:    fmt.Sprintf("ses_%d", time.Now().UnixNano()),
-		totalTokens:  0,
-		totalCost:    0,
+		chat:          NewChatPanel(),
+		activity:      NewActivityPanel(),
+		statusBar:     NewStatusBar(),
+		input:         ta,
+		focused:       FocusChat,
+		viewMode:      ViewChat,
+		layoutMode:    LayoutSingle,
+		cfg:           cfg,
+		toolExecutor:  tools.NewToolExecutor(cwd),
+		skillRegistry: skillReg,
+		sessionID:     fmt.Sprintf("ses_%d", time.Now().UnixNano()),
+		totalTokens:   0,
+		totalCost:     0,
 	}
 	app.statusBar.SetKeyHints([]KeyHint{
 		{Key: "^↵", Desc: "Send"},

@@ -69,6 +69,12 @@ type Agent interface {
 
 	// SetMaxToolIter sets the maximum tool iteration count (0 = unlimited).
 	SetMaxToolIter(n int)
+
+	// SetCategory assigns a task category for model/prompt override.
+	SetCategory(cat TaskCategory)
+
+	// SetSkills attaches domain-specific skills to inject into prompts.
+	SetSkills(skills []*Skill)
 }
 
 // BaseAgent provides shared logic for all agents.
@@ -84,6 +90,8 @@ type BaseAgent struct {
 	memStore     memory.MemoryStore   // persistent memory (nil if disabled)
 	maxToolIter  int                  // max tool iterations (0 = unlimited)
 	repoMap      *memory.RepoMapStore // Phase 3: repo-map (nil if disabled)
+	category     TaskCategory         // Phase 4: task category (empty = use role defaults)
+	skills       []*Skill             // Phase 4: loaded skill content for prompt injection
 }
 
 // NewBaseAgent creates a new base agent.
@@ -116,6 +124,15 @@ func (b *BaseAgent) SetMaxToolIter(n int) { b.maxToolIter = n }
 
 // SetRepoMap attaches a RepoMapStore for codebase structure awareness.
 func (b *BaseAgent) SetRepoMap(rm *memory.RepoMapStore) { b.repoMap = rm }
+
+// SetCategory assigns a task category that overrides the role's default provider/model.
+func (b *BaseAgent) SetCategory(cat TaskCategory) { b.category = cat }
+
+// SetSkills attaches loaded skill content for injection into prompts.
+func (b *BaseAgent) SetSkills(skills []*Skill) { b.skills = skills }
+
+// Category returns the agent's assigned task category (may be empty).
+func (b *BaseAgent) Category() TaskCategory { return b.category }
 
 // EmitStart notifies the TUI that this agent started.
 func (b *BaseAgent) EmitStart(phase string) {
@@ -373,6 +390,14 @@ func (b *BaseAgent) BuildPromptWithContext(ss *state.SessionState, task string) 
 		}
 	}
 
+	// Phase 4: Include loaded skill content
+	if len(b.skills) > 0 {
+		skillContent := FormatSkillsContent(b.skills)
+		if skillContent != "" {
+			parts = append(parts, "## Skills\n"+skillContent)
+		}
+	}
+
 	// Include conversation history if available (multi-turn context)
 	history := ss.HistorySummary()
 	if history != "" {
@@ -383,6 +408,13 @@ func (b *BaseAgent) BuildPromptWithContext(ss *state.SessionState, task string) 
 	summary := ss.Summary()
 	if summary != "" {
 		parts = append(parts, "## Context from previous agents\n"+summary)
+	}
+
+	// Phase 4: Include category-specific behavioral context
+	if b.category != "" {
+		if catPrompt := PromptForCategory(b.category); catPrompt != "" {
+			parts = append(parts, catPrompt)
+		}
 	}
 
 	// Always include the task

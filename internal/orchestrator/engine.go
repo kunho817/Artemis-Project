@@ -188,13 +188,15 @@ func (e *Engine) emitPhaseComplete(phase PhaseName, errorCount int) {
 	}
 }
 
-// AgentBuilder is a factory function that creates an agent for a given role.
-// Used by RunPlan to construct agents on-demand from the Orchestrator's plan.
-type AgentBuilder func(role string) agent.Agent
+// AgentBuilder is a factory function that creates a fully-configured agent for a task.
+// The builder receives the full AgentTask (role, task description, criticality, category, skills)
+// and returns an agent ready to run. Provider selection, category overrides, and skill injection
+// are handled by the builder implementation.
+type AgentBuilder func(task AgentTask) agent.Agent
 
 // RunPlan executes a dynamic ExecutionPlan created by the Orchestrator.
 // Steps run sequentially; tasks within each step run in parallel.
-// The buildAgent function creates agents for each role on demand.
+// The buildAgent function creates fully-configured agents from AgentTask definitions.
 func (e *Engine) RunPlan(ctx context.Context, plan *ExecutionPlan, ss *state.SessionState, buildAgent AgentBuilder) EngineResult {
 	result := EngineResult{
 		PhaseResults: make([]PhaseResult, 0, len(plan.Steps)),
@@ -217,13 +219,10 @@ func (e *Engine) RunPlan(ctx context.Context, plan *ExecutionPlan, ss *state.Ses
 		// Build agents for this step from the plan's tasks
 		var agents []agent.Agent
 		for _, task := range step.Tasks {
-			a := buildAgent(task.Agent)
+			a := buildAgent(task)
 			if a == nil {
 				continue
 			}
-			// Apply Orchestrator-assigned task and criticality
-			a.SetTask(task.Task)
-			a.SetCritical(task.Critical)
 			agents = append(agents, a)
 		}
 
