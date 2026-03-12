@@ -11,8 +11,9 @@ import (
 // ExecutionPlan represents the Orchestrator's routing decision.
 // It defines which agents to invoke and in what order.
 type ExecutionPlan struct {
-	Reasoning string          `json:"reasoning"`
-	Steps     []ExecutionStep `json:"steps"`
+	Reasoning       string              `json:"reasoning"`
+	Steps           []ExecutionStep     `json:"steps"`
+	BackgroundTasks []BackgroundTaskDef `json:"background_tasks,omitempty"`
 }
 
 // ExecutionStep groups tasks that run in parallel.
@@ -53,8 +54,11 @@ type OrchestratorResponse struct {
 	DirectAgent string `json:"direct_agent,omitempty"`
 	DirectTask  string `json:"direct_task,omitempty"`
 
-	// For exploratory — pre-execution exploration tasks (Phase 3)
+	// For exploratory — pre-execution exploration tasks
 	ExplorationTasks []ExplorationTask `json:"exploration_tasks,omitempty"`
+
+	// For exploratory/complex — background tasks (run parallel to main steps)
+	BackgroundTasks []BackgroundTaskDef `json:"background_tasks,omitempty"`
 
 	// For exploratory/complex — full execution plan steps
 	Steps []ExecutionStep `json:"steps,omitempty"`
@@ -81,8 +85,9 @@ func (r *OrchestratorResponse) ToExecutionPlan() *ExecutionPlan {
 			return nil
 		}
 		return &ExecutionPlan{
-			Reasoning: r.Reasoning,
-			Steps:     r.Steps,
+			Reasoning:       r.Reasoning,
+			Steps:           r.Steps,
+			BackgroundTasks: r.BackgroundTasks,
 		}
 	default:
 		return nil
@@ -267,8 +272,11 @@ func validateOrchestratorResponse(resp *OrchestratorResponse) error {
 		// Exploratory may or may not have steps yet
 		if len(resp.Steps) > 0 {
 			plan := &ExecutionPlan{Steps: resp.Steps}
-			return validatePlan(plan)
+			if err := validatePlan(plan); err != nil {
+				return err
+			}
 		}
+		resp.BackgroundTasks = filterValidBackgroundTasks(resp.BackgroundTasks)
 		return nil
 
 	case IntentComplex:
@@ -276,7 +284,11 @@ func validateOrchestratorResponse(resp *OrchestratorResponse) error {
 			return fmt.Errorf("complex intent requires at least one step")
 		}
 		plan := &ExecutionPlan{Steps: resp.Steps}
-		return validatePlan(plan)
+		if err := validatePlan(plan); err != nil {
+			return err
+		}
+		resp.BackgroundTasks = filterValidBackgroundTasks(resp.BackgroundTasks)
+		return nil
 
 	default:
 		// If intent is empty but has steps, treat as complex (backward compat)
@@ -287,4 +299,24 @@ func validateOrchestratorResponse(resp *OrchestratorResponse) error {
 		}
 		return fmt.Errorf("unknown intent type %q", resp.Intent)
 	}
+}
+
+// filterValidBackgroundTasks removes invalid background task definitions.
+// Invalid tasks (missing id/agent/task, unknown role) are silently stripped
+// rather than failing the entire response — background tasks are optional.
+func filterValidBackgroundTasks(tasks []BackgroundTaskDef) []BackgroundTaskDef {
+	if len(tasks) == 0 {
+		return nil
+	}
+	valid := make([]BackgroundTaskDef, 0, len(tasks))
+	for _, t := range tasks {
+		if t.ID == "" || t.Agent == "" || t.Task == "" {
+			continue
+		}
+		if !isWorkerRole(t.Agent) {
+			continue
+		}
+		valid = append(valid, t)
+	}
+	return valid
 }

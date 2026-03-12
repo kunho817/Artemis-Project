@@ -192,11 +192,21 @@ func (a App) executePlan(plan *orchestrator.ExecutionPlan, userText string) (tea
 	// Create engine (nil pipeline — using RunPlan instead)
 	engine := orchestrator.NewEngine(nil, eb)
 
+	// Create background task manager for parallel background tasks
+	bgMgr := orchestrator.NewBackgroundTaskManager(eb)
+
+	// Spawn background tasks (run parallel to main pipeline)
+	for _, bgDef := range plan.BackgroundTasks {
+		bgMgr.Spawn(ctx, bgDef, buildAgent, userText)
+	}
+
 	go func() {
 		result := engine.RunPlan(ctx, plan, ss, buildAgent)
 		if !result.Completed && result.HaltError != nil {
 			eb.Emit(bus.NewEvent(bus.EventAgentFail, "engine", "plan", result.HaltError.Error()))
 		}
+		// Wait for all background tasks before closing EventBus
+		bgMgr.WaitAll()
 		eb.Close()
 	}()
 

@@ -180,6 +180,27 @@ func (a App) handleAgentEvent(msg AgentEventMsg) (tea.Model, tea.Cmd) {
 			model := a.modelForRole(event.AgentName)
 			a.addUsage(usage, model)
 		}
+
+	case bus.EventBackgroundTaskStart:
+		displayName := agentDisplayName(event.AgentName)
+		a.activity.AddActivity(ActivityItem{
+			Status: StatusRunning,
+			Text:   fmt.Sprintf("  ⚡ %s [bg]: %s", displayName, event.Message),
+		})
+
+	case bus.EventBackgroundTaskComplete:
+		displayName := agentDisplayName(event.AgentName)
+		a.activity.AddActivity(ActivityItem{
+			Status: StatusDone,
+			Text:   fmt.Sprintf("  ⚡ %s [bg]: %s", displayName, event.Message),
+		})
+
+	case bus.EventBackgroundTaskFail:
+		displayName := agentDisplayName(event.AgentName)
+		a.activity.AddActivity(ActivityItem{
+			Status: StatusError,
+			Text:   fmt.Sprintf("  ⚡ %s [bg]: %s", displayName, event.Message),
+		})
 	}
 
 	// Continue listening for more events

@@ -47,10 +47,10 @@ AVAILABLE AGENTS:
 {"intent":"conversational","reasoning":"Brief explanation","direct_agent":"agent_name","direct_task":"Specific task with full context. The user said: {exact message}"}
 
 ### For "exploratory" intent:
-{"intent":"exploratory","reasoning":"Brief explanation","exploration_tasks":[{"query":"what to search","scope":"codebase"},{"query":"what to research","scope":"external"}],"steps":[{"tasks":[{"agent":"agent_name","task":"Task after exploration","critical":true}]}]}
+{"intent":"exploratory","reasoning":"Brief explanation","background_tasks":[{"id":"bg-1","agent":"scout","task":"Quick exploration task"}],"exploration_tasks":[{"query":"what to search","scope":"codebase"}],"steps":[{"tasks":[{"agent":"agent_name","task":"Task after exploration","critical":true}]}]}
 
 ### For "complex" intent:
-{"intent":"complex","reasoning":"Brief explanation","steps":[{"tasks":[{"agent":"agent_name","task":"Specific task description","critical":true}]}]}
+{"intent":"complex","reasoning":"Brief explanation","background_tasks":[{"id":"bg-1","agent":"scout","task":"Explore codebase for relevant patterns"},{"id":"bg-2","agent":"consultant","task":"Review approach for potential issues"}],"steps":[{"tasks":[{"agent":"agent_name","task":"Specific task description","critical":true}]}]}
 
 RULES:
 - Always include the "intent" field.
@@ -61,6 +61,13 @@ RULES:
 - Keep task descriptions specific, actionable, and self-contained.
 - Include the user's exact message in task descriptions so the agent has full context.
 - Prefer fewer agents when the task is simple — don't over-engineer simple requests.
+
+BACKGROUND TASKS (exploratory/complex only):
+- "background_tasks" are OPTIONAL. Use them when fast preliminary research would help.
+- Background tasks run IN PARALLEL with the main pipeline steps.
+- Best agents for background tasks: scout (fast codebase exploration), consultant (architecture review).
+- Each background task needs a unique "id" (e.g., "bg-1", "bg-2").
+- Do NOT put critical work in background tasks — they are for supplementary exploration only.
 
 PARALLELISM (complex intent only):
 - Tasks within the SAME step run in PARALLEL.

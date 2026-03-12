@@ -23,6 +23,9 @@ const (
 	EventAgentStreamChunk                       // Agent streaming chunk (partial text)
 	EventAgentStreamDone                        // Agent streaming completed
 	EventAgentUsage                             // Agent reported token usage
+	EventBackgroundTaskStart            // Background task started running
+	EventBackgroundTaskComplete          // Background task finished successfully
+	EventBackgroundTaskFail              // Background task encountered an error
 )
 
 // AgentEvent carries status updates from agents to the TUI.
