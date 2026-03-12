@@ -36,6 +36,9 @@ type Artifact struct {
 // SessionState is the thread-safe blackboard shared by all agents.
 type SessionState struct {
 	mu        sync.RWMutex
+	id        string     // pipeline run ID ("run_<nano>")
+	sessionID string     // owning TUI session ID
+	parentID  string     // parent run ID (for background tasks)
 	artifacts []Artifact
 	phase     string   // current pipeline phase
 	history   []string // conversation history from prior turns ("role: content")
@@ -44,6 +47,16 @@ type SessionState struct {
 // NewSessionState creates a new empty session state.
 func NewSessionState() *SessionState {
 	return &SessionState{
+		artifacts: make([]Artifact, 0),
+	}
+}
+
+// NewSessionStateWithID creates a session state with explicit IDs for hierarchy tracking.
+func NewSessionStateWithID(id, sessionID, parentID string) *SessionState {
+	return &SessionState{
+		id:        id,
+		sessionID: sessionID,
+		parentID:  parentID,
 		artifacts: make([]Artifact, 0),
 	}
 }
@@ -155,4 +168,46 @@ func (s *SessionState) Clear() {
 	defer s.mu.Unlock()
 	s.artifacts = make([]Artifact, 0)
 	s.phase = ""
+}
+
+// ID returns the pipeline run ID.
+func (s *SessionState) ID() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.id
+}
+
+// SetID sets the pipeline run ID.
+func (s *SessionState) SetID(id string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.id = id
+}
+
+// SessionID returns the owning TUI session ID.
+func (s *SessionState) SessionID() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.sessionID
+}
+
+// SetSessionID sets the owning TUI session ID.
+func (s *SessionState) SetSessionID(sessionID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.sessionID = sessionID
+}
+
+// ParentID returns the parent pipeline run ID (for background tasks).
+func (s *SessionState) ParentID() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.parentID
+}
+
+// SetParentID sets the parent pipeline run ID.
+func (s *SessionState) SetParentID(parentID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.parentID = parentID
 }

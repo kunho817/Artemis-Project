@@ -16,7 +16,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const currentSchemaVersion = 4
+const currentSchemaVersion = 5
 
 // SQLiteStore implements MemoryStore using pure-Go SQLite with FTS5.
 // Phase 2 adds optional VectorStore for hybrid search.
@@ -129,8 +129,15 @@ func (s *SQLiteStore) migrate() error {
 		}
 	}
 
+	// Phase 5: Session hierarchy + pipeline runs
+	if version < 5 {
+		if err := s.migrateV5(); err != nil {
+			return fmt.Errorf("v5: %w", err)
+		}
+	}
+
 	// Future migrations go here:
-	// if version < 5 { s.migrateV5() }
+	// if version < 6 { s.migrateV6() }
 
 	return nil
 }
@@ -421,6 +428,49 @@ func (s *SQLiteStore) migrateV4() error {
 	return tx.Commit()
 }
 
+// migrateV5 adds session hierarchy support: parent_session_id, pipeline_runs table,
+// and pipeline_run_id on session_messages.
+func (s *SQLiteStore) migrateV5() error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	statements := []string{
+		// Add parent_session_id to session_summaries
+		`ALTER TABLE session_summaries ADD COLUMN parent_session_id TEXT DEFAULT ''`,
+
+		// Pipeline runs — tracks each pipeline/background execution within a session
+		`CREATE TABLE IF NOT EXISTS pipeline_runs (
+			id             TEXT PRIMARY KEY,
+			session_id     TEXT NOT NULL,
+			parent_run_id  TEXT DEFAULT '',
+			intent         TEXT DEFAULT '',
+			plan_json      TEXT DEFAULT '',
+			status         TEXT DEFAULT 'running',
+			created_at     DATETIME DEFAULT CURRENT_TIMESTAMP,
+			completed_at   DATETIME
+		)`,
+
+		`CREATE INDEX IF NOT EXISTS idx_pipeline_runs_session ON pipeline_runs(session_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_pipeline_runs_parent ON pipeline_runs(parent_run_id)`,
+
+		// Add pipeline_run_id to session_messages
+		`ALTER TABLE session_messages ADD COLUMN pipeline_run_id TEXT DEFAULT ''`,
+
+		`INSERT INTO schema_version (version) VALUES (5)`,
+	}
+
+	for _, stmt := range statements {
+		if _, err := tx.Exec(stmt); err != nil {
+			return fmt.Errorf("exec %q: %w", stmt[:min(60, len(stmt))], err)
+		}
+	}
+
+	return tx.Commit()
+}
+
 // --- Facts (Semantic Memory) ---
 
 func (s *SQLiteStore) SaveFact(ctx context.Context, fact *Fact) error {
@@ -550,9 +600,9 @@ func (s *SQLiteStore) SaveSession(ctx context.Context, summary *SessionSummary) 
 	filesJSON, _ := json.Marshal(summary.FilesTouched)
 	result, err := s.db.ExecContext(ctx,
 		`INSERT OR REPLACE INTO session_summaries
-		 (session_id, summary, files_touched, facts_learned, outcome, message_count, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
-		summary.SessionID, summary.Summary, string(filesJSON),
+		 (session_id, parent_session_id, summary, files_touched, facts_learned, outcome, message_count, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
+		summary.SessionID, summary.ParentSessionID, summary.Summary, string(filesJSON),
 		summary.FactsLearned, summary.Outcome, summary.MessageCount,
 	)
 	if err != nil {
@@ -750,9 +800,9 @@ func (s *SQLiteStore) QueryDecisions(ctx context.Context, opts QueryOpts) ([]Dec
 
 func (s *SQLiteStore) SaveMessage(ctx context.Context, msg *SessionMessage) error {
 	result, err := s.db.ExecContext(ctx,
-		`INSERT INTO session_messages (session_id, role, content, agent_role, created_at)
-		 VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)`,
-		msg.SessionID, msg.Role, msg.Content, msg.AgentRole,
+		`INSERT INTO session_messages (session_id, role, content, agent_role, pipeline_run_id, created_at)
+		 VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
+		msg.SessionID, msg.Role, msg.Content, msg.AgentRole, msg.PipelineRunID,
 	)
 	if err != nil {
 		return fmt.Errorf("memory: save message: %w", err)
@@ -763,7 +813,7 @@ func (s *SQLiteStore) SaveMessage(ctx context.Context, msg *SessionMessage) erro
 
 func (s *SQLiteStore) GetSessionMessages(ctx context.Context, sessionID string) ([]SessionMessage, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, session_id, role, content, agent_role, created_at
+		`SELECT id, session_id, role, content, agent_role, COALESCE(pipeline_run_id, ''), created_at
 		 FROM session_messages WHERE session_id = ?
 		 ORDER BY created_at ASC, id ASC`,
 		sessionID,
@@ -776,7 +826,7 @@ func (s *SQLiteStore) GetSessionMessages(ctx context.Context, sessionID string) 
 	var messages []SessionMessage
 	for rows.Next() {
 		var m SessionMessage
-		if err := rows.Scan(&m.ID, &m.SessionID, &m.Role, &m.Content, &m.AgentRole, &m.CreatedAt); err != nil {
+		if err := rows.Scan(&m.ID, &m.SessionID, &m.Role, &m.Content, &m.AgentRole, &m.PipelineRunID, &m.CreatedAt); err != nil {
 			return nil, err
 		}
 		messages = append(messages, m)
@@ -792,17 +842,15 @@ func (s *SQLiteStore) ListSessions(ctx context.Context, limit int) ([]SessionSum
 		limit = 20
 	}
 
-	// First check session_summaries (consolidated sessions),
-	// then union with session_messages for non-consolidated sessions.
+	// Union consolidated sessions (with summaries) + non-consolidated (messages only).
+	// Phase 5: includes parent_session_id from consolidated sessions.
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT session_id, COALESCE(summary, ''), message_count, created_at
+		`SELECT session_id, COALESCE(summary, ''), COALESCE(parent_session_id, ''), message_count, created_at
 		 FROM (
-		   -- Consolidated sessions (have summaries)
-		   SELECT session_id, summary, message_count, created_at
+		   SELECT session_id, summary, parent_session_id, message_count, created_at
 		   FROM session_summaries
 		   UNION ALL
-		   -- Non-consolidated sessions (messages only, no summary yet)
-		   SELECT m.session_id, '' AS summary, COUNT(*) AS message_count, MIN(m.created_at) AS created_at
+		   SELECT m.session_id, '' AS summary, '' AS parent_session_id, COUNT(*) AS message_count, MIN(m.created_at) AS created_at
 		   FROM session_messages m
 		   WHERE m.session_id NOT IN (SELECT session_id FROM session_summaries)
 		   GROUP BY m.session_id
@@ -817,7 +865,88 @@ func (s *SQLiteStore) ListSessions(ctx context.Context, limit int) ([]SessionSum
 	var sessions []SessionSummary
 	for rows.Next() {
 		var ss SessionSummary
-		if err := rows.Scan(&ss.SessionID, &ss.Summary, &ss.MessageCount, &ss.CreatedAt); err != nil {
+		if err := rows.Scan(&ss.SessionID, &ss.Summary, &ss.ParentSessionID, &ss.MessageCount, &ss.CreatedAt); err != nil {
+			return nil, err
+		}
+		sessions = append(sessions, ss)
+	}
+	return sessions, rows.Err()
+}
+
+// --- Pipeline Runs (Session Hierarchy) ---
+
+// SavePipelineRun persists a new pipeline run record.
+func (s *SQLiteStore) SavePipelineRun(ctx context.Context, run *PipelineRun) error {
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO pipeline_runs (id, session_id, parent_run_id, intent, plan_json, status, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
+		run.ID, run.SessionID, run.ParentRunID, run.Intent, run.PlanJSON, run.Status,
+	)
+	if err != nil {
+		return fmt.Errorf("memory: save pipeline run: %w", err)
+	}
+	return nil
+}
+
+// UpdatePipelineRun updates the status (and completed_at) of an existing pipeline run.
+func (s *SQLiteStore) UpdatePipelineRun(ctx context.Context, runID, status string) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE pipeline_runs SET status = ?, completed_at = CURRENT_TIMESTAMP WHERE id = ?`,
+		status, runID,
+	)
+	if err != nil {
+		return fmt.Errorf("memory: update pipeline run %q: %w", runID, err)
+	}
+	return nil
+}
+
+// GetPipelineRuns returns all pipeline runs for a session, ordered by creation time.
+func (s *SQLiteStore) GetPipelineRuns(ctx context.Context, sessionID string) ([]PipelineRun, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, session_id, COALESCE(parent_run_id, ''), COALESCE(intent, ''),
+		        COALESCE(plan_json, ''), status, created_at, completed_at
+		 FROM pipeline_runs WHERE session_id = ?
+		 ORDER BY created_at ASC`,
+		sessionID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("memory: get pipeline runs: %w", err)
+	}
+	defer rows.Close()
+
+	var runs []PipelineRun
+	for rows.Next() {
+		var r PipelineRun
+		var completedAt sql.NullTime
+		if err := rows.Scan(&r.ID, &r.SessionID, &r.ParentRunID, &r.Intent,
+			&r.PlanJSON, &r.Status, &r.CreatedAt, &completedAt); err != nil {
+			return nil, err
+		}
+		if completedAt.Valid {
+			r.CompletedAt = completedAt.Time
+		}
+		runs = append(runs, r)
+	}
+	return runs, rows.Err()
+}
+
+// GetChildSessions returns sessions whose parent_session_id matches the given parent.
+func (s *SQLiteStore) GetChildSessions(ctx context.Context, parentSessionID string) ([]SessionSummary, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT session_id, COALESCE(summary, ''), COALESCE(parent_session_id, ''), message_count, created_at
+		 FROM session_summaries WHERE parent_session_id = ?
+		 ORDER BY created_at DESC`,
+		parentSessionID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("memory: get child sessions: %w", err)
+	}
+	defer rows.Close()
+
+	var sessions []SessionSummary
+	for rows.Next() {
+		var ss SessionSummary
+		if err := rows.Scan(&ss.SessionID, &ss.Summary, &ss.ParentSessionID, &ss.MessageCount, &ss.CreatedAt); err != nil {
 			return nil, err
 		}
 		sessions = append(sessions, ss)

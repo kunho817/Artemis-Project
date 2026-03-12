@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -11,6 +12,7 @@ import (
 	"github.com/artemis-project/artemis/internal/agent/roles"
 	"github.com/artemis-project/artemis/internal/bus"
 	"github.com/artemis-project/artemis/internal/llm"
+	"github.com/artemis-project/artemis/internal/memory"
 	"github.com/artemis-project/artemis/internal/orchestrator"
 	"github.com/artemis-project/artemis/internal/state"
 )
@@ -155,8 +157,13 @@ func (a App) executePlan(plan *orchestrator.ExecutionPlan, userText string) (tea
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	a.cancelPipeline = cancel
 
+	// Phase 5: Generate pipeline run ID and persist
+	runID := fmt.Sprintf("run_%d", time.Now().UnixNano())
+	a.activePipelineRunID = runID
+	a.savePipelineRun(runID, plan.Reasoning, "complex")
+
 	// Prepare session state with user request + conversation history
-	ss := state.NewSessionState()
+	ss := state.NewSessionStateWithID(runID, a.sessionID, "")
 	ss.SetHistory(a.buildHistorySummary())
 	ss.AddArtifact(state.Artifact{
 		Type:    state.ArtifactUserRequest,
@@ -210,11 +217,36 @@ func (a App) executePlan(plan *orchestrator.ExecutionPlan, userText string) (tea
 		bgMgr.Spawn(ctx, bgDef, buildAgent, userText)
 	}
 
+	memStore := a.memStore
+	capturedRunID := runID
 	go func() {
 		result := engine.RunPlan(ctx, plan, ss, buildAgent)
 		if !result.Completed && result.HaltError != nil {
 			eb.Emit(bus.NewEvent(bus.EventAgentFail, "engine", "plan", result.HaltError.Error()))
 		}
+
+		// Phase 5: Save background task results to DB
+		for _, bt := range bgMgr.AllTasks() {
+			if bt.Result != "" && memStore != nil {
+				_ = memStore.SaveMessage(context.Background(), &memory.SessionMessage{
+					SessionID:     ss.SessionID(),
+					Role:          "assistant",
+					Content:       bt.Result,
+					AgentRole:     bt.AgentRole,
+					PipelineRunID: capturedRunID,
+				})
+			}
+		}
+
+		// Phase 5: Update pipeline run status
+		if memStore != nil {
+			status := "completed"
+			if !result.Completed {
+				status = "failed"
+			}
+			_ = memStore.UpdatePipelineRun(context.Background(), capturedRunID, status)
+		}
+
 		// Wait for all background tasks before closing EventBus
 		bgMgr.WaitAll()
 		eb.Close()
@@ -287,6 +319,11 @@ func (a App) executeLegacyPipeline(text string) (tea.Model, tea.Cmd) {
 	a.layoutMode = LayoutSplit
 	a.recalcLayout()
 
+	// Phase 5: Generate pipeline run ID
+	runID := fmt.Sprintf("run_%d", time.Now().UnixNano())
+	a.activePipelineRunID = runID
+	a.savePipelineRun(runID, "", "complex")
+
 	pipeline := orchestrator.DefaultPipeline()
 
 	analysisAgents := a.buildAgentsForPhase(eb,
@@ -314,7 +351,7 @@ func (a App) executeLegacyPipeline(text string) (tea.Model, tea.Cmd) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	a.cancelPipeline = cancel
 
-	ss := state.NewSessionState()
+	ss := state.NewSessionStateWithID(runID, a.sessionID, "")
 	ss.SetHistory(a.buildHistorySummary())
 	ss.AddArtifact(state.Artifact{
 		Type:    state.ArtifactUserRequest,
@@ -324,11 +361,23 @@ func (a App) executeLegacyPipeline(text string) (tea.Model, tea.Cmd) {
 
 	engine := orchestrator.NewEngine(pipeline, eb)
 
+	memStore := a.memStore
+	capturedRunID := runID
 	go func() {
 		result := engine.Run(ctx, ss)
 		if !result.Completed && result.HaltError != nil {
 			eb.Emit(bus.NewEvent(bus.EventAgentFail, "engine", "pipeline", result.HaltError.Error()))
 		}
+
+		// Phase 5: Update pipeline run status
+		if memStore != nil {
+			status := "completed"
+			if !result.Completed {
+				status = "failed"
+			}
+			_ = memStore.UpdatePipelineRun(context.Background(), capturedRunID, status)
+		}
+
 		eb.Close()
 	}()
 
@@ -448,4 +497,36 @@ func (a *App) buildHistorySummary() []string {
 		lines = append(lines, fmt.Sprintf("%s: %s", m.Role, m.Content))
 	}
 	return lines
+}
+
+
+// savePipelineRun persists a new pipeline run record (best-effort, async).
+func (a *App) savePipelineRun(runID, planJSON, intent string) {
+	if a.memStore == nil {
+		return
+	}
+	run := &memory.PipelineRun{
+		ID:          runID,
+		SessionID:   a.sessionID,
+		ParentRunID: "",
+		Intent:      intent,
+		PlanJSON:    planJSON,
+		Status:      "running",
+	}
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = a.memStore.SavePipelineRun(ctx, run)
+	}()
+}
+
+// savePipelineRunWithPlan persists a pipeline run with the full plan JSON.
+func (a *App) savePipelineRunWithPlan(runID string, plan *orchestrator.ExecutionPlan, intent string) {
+	var planJSON string
+	if plan != nil {
+		if b, err := json.Marshal(plan); err == nil {
+			planJSON = string(b)
+		}
+	}
+	a.savePipelineRun(runID, planJSON, intent)
 }

@@ -123,7 +123,9 @@ func (m *BackgroundTaskManager) runTask(
 	m.emitStart(task)
 
 	// Create isolated SessionState for this background task
-	ss := state.NewSessionState()
+	// Phase 5: Background tasks get their own run ID, linked to parent
+	bgRunID := fmt.Sprintf("bgrun_%s_%d", def.ID, time.Now().UnixNano())
+	ss := state.NewSessionStateWithID(bgRunID, "", "")
 	ss.SetPhase("background")
 	ss.AddArtifact(state.Artifact{
 		Type:    state.ArtifactUserRequest,

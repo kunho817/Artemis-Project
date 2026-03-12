@@ -11,6 +11,7 @@ import (
 
 	ghub "github.com/artemis-project/artemis/internal/github"
 	"github.com/artemis-project/artemis/internal/llm"
+	"github.com/artemis-project/artemis/internal/memory"
 )
 
 type fixIssueResultMsg struct {
@@ -204,24 +205,24 @@ func (a App) cmdListSessions() (tea.Model, tea.Cmd) {
 		return a, nil
 	}
 
-	// Format session list
+	// Format session list with tree view (Phase 5: parent-child hierarchy)
+	// Build parentID → children lookup
+	childrenOf := make(map[string][]SessionSummary)
+	var roots []SessionSummary
+	for _, s := range sessions {
+		if s.ParentSessionID != "" {
+			childrenOf[s.ParentSessionID] = append(childrenOf[s.ParentSessionID], s)
+		} else {
+			roots = append(roots, s)
+		}
+	}
+
 	var sb strings.Builder
 	sb.WriteString(fmt.Sprintf("Recent sessions (%d):\n", len(sessions)))
-	for i, s := range sessions {
-		dateStr := s.CreatedAt.Format("2006-01-02 15:04")
-		preview := s.Summary
-		if preview == "" {
-			preview = "(no summary)"
-		} else if len(preview) > 80 {
-			preview = preview[:77] + "..."
-		}
-		// Mark current session
-		marker := "  "
-		if s.SessionID == a.sessionID {
-			marker = "▸ "
-		}
-		sb.WriteString(fmt.Sprintf("%s%d. [%s] %s (%d msgs)\n   ID: %s\n",
-			marker, i+1, dateStr, preview, s.MessageCount, s.SessionID))
+	idx := 1
+	for _, s := range roots {
+		a.formatSessionEntry(&sb, s, idx, "", childrenOf)
+		idx++
 	}
 	sb.WriteString("\nUse /load <session_id> to resume a session.")
 
@@ -271,15 +272,16 @@ func (a App) cmdLoadSession(sessionID string) (tea.Model, tea.Cmd) {
 		return a, nil
 	}
 
-	// Switch to the loaded session
-	a.sessionID = sessionID
+	// Phase 5: Link as child session
+	a.parentSessionID = sessionID
+	a.sessionID = fmt.Sprintf("ses_%d", time.Now().UnixNano())
 	a.history = nil
 	a.chat = NewChatPanel()
 	a.recalcLayout()
 
 	a.chat.AddMessage(ChatMessage{
 		Role:    RoleSystem,
-		Content: fmt.Sprintf("Loaded session %s (%d messages)", sessionID, len(messages)),
+		Content: fmt.Sprintf("Loaded session %s (%d messages) → new child session %s", sessionID, len(messages), a.sessionID),
 	})
 
 	// Replay messages into chat panel and history
@@ -320,4 +322,33 @@ func (a App) cmdLoadSession(sessionID string) (tea.Model, tea.Cmd) {
 	})
 
 	return a, nil
+}
+
+
+// SessionSummary is an alias for use in commands.go tree formatting.
+type SessionSummary = memory.SessionSummary
+
+// formatSessionEntry formats a single session with optional children (tree view).
+func (a *App) formatSessionEntry(sb *strings.Builder, s SessionSummary, idx int, indent string, childrenOf map[string][]SessionSummary) {
+	dateStr := s.CreatedAt.Format("2006-01-02 15:04")
+	preview := s.Summary
+	if preview == "" {
+		preview = "(no summary)"
+	} else if len(preview) > 70 {
+		preview = preview[:67] + "..."
+	}
+	// Mark current session
+	marker := indent + "  "
+	if s.SessionID == a.sessionID {
+		marker = indent + "▸ "
+	}
+	sb.WriteString(fmt.Sprintf("%s%d. [%s] %s (%d msgs)\n%s   ID: %s\n",
+		marker, idx, dateStr, preview, s.MessageCount, indent, s.SessionID))
+
+	// Print children with indentation
+	children := childrenOf[s.SessionID]
+	for ci, child := range children {
+		childIndent := indent + "  └─ "
+		a.formatSessionEntry(sb, child, ci+1, childIndent, childrenOf)
+	}
 }

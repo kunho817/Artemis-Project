@@ -130,13 +130,21 @@ func (a *App) shutdownMemory() {
 
 		result, err := a.consolidator.Consolidate(ctx, a.sessionID, a.history, filesTouched)
 		if err == nil && result != nil {
+			// Phase 5: Link parent session if this was loaded from another session
+			if a.parentSessionID != "" {
+				summary, _ := a.memStore.GetSession(ctx, a.sessionID)
+				if summary != nil && summary.ParentSessionID == "" {
+					summary.ParentSessionID = a.parentSessionID
+					_ = a.memStore.SaveSession(ctx, summary)
+				}
+			}
+
 			// COLD tier: archive consolidation results
 			if archiver != nil {
 				_ = archiver.ArchiveConsolidation(result)
 			}
 		}
 	}
-
 	// Run fact decay if configured
 	if a.cfg.Memory.MaxFactAge > 0 {
 		maxAge := time.Duration(a.cfg.Memory.MaxFactAge) * 24 * time.Hour
@@ -160,15 +168,17 @@ func (a *App) shutdownMemory() {
 }
 
 // saveMessageToDB persists a message to the memory store (non-blocking, best-effort).
+// Phase 5: Links message to active pipeline run if available.
 func (a *App) saveMessageToDB(role, content, agentRole string) {
 	if a.memStore == nil {
 		return
 	}
 	msg := &memory.SessionMessage{
-		SessionID: a.sessionID,
-		Role:      role,
-		Content:   content,
-		AgentRole: agentRole,
+		SessionID:     a.sessionID,
+		Role:          role,
+		Content:       content,
+		AgentRole:     agentRole,
+		PipelineRunID: a.activePipelineRunID,
 	}
 	// Fire and forget — message save failure is non-fatal
 	go func() {

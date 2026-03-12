@@ -57,18 +57,25 @@ type MemoryStore interface {
 	DecayFacts(ctx context.Context, maxAge time.Duration, minUseCount int) (int64, error)
 	Stats(ctx context.Context) (*StoreStats, error)
 
+	// --- Pipeline Runs (Session Hierarchy) ---
+	SavePipelineRun(ctx context.Context, run *PipelineRun) error
+	UpdatePipelineRun(ctx context.Context, runID, status string) error
+	GetPipelineRuns(ctx context.Context, sessionID string) ([]PipelineRun, error)
+	GetChildSessions(ctx context.Context, parentSessionID string) ([]SessionSummary, error)
+
 	// --- Lifecycle ---
 	Close() error
-}
+	}
 
 // SessionMessage represents a single message in a conversation session.
 type SessionMessage struct {
-	ID        int64     `json:"id"`
-	SessionID string    `json:"session_id"`
-	Role      string    `json:"role"`    // "user", "assistant", "system"
-	Content   string    `json:"content"`
-	AgentRole string    `json:"agent_role"` // which agent produced this (empty for user)
-	CreatedAt time.Time `json:"created_at"`
+	ID            int64     `json:"id"`
+	SessionID     string    `json:"session_id"`
+	Role          string    `json:"role"`    // "user", "assistant", "system"
+	Content       string    `json:"content"`
+	AgentRole     string    `json:"agent_role"` // which agent produced this (empty for user)
+	PipelineRunID string    `json:"pipeline_run_id,omitempty"` // Phase 5: links message to pipeline run
+	CreatedAt     time.Time `json:"created_at"`
 }
 
 // QueryOpts configures memory retrieval.
@@ -97,14 +104,15 @@ type Fact struct {
 
 // SessionSummary represents a consolidated session record (Episodic Memory).
 type SessionSummary struct {
-	ID           int64     `json:"id"`
-	SessionID    string    `json:"session_id"`
-	Summary      string    `json:"summary"`
-	FilesTouched []string  `json:"files_touched"`
-	FactsLearned int       `json:"facts_learned"` // count of new facts extracted
-	Outcome      string    `json:"outcome"`       // "success" / "partial" / "failed"
-	MessageCount int       `json:"message_count"`
-	CreatedAt    time.Time `json:"created_at"`
+	ID              int64     `json:"id"`
+	SessionID       string    `json:"session_id"`
+	ParentSessionID string    `json:"parent_session_id,omitempty"` // Phase 5: session hierarchy
+	Summary         string    `json:"summary"`
+	FilesTouched    []string  `json:"files_touched"`
+	FactsLearned    int       `json:"facts_learned"` // count of new facts extracted
+	Outcome         string    `json:"outcome"`       // "success" / "partial" / "failed"
+	MessageCount    int       `json:"message_count"`
+	CreatedAt       time.Time `json:"created_at"`
 }
 
 // FileRecord tracks files the agent has interacted with.
@@ -222,4 +230,21 @@ var RepoMapRoleFilter = map[string]func(Symbol) bool{
 	"tester":       func(s Symbol) bool { return s.Kind == KindFunction || s.Kind == KindMethod },
 	"scout":      func(s Symbol) bool { return true },
 	"consultant": func(s Symbol) bool { return s.Exported },
+}
+
+
+// --- Phase 5: Session Hierarchy ---
+
+// PipelineRun tracks a single pipeline execution within a session.
+// Multiple pipeline runs can occur within one TUI session.
+// Background tasks create child runs linked via ParentRunID.
+type PipelineRun struct {
+	ID          string    `json:"id"`            // "run_<nano>"
+	SessionID   string    `json:"session_id"`    // owning TUI session
+	ParentRunID string    `json:"parent_run_id,omitempty"` // parent run (for background tasks)
+	Intent      string    `json:"intent,omitempty"`        // trivial/conversational/exploratory/complex
+	PlanJSON    string    `json:"plan_json,omitempty"`     // ExecutionPlan JSON (debug)
+	Status      string    `json:"status"`        // running/completed/failed
+	CreatedAt   time.Time `json:"created_at"`
+	CompletedAt time.Time `json:"completed_at,omitempty"`
 }

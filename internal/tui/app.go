@@ -99,8 +99,9 @@ type App struct {
 	repoMapStore *memory.RepoMapStore // Phase 3: repo-map
 	ghSyncer     *ghub.Syncer
 	ghProcessor  *ghub.Processor
-	sessionID    string // unique ID for current session
-
+	sessionID          string // unique ID for current session
+	parentSessionID    string // Phase 5: parent session (set when /load creates child)
+	activePipelineRunID string // Phase 5: current pipeline run ID (for message linking)
 	focused FocusedPanel
 
 	layoutMode LayoutMode
