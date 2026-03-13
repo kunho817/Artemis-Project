@@ -100,7 +100,16 @@ PARALLELISM (complex intent only):
 - Tasks within the SAME step run in PARALLEL.
 - Steps run SEQUENTIALLY (step 2 waits for step 1).
 - Use parallel when tasks are independent (e.g., analyzer + explorer).
-- Use sequential when there are dependencies (e.g., analyze first, then code).`
+- Use sequential when there are dependencies (e.g., analyze first, then code).
+
+REVIEW STEPS (feedback loop, complex intent only):
+- Mark a step as a review step by setting "is_review": true.
+- Review steps trigger a feedback loop: if the reviewer finds issues, the target step is re-run with the review feedback, then the review runs again.
+- "review_target" (1-based step number) specifies which step to re-run. If omitted or 0, the previous step is re-run.
+- "max_review_iterations" (plan-level) controls max feedback cycles (default: 2).
+- Reviewer agents should output "LGTM" or "no issues" when satisfied, or describe specific issues to fix.
+- Example: {"intent":"complex","reasoning":"...","max_review_iterations":2,"steps":[{"tasks":[{"agent":"coder","task":"Implement feature","critical":true}]},{"tasks":[{"agent":"qa","task":"Review the implementation for bugs and quality","critical":false}],"is_review":true,"review_target":1},{"tasks":[{"agent":"tester","task":"Write tests","critical":true}]}]}
+- Use review steps for important implementations where quality matters. Not every plan needs them.`
 
 const AnalyzerPrompt = `You are Analyzer, a specialized agent in the Artemis system.
 Your job is to parse and deeply understand the user's request.

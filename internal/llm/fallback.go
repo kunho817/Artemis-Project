@@ -37,6 +37,14 @@ func (f *FallbackProvider) Name() string {
 	return "fallback(none)"
 }
 
+// Model returns the primary provider's model name.
+func (f *FallbackProvider) Model() string {
+	if f.primary != nil {
+		return f.primary.Model()
+	}
+	return ""
+}
+
 // LastUsed returns the name of the provider that actually served the last request.
 // Useful for observability — the caller can check if a fallback was used.
 func (f *FallbackProvider) LastUsed() string {

@@ -75,25 +75,30 @@ type Agent interface {
 
 	// SetSkills attaches domain-specific skills to inject into prompts.
 	SetSkills(skills []*Skill)
+
+	// SetHistoryWindow attaches a shared history window for token-aware history management.
+	SetHistoryWindow(hw *HistoryWindow)
+
 	// OverrideTask returns the Orchestrator-assigned task override (empty if none).
 	OverrideTask() string
 }
 
 // BaseAgent provides shared logic for all agents.
 type BaseAgent struct {
-	name         string
-	role         Role
-	provider     llm.Provider
-	system       string // system prompt defining persona
-	eventBus     *bus.EventBus
-	critical     bool
-	overrideTask string               // task assigned by Orchestrator (overrides default)
-	toolExec     *tools.ToolExecutor  // tool executor for file/shell operations
-	memStore     memory.MemoryStore   // persistent memory (nil if disabled)
-	maxToolIter  int                  // max tool iterations (0 = unlimited)
-	repoMap      *memory.RepoMapStore // Phase 3: repo-map (nil if disabled)
-	category     TaskCategory         // Phase 4: task category (empty = use role defaults)
-	skills       []*Skill             // Phase 4: loaded skill content for prompt injection
+	name           string
+	role           Role
+	provider       llm.Provider
+	system         string // system prompt defining persona
+	eventBus       *bus.EventBus
+	critical       bool
+	overrideTask   string               // task assigned by Orchestrator (overrides default)
+	toolExec       *tools.ToolExecutor  // tool executor for file/shell operations
+	memStore       memory.MemoryStore   // persistent memory (nil if disabled)
+	maxToolIter    int                  // max tool iterations (0 = unlimited)
+	repoMap        *memory.RepoMapStore // Phase 3: repo-map (nil if disabled)
+	category       TaskCategory         // Phase 4: task category (empty = use role defaults)
+	skills         []*Skill             // Phase 4: loaded skill content for prompt injection
+	historyWindow  *HistoryWindow       // Phase C: token-aware history management (nil = legacy)
 }
 
 // NewBaseAgent creates a new base agent.
@@ -132,6 +137,10 @@ func (b *BaseAgent) SetCategory(cat TaskCategory) { b.category = cat }
 
 // SetSkills attaches loaded skill content for injection into prompts.
 func (b *BaseAgent) SetSkills(skills []*Skill) { b.skills = skills }
+
+// SetHistoryWindow attaches a shared history window for token-aware history management.
+// When set, BuildPromptWithContext uses the HistoryWindow instead of SessionState.HistorySummary().
+func (b *BaseAgent) SetHistoryWindow(hw *HistoryWindow) { b.historyWindow = hw }
 
 // Category returns the agent's assigned task category (may be empty).
 func (b *BaseAgent) Category() TaskCategory { return b.category }
@@ -351,10 +360,75 @@ func (b *BaseAgent) streamAndAccumulate(ctx context.Context, messages []llm.Mess
 
 // BuildPromptWithContext creates a prompt that includes relevant session state,
 // persistent memory facts, and conversation history from prior turns.
+// Uses ContextBudget for token-aware assembly when TokenCounter is available,
+// falling back to legacy concatenation otherwise.
 func (b *BaseAgent) BuildPromptWithContext(ss *state.SessionState, task string) string {
-	var parts []string
+	counter, err := llm.GetTokenCounter()
+	if err != nil || counter == nil {
+		return b.buildPromptLegacy(ss, task)
+	}
 
-	// Include relevant persistent memory facts (role-filtered)
+	// Determine model for budget allocation
+	model := ""
+	if b.provider != nil {
+		model = b.provider.Model()
+	}
+	budget := llm.NewContextBudgetForModel(model, counter)
+
+	// P0: Task — always included, never truncated
+	budget.Reserve("task", "## Your task\n"+task)
+
+	// P2: Recent conversation history
+	if b.historyWindow != nil {
+		recent := b.historyWindow.RecentFormatted()
+		if recent != "" {
+			budget.Allocate(llm.P2, "recent-history", "## Conversation History\n"+recent, 16_000)
+		}
+	} else {
+		// Legacy fallback: use SessionState history (unbounded)
+		history := ss.HistorySummary()
+		if history != "" {
+			budget.Allocate(llm.P2, "history", "## Conversation History\n"+history, 16_000)
+		}
+	}
+
+	// P3: Artifacts from current pipeline run
+	summary := ss.Summary()
+	if summary != "" {
+		budget.Allocate(llm.P3, "artifacts", "## Context from previous agents\n"+summary, 16_000)
+	}
+
+	// P4: Skills + Category behavioral context
+	if len(b.skills) > 0 {
+		skillContent := FormatSkillsContent(b.skills)
+		if skillContent != "" {
+			budget.Allocate(llm.P4, "skills", "## Skills\n"+skillContent, 8_000)
+		}
+	}
+	if b.category != "" {
+		if catPrompt := PromptForCategory(b.category); catPrompt != "" {
+			budget.Allocate(llm.P4, "category", catPrompt, 4_000)
+		}
+	}
+
+	// P5: Repo-map + Project Facts
+	if b.repoMap != nil {
+		filter := memory.RepoMapRoleFilter[string(b.role)]
+		if symbols, err := b.repoMap.QuerySymbols(context.Background(), task, 100); err == nil && len(symbols) > 0 {
+			var filtered []memory.Symbol
+			for _, s := range symbols {
+				if filter == nil || filter(s) {
+					filtered = append(filtered, s)
+				}
+			}
+			if len(filtered) > 0 {
+				formatted := b.repoMap.FormatRepoMap(filtered, 2048)
+				if formatted != "" {
+					budget.Allocate(llm.P5, "repomap", "## Codebase Structure\n"+formatted, 4_000)
+				}
+			}
+		}
+	}
 	if b.memStore != nil {
 		opts := memory.QueryOpts{
 			Query: task,
@@ -365,18 +439,47 @@ func (b *BaseAgent) BuildPromptWithContext(ss *state.SessionState, task string) 
 			var factLines []string
 			for _, f := range facts {
 				factLines = append(factLines, fmt.Sprintf("- %s", f.Content))
-				// Increment usage counter for retrieved facts
+				b.memStore.IncrementFactUsage(context.Background(), f.ID)
+			}
+			budget.Allocate(llm.P5, "facts", "## Project Knowledge\n"+strings.Join(factLines, "\n"), 4_000)
+		}
+	}
+
+	// P6: Summarized older history (from HistoryWindow compaction)
+	if b.historyWindow != nil {
+		summarized := b.historyWindow.Summarized()
+		if summarized != "" {
+			budget.Allocate(llm.P6, "older-history", "## Earlier Conversation Summary\n"+summarized, 0)
+		}
+	}
+
+	prompt, _ := budget.Build()
+	return prompt
+}
+
+// buildPromptLegacy is the pre-Phase-C concatenation-based prompt builder.
+// Used as fallback when TokenCounter is unavailable.
+func (b *BaseAgent) buildPromptLegacy(ss *state.SessionState, task string) string {
+	var parts []string
+
+	if b.memStore != nil {
+		opts := memory.QueryOpts{
+			Query: task,
+			Tags:  memory.RoleTagMap[string(b.role)],
+			Limit: 15,
+		}
+		if facts, err := b.memStore.QueryFacts(context.Background(), opts); err == nil && len(facts) > 0 {
+			var factLines []string
+			for _, f := range facts {
+				factLines = append(factLines, fmt.Sprintf("- %s", f.Content))
 				b.memStore.IncrementFactUsage(context.Background(), f.ID)
 			}
 			parts = append(parts, "## Project Knowledge\n"+strings.Join(factLines, "\n"))
 		}
 	}
-
-	// Phase 3: Include relevant codebase structure from repo-map
 	if b.repoMap != nil {
 		filter := memory.RepoMapRoleFilter[string(b.role)]
 		if symbols, err := b.repoMap.QuerySymbols(context.Background(), task, 100); err == nil && len(symbols) > 0 {
-			// Apply role-based filter
 			var filtered []memory.Symbol
 			for _, s := range symbols {
 				if filter == nil || filter(s) {
@@ -391,36 +494,25 @@ func (b *BaseAgent) BuildPromptWithContext(ss *state.SessionState, task string) 
 			}
 		}
 	}
-
-	// Phase 4: Include loaded skill content
 	if len(b.skills) > 0 {
 		skillContent := FormatSkillsContent(b.skills)
 		if skillContent != "" {
 			parts = append(parts, "## Skills\n"+skillContent)
 		}
 	}
-
-	// Include conversation history if available (multi-turn context)
 	history := ss.HistorySummary()
 	if history != "" {
 		parts = append(parts, "## Conversation History\n"+history)
 	}
-
-	// Include artifacts from current pipeline run
 	summary := ss.Summary()
 	if summary != "" {
 		parts = append(parts, "## Context from previous agents\n"+summary)
 	}
-
-	// Phase 4: Include category-specific behavioral context
 	if b.category != "" {
 		if catPrompt := PromptForCategory(b.category); catPrompt != "" {
 			parts = append(parts, catPrompt)
 		}
 	}
-
-	// Always include the task
 	parts = append(parts, "## Your task\n"+task)
-
 	return strings.Join(parts, "\n")
 }

@@ -278,6 +278,9 @@ func (a App) cmdLoadSession(sessionID string) (tea.Model, tea.Cmd) {
 	a.parentSessionID = sessionID
 	a.sessionID = fmt.Sprintf("ses_%d", time.Now().UnixNano())
 	a.history = nil
+	if a.historyWindow != nil {
+		a.historyWindow.Clear()
+	}
 	a.chat = NewChatPanel()
 	a.recalcLayout()
 
@@ -294,7 +297,7 @@ func (a App) cmdLoadSession(sessionID string) (tea.Model, tea.Cmd) {
 				Role:    RoleUser,
 				Content: m.Content,
 			})
-			a.history = append(a.history, llm.Message{Role: "user", Content: m.Content})
+			a.addToHistory(llm.Message{Role: "user", Content: m.Content})
 		case "assistant":
 			if m.AgentRole != "" && m.AgentRole != "pipeline" {
 				a.chat.AddMessage(ChatMessage{
@@ -309,7 +312,7 @@ func (a App) cmdLoadSession(sessionID string) (tea.Model, tea.Cmd) {
 					Content: m.Content,
 				})
 			}
-			a.history = append(a.history, llm.Message{Role: "assistant", Content: m.Content})
+			a.addToHistory(llm.Message{Role: "assistant", Content: m.Content})
 		case "system":
 			a.chat.AddMessage(ChatMessage{
 				Role:    RoleSystem,

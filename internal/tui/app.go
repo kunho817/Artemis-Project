@@ -21,6 +21,7 @@ import (
 	ghub "github.com/artemis-project/artemis/internal/github"
 	"github.com/artemis-project/artemis/internal/llm"
 	"github.com/artemis-project/artemis/internal/memory"
+	"github.com/artemis-project/artemis/internal/state"
 	"github.com/artemis-project/artemis/internal/tools"
 	"github.com/artemis-project/artemis/internal/tui/theme"
 )
@@ -99,6 +100,8 @@ type App struct {
 	repoMapStore *memory.RepoMapStore // Phase 3: repo-map
 	ghSyncer     *ghub.Syncer
 	ghProcessor  *ghub.Processor
+	checkpointStore state.CheckpointStore // Phase C-5: step checkpoint persistence
+	pendingResumeRun *state.IncompleteRun  // Phase C-5: deferred resume overlay (shown after Init)
 	sessionID          string // unique ID for current session
 	parentSessionID    string // Phase 5: parent session (set when /load creates child)
 	activePipelineRunID string // Phase 5: current pipeline run ID (for message linking)
@@ -111,6 +114,7 @@ type App struct {
 
 	// Conversation history
 	history          []llm.Message               // multi-turn conversation (user + assistant)
+	historyWindow    *agent.HistoryWindow         // Phase C: token-aware history management
 	streamingContent string                      // accumulates streaming response for history (single mode)
 	pipelineOutputs  []string                    // accumulates agent output during pipeline run
 	streamCh         <-chan llm.StreamChunk      // active stream channel (single mode)
@@ -177,6 +181,9 @@ func NewApp() App {
 		totalTokens:   0,
 		totalCost:     0,
 	}
+	// Initialize token-aware history window
+	tc, _ := llm.GetTokenCounter()
+	app.historyWindow = agent.NewHistoryWindow(10, tc) // keep last 10 messages in full
 	app.statusBar.SetKeyHints([]KeyHint{
 		{Key: "^↵", Desc: "Send"},
 		{Key: "^K", Desc: "Palette"},
@@ -387,6 +394,31 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.overlay = nil
 		}
 		return a, nil
+
+	case ResumeDecisionMsg:
+		// Phase C-5: Handle user's decision on incomplete pipeline run
+		a.overlayKind = OverlayNone
+		a.overlay = nil
+		switch msg.Action {
+		case "resume":
+			return a.executeResume(msg.Run)
+		case "discard":
+			run := msg.Run
+			go func() {
+				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
+				if a.checkpointStore != nil {
+					_ = a.checkpointStore.DeleteCheckpoints(ctx, run.RunID)
+				}
+				if a.memStore != nil {
+					_ = a.memStore.UpdatePipelineRun(ctx, run.RunID, "failed")
+				}
+			}()
+			a.chat.AddMessage(ChatMessage{Role: RoleSystem, Content: "Incomplete pipeline run discarded."})
+		case "cancel":
+			// Do nothing — ignore for now
+		}
+		return a, nil
 	case fixIssueResultMsg:
 		if msg.err != nil {
 			a.chat.AddMessage(ChatMessage{Role: RoleSystem, Content: fmt.Sprintf("Fix failed for issue #%d: %v", msg.issueNumber, msg.err)})
@@ -401,10 +433,19 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		a.width = msg.Width
 		a.height = msg.Height
+		wasReady := a.ready
 		a.ready = true
 		a.recalcLayout()
 		if a.overlay != nil {
 			a.overlay.SetSize(a.width, a.height)
+		}
+		// Phase C-5: Show deferred resume overlay on first ready
+		if !wasReady && a.pendingResumeRun != nil {
+			run := a.pendingResumeRun
+			a.pendingResumeRun = nil
+			overlay := NewResumeOverlay(*run, a.width, a.height)
+			a.overlayKind = OverlayResume
+			a.overlay = overlay
 		}
 		return a, nil
 	}
@@ -498,7 +539,7 @@ func (a App) handleSubmit() (tea.Model, tea.Cmd) {
 	})
 
 	// Append to conversation history for multi-turn context
-	a.history = append(a.history, llm.Message{Role: "user", Content: text})
+	a.addToHistory(llm.Message{Role: "user", Content: text})
 	a.saveMessageToDB("user", text, "")
 
 	// Clear input
@@ -511,6 +552,14 @@ func (a App) handleSubmit() (tea.Model, tea.Cmd) {
 		return a.handleOrchestratedSubmit(text)
 	}
 	return a.handleSingleSubmit(text)
+}
+
+// addToHistory appends a message to both legacy history and HistoryWindow.
+func (a *App) addToHistory(msg llm.Message) {
+	a.history = append(a.history, msg)
+	if a.historyWindow != nil {
+		a.historyWindow.Add(msg)
+	}
 }
 
 // cycleFocus switches between panels.
@@ -648,6 +697,9 @@ func (a *App) clearChatState() {
 	a.chat = NewChatPanel()
 	a.activity.ClearActivities()
 	a.history = nil
+	if a.historyWindow != nil {
+		a.historyWindow.Clear()
+	}
 	a.pipelineOutputs = nil
 	a.agentStreams = nil
 	a.recoveryBridge = nil

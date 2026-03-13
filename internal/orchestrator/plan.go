@@ -11,15 +11,18 @@ import (
 // ExecutionPlan represents the Orchestrator's routing decision.
 // It defines which agents to invoke and in what order.
 type ExecutionPlan struct {
-	Reasoning       string              `json:"reasoning"`
-	Steps           []ExecutionStep     `json:"steps"`
-	BackgroundTasks []BackgroundTaskDef `json:"background_tasks,omitempty"`
+	Reasoning           string              `json:"reasoning"`
+	Steps               []ExecutionStep     `json:"steps"`
+	BackgroundTasks     []BackgroundTaskDef `json:"background_tasks,omitempty"`
+	MaxReviewIterations int                 `json:"max_review_iterations,omitempty"` // Phase C-6: max feedback loop cycles (default=2)
 }
 
 // ExecutionStep groups tasks that run in parallel.
 // Steps themselves run sequentially — step 2 waits for step 1 to finish.
 type ExecutionStep struct {
-	Tasks []AgentTask `json:"tasks"`
+	Tasks        []AgentTask `json:"tasks"`
+	IsReview     bool        `json:"is_review,omitempty"`      // Phase C-6: marks step as a review/feedback step
+	ReviewTarget int         `json:"review_target,omitempty"` // Phase C-6: step index (1-based) to re-run on issues (0=previous step)
 }
 
 // AgentTask is a single agent assignment from the Orchestrator.

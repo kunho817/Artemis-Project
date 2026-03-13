@@ -27,6 +27,9 @@ func (a *App) initMemory() {
 	}
 	a.memStore = store
 
+	// Phase C-5: Wire checkpoint store (SQLiteStore implements state.CheckpointStore)
+	a.checkpointStore = store
+
 	// Phase 2: initialize vector store if enabled
 	if a.cfg.Vector.Enabled && a.cfg.Vector.APIKey != "" {
 		vecPath := a.cfg.VectorStorePath()
@@ -101,8 +104,10 @@ func (a *App) initMemory() {
 				stats.FactCount, stats.SessionCount, stats.FileCount, vecStatus, rmStatus),
 		})
 	}
-}
 
+	// Phase C-5: Check for incomplete pipeline runs (deferred overlay)
+	a.checkForIncompleteRuns()
+}
 // shutdownMemory runs consolidation and closes the memory store.
 // Called when the application exits.
 func (a *App) shutdownMemory() {
@@ -186,4 +191,22 @@ func (a *App) saveMessageToDB(role, content, agentRole string) {
 		defer cancel()
 		_ = a.memStore.SaveMessage(ctx, msg)
 	}()
+}
+
+// checkForIncompleteRuns queries for interrupted pipeline runs and stores the
+// most recent one for deferred overlay display (shown after first WindowSizeMsg).
+func (a *App) checkForIncompleteRuns() {
+	if a.checkpointStore == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	runs, err := a.checkpointStore.GetIncompleteRuns(ctx, "")
+	if err != nil || len(runs) == 0 {
+		return
+	}
+	// Store the most recent incomplete run for deferred overlay display.
+	// The overlay is shown in Update() on the first WindowSizeMsg (when a.ready becomes true).
+	most := runs[0]
+	a.pendingResumeRun = &most
 }

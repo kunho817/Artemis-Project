@@ -160,7 +160,7 @@ func (a App) executePlan(plan *orchestrator.ExecutionPlan, userText string) (tea
 	// Phase 5: Generate pipeline run ID and persist
 	runID := fmt.Sprintf("run_%d", time.Now().UnixNano())
 	a.activePipelineRunID = runID
-	a.savePipelineRun(runID, plan.Reasoning, "complex")
+	a.savePipelineRunWithPlan(runID, plan, "complex")
 
 	// Prepare session state with user request + conversation history
 	ss := state.NewSessionStateWithID(runID, a.sessionID, "")
@@ -203,6 +203,9 @@ func (a App) executePlan(plan *orchestrator.ExecutionPlan, userText string) (tea
 		if len(task.Skills) > 0 && a.skillRegistry != nil {
 			ag.SetSkills(a.skillRegistry.Resolve(task.Skills))
 		}
+		if a.historyWindow != nil {
+			ag.SetHistoryWindow(a.historyWindow)
+		}
 		return ag
 	}
 
@@ -213,6 +216,16 @@ func (a App) executePlan(plan *orchestrator.ExecutionPlan, userText string) (tea
 
 	// Create engine with recovery support
 	engine := orchestrator.NewEngine(nil, eb, bridge, buildAgent)
+
+	// Phase C-5: Wire checkpoint store for step-level persistence
+	if a.checkpointStore != nil {
+		engine.SetCheckpointStore(a.checkpointStore)
+	}
+
+	// Phase C-7: Wire replanner for conditional re-planning on failure
+	if orchProvider := a.buildProviderWithFallback("orchestrator"); orchProvider != nil {
+		engine.SetReplanner(NewOrchestratorReplanner(orchProvider))
+	}
 
 	// Create background task manager for parallel background tasks
 	bgMgr := orchestrator.NewBackgroundTaskManager(eb)
@@ -412,6 +425,9 @@ func (a *App) buildAgentsForPhase(eb *bus.EventBus, agentRoles ...agent.Role) []
 			ag.SetRepoMap(a.repoMapStore)
 		}
 		ag.SetMaxToolIter(a.cfg.MaxToolIter)
+		if a.historyWindow != nil {
+			ag.SetHistoryWindow(a.historyWindow)
+		}
 		agents = append(agents, ag)
 	}
 	return agents
@@ -538,4 +554,129 @@ func (a *App) savePipelineRunWithPlan(runID string, plan *orchestrator.Execution
 		}
 	}
 	a.savePipelineRun(runID, planJSON, intent)
+}
+
+// executeResume reconstructs an execution plan from a stored incomplete run and
+// resumes from the last completed step using Engine.RunPlanFromStep().
+func (a App) executeResume(run state.IncompleteRun) (tea.Model, tea.Cmd) {
+	// Parse the stored plan JSON
+	plan, err := orchestrator.ParsePlan(run.PlanJSON)
+	if err != nil {
+		a.chat.AddMessage(ChatMessage{
+			Role:    RoleSystem,
+			Content: fmt.Sprintf("Failed to parse stored plan: %v", err),
+		})
+		return a, nil
+	}
+
+	startStep := run.LastStepIndex + 1 // resume after last completed step
+	if startStep >= len(plan.Steps) {
+		a.chat.AddMessage(ChatMessage{
+			Role:    RoleSystem,
+			Content: "All steps were already completed. Nothing to resume.",
+		})
+		// Clean up checkpoints
+		if a.checkpointStore != nil {
+			go func() {
+				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
+				_ = a.checkpointStore.DeleteCheckpoints(ctx, run.RunID)
+			}()
+		}
+		return a, nil
+	}
+
+	// Switch to split layout for pipeline execution
+	a.layoutMode = LayoutSplit
+	a.recalcLayout()
+	a.pipelineRunning = true
+	a.activePipelineRunID = run.RunID
+
+	a.chat.AddMessage(ChatMessage{
+		Role:    RoleSystem,
+		Content: fmt.Sprintf("Resuming pipeline from step %d/%d (%s)...", startStep+1, len(plan.Steps), plan.Reasoning),
+	})
+
+	eb := bus.NewEventBus(eventBusBuffer)
+	a.eventBus = eb
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	a.cancelPipeline = cancel
+
+	// Restore session state from checkpoints
+	ss := state.NewSessionStateWithID(run.RunID, run.SessionID, "")
+	ss.SetHistory(a.buildHistorySummary())
+	ss.AddArtifact(state.Artifact{
+		Type:    state.ArtifactOrchestratorPlan,
+		Source:  "orchestrator",
+		Content: plan.Reasoning,
+	})
+
+	// Checkpoints are loaded internally by Engine.RunPlanFromStep via checkpointStore
+
+	// Agent builder (reuses same pattern as executePlan)
+	buildAgent := func(task orchestrator.AgentTask) agent.Agent {
+		provider := a.buildProviderForTask(task.Agent, task.Category)
+		if provider == nil {
+			eb.Emit(bus.NewEvent(bus.EventAgentFail, task.Agent, "plan", "skipped: no API key configured"))
+			return nil
+		}
+		ag := roles.NewRoleAgent(agent.Role(task.Agent), provider, eb, a.toolExecutor)
+		if a.memStore != nil {
+			ag.SetMemory(a.memStore)
+		}
+		if a.repoMapStore != nil {
+			ag.SetRepoMap(a.repoMapStore)
+		}
+		ag.SetMaxToolIter(a.cfg.MaxToolIter)
+		ag.SetTask(task.Task)
+		ag.SetCritical(task.Critical)
+		if task.Category != "" {
+			ag.SetCategory(agent.TaskCategory(task.Category))
+		}
+		if len(task.Skills) > 0 && a.skillRegistry != nil {
+			ag.SetSkills(a.skillRegistry.Resolve(task.Skills))
+		}
+		if a.historyWindow != nil {
+			ag.SetHistoryWindow(a.historyWindow)
+		}
+		return ag
+	}
+
+	// Create engine with recovery support
+	bridge := NewRecoveryBridge()
+	a.recoveryBridge = bridge
+	engine := orchestrator.NewEngine(nil, eb, bridge, buildAgent)
+	if a.checkpointStore != nil {
+		engine.SetCheckpointStore(a.checkpointStore)
+	}
+
+	a.activity.AddActivity(ActivityItem{
+		Status: StatusRunning,
+		Text:   fmt.Sprintf("Resuming from step %d/%d...", startStep+1, len(plan.Steps)),
+	})
+	a.activity.SetSessionInfo(a.sessionID, a.statusBar.model)
+	a.activity.SetAgentCount(plan.TotalTasks())
+
+	memStore := a.memStore
+	capturedRunID := run.RunID
+	go func() {
+		result := engine.RunPlanFromStep(ctx, plan, ss, buildAgent, startStep)
+		if !result.Completed && result.HaltError != nil {
+			eb.Emit(bus.NewEvent(bus.EventAgentFail, "engine", "resume", result.HaltError.Error()))
+		}
+
+		// Update pipeline run status
+		if memStore != nil {
+			status := "completed"
+			if !result.Completed {
+				status = "failed"
+			}
+			_ = memStore.UpdatePipelineRun(context.Background(), capturedRunID, status)
+		}
+
+		eb.Close()
+	}()
+
+	return a, tea.Batch(a.waitForEvent(eb), waitForRecoveryRequest(bridge))
 }

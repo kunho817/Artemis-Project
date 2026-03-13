@@ -99,7 +99,7 @@ func (a App) handleLLMResponse(msg LLMResponseMsg) (tea.Model, tea.Cmd) {
 			Content: msg.Content,
 		})
 		// Append to conversation history
-		a.history = append(a.history, llm.Message{Role: "assistant", Content: msg.Content})
+		a.addToHistory(llm.Message{Role: "assistant", Content: msg.Content})
 		a.saveMessageToDB("assistant", msg.Content, "")
 	}
 
@@ -132,7 +132,7 @@ func (a App) handleStreamChunk(msg StreamChunkMsg) (tea.Model, tea.Cmd) {
 		a.activity.UpdateLastActivity(StatusDone)
 		a.addUsage(msg.Usage, a.cfg.GetActiveModel())
 		if a.streamingContent != "" {
-			a.history = append(a.history, llm.Message{Role: "assistant", Content: a.streamingContent})
+			a.addToHistory(llm.Message{Role: "assistant", Content: a.streamingContent})
 			a.saveMessageToDB("assistant", a.streamingContent, "")
 			a.streamingContent = ""
 		}

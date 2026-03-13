@@ -215,6 +215,12 @@ func (a App) handleAgentEvent(msg AgentEventMsg) (tea.Model, tea.Cmd) {
 			Status: StatusRunning,
 			Text:   fmt.Sprintf("  🔄 %s: %s", displayName, event.Message),
 		})
+
+	case bus.EventReviewLoop:
+		a.activity.AddActivity(ActivityItem{
+			Status: StatusRunning,
+			Text:   fmt.Sprintf("  🔁 %s", event.Message),
+		})
 	}
 
 	// Continue listening for more events
@@ -241,7 +247,7 @@ func (a App) handlePipelineComplete(msg PipelineCompleteMsg) (tea.Model, tea.Cmd
 	agentCount := len(a.pipelineOutputs)
 	if agentCount > 0 {
 		combined := strings.Join(a.pipelineOutputs, "\n\n")
-		a.history = append(a.history, llm.Message{
+		a.addToHistory(llm.Message{
 			Role:    "assistant",
 			Content: combined,
 		})

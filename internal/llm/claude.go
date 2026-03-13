@@ -29,6 +29,7 @@ func NewClaude(cfg config.ProviderConfig) *Claude {
 }
 
 func (c *Claude) Name() string { return "claude" }
+func (c *Claude) Model() string { return c.cfg.Model }
 
 // claudeRequest is the Anthropic API request format.
 type claudeRequest struct {

@@ -13,10 +13,11 @@ import (
 	"time"
 
 	ghsync "github.com/artemis-project/artemis/internal/github"
+	"github.com/artemis-project/artemis/internal/state"
 	_ "modernc.org/sqlite"
 )
 
-const currentSchemaVersion = 5
+const currentSchemaVersion = 6
 
 // SQLiteStore implements MemoryStore using pure-Go SQLite with FTS5.
 // Phase 2 adds optional VectorStore for hybrid search.
@@ -136,9 +137,15 @@ func (s *SQLiteStore) migrate() error {
 		}
 	}
 
-	// Future migrations go here:
-	// if version < 6 { s.migrateV6() }
+	// Phase C-5: Step checkpoints for pipeline resume
+	if version < 6 {
+		if err := s.migrateV6(); err != nil {
+			return fmt.Errorf("v6: %w", err)
+		}
+	}
 
+	// Future migrations go here:
+	// if version < 7 { s.migrateV7() }
 	return nil
 }
 
@@ -469,6 +476,141 @@ func (s *SQLiteStore) migrateV5() error {
 	}
 
 	return tx.Commit()
+}
+
+// migrateV6 adds step_checkpoints table for pipeline resume support (Phase C-5).
+func (s *SQLiteStore) migrateV6() error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	statements := []string{
+		// Step checkpoints — captures outcome of each step for resume
+		`CREATE TABLE IF NOT EXISTS step_checkpoints (
+			id                INTEGER PRIMARY KEY AUTOINCREMENT,
+			run_id            TEXT NOT NULL,
+			step_index        INTEGER NOT NULL,
+			step_name         TEXT NOT NULL,
+			status            TEXT NOT NULL,
+			artifacts_json    TEXT DEFAULT '[]',
+			agent_results_json TEXT DEFAULT '{}',
+			created_at        DATETIME DEFAULT CURRENT_TIMESTAMP,
+			FOREIGN KEY (run_id) REFERENCES pipeline_runs(id)
+		)`,
+
+		`CREATE INDEX IF NOT EXISTS idx_checkpoints_run ON step_checkpoints(run_id, step_index)`,
+
+		`INSERT INTO schema_version (version) VALUES (6)`,
+	}
+
+	for _, stmt := range statements {
+		if _, err := tx.Exec(stmt); err != nil {
+			return fmt.Errorf("exec %q: %w", stmt[:min(60, len(stmt))], err)
+		}
+	}
+
+	return tx.Commit()
+}
+
+// --- Checkpoint Store (Phase C-5) ---
+
+// SaveCheckpoint persists a step checkpoint after step completion.
+func (s *SQLiteStore) SaveCheckpoint(ctx context.Context, cp *state.StepCheckpoint) error {
+	result, err := s.db.ExecContext(ctx,
+		`INSERT INTO step_checkpoints (run_id, step_index, step_name, status, artifacts_json, agent_results_json, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
+		cp.RunID, cp.StepIndex, cp.StepName, cp.Status, cp.ArtifactsJSON, cp.AgentResultsJSON,
+	)
+	if err != nil {
+		return fmt.Errorf("memory: save checkpoint: %w", err)
+	}
+	cp.ID, _ = result.LastInsertId()
+	return nil
+}
+
+// GetCheckpoints returns all checkpoints for a pipeline run, ordered by step index.
+func (s *SQLiteStore) GetCheckpoints(ctx context.Context, runID string) ([]state.StepCheckpoint, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, run_id, step_index, step_name, status, COALESCE(artifacts_json, '[]'),
+		        COALESCE(agent_results_json, '{}'), created_at
+		 FROM step_checkpoints WHERE run_id = ?
+		 ORDER BY step_index ASC`,
+		runID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("memory: get checkpoints: %w", err)
+	}
+	defer rows.Close()
+
+	var checkpoints []state.StepCheckpoint
+	for rows.Next() {
+		var cp state.StepCheckpoint
+		if err := rows.Scan(&cp.ID, &cp.RunID, &cp.StepIndex, &cp.StepName,
+			&cp.Status, &cp.ArtifactsJSON, &cp.AgentResultsJSON, &cp.CreatedAt); err != nil {
+			return nil, err
+		}
+		checkpoints = append(checkpoints, cp)
+	}
+	return checkpoints, rows.Err()
+}
+
+// GetIncompleteRuns returns pipeline runs that are still in "running" status.
+// These represent interrupted pipelines that may be resumable.
+func (s *SQLiteStore) GetIncompleteRuns(ctx context.Context, sessionID string) ([]state.IncompleteRun, error) {
+	// Find all "running" pipeline runs (those that were interrupted before completion)
+	query := `SELECT pr.id, pr.session_id, COALESCE(pr.intent, ''), COALESCE(pr.plan_json, ''),
+	                 pr.status, pr.created_at,
+	                 COALESCE(MAX(sc.step_index), -1) AS last_step_index,
+	                 COALESCE(MAX(CASE WHEN sc.step_index = (SELECT MAX(step_index) FROM step_checkpoints WHERE run_id = pr.id) THEN sc.step_name END), '') AS last_step_name
+	          FROM pipeline_runs pr
+	          LEFT JOIN step_checkpoints sc ON sc.run_id = pr.id
+	          WHERE pr.status = 'running'`
+
+	var args []interface{}
+	if sessionID != "" {
+		query += ` AND pr.session_id = ?`
+		args = append(args, sessionID)
+	}
+	query += ` GROUP BY pr.id ORDER BY pr.created_at DESC`
+
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("memory: get incomplete runs: %w", err)
+	}
+	defer rows.Close()
+
+	var runs []state.IncompleteRun
+	for rows.Next() {
+		var r state.IncompleteRun
+		if err := rows.Scan(&r.RunID, &r.SessionID, &r.Intent, &r.PlanJSON,
+			&r.Status, &r.CreatedAt, &r.LastStepIndex, &r.LastStepName); err != nil {
+			return nil, err
+		}
+		// Derive total steps from plan JSON
+		if r.PlanJSON != "" {
+			var planData struct {
+				Steps []json.RawMessage `json:"steps"`
+			}
+			if err := json.Unmarshal([]byte(r.PlanJSON), &planData); err == nil {
+				r.TotalSteps = len(planData.Steps)
+			}
+		}
+		runs = append(runs, r)
+	}
+	return runs, rows.Err()
+}
+
+// DeleteCheckpoints removes all checkpoints for a pipeline run (cleanup).
+func (s *SQLiteStore) DeleteCheckpoints(ctx context.Context, runID string) error {
+	_, err := s.db.ExecContext(ctx,
+		`DELETE FROM step_checkpoints WHERE run_id = ?`, runID,
+	)
+	if err != nil {
+		return fmt.Errorf("memory: delete checkpoints: %w", err)
+	}
+	return nil
 }
 
 // --- Facts (Semantic Memory) ---

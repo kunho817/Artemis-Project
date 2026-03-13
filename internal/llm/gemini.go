@@ -29,6 +29,7 @@ func NewGemini(cfg config.ProviderConfig) *Gemini {
 }
 
 func (g *Gemini) Name() string { return "gemini" }
+func (g *Gemini) Model() string { return g.cfg.Model }
 
 // Gemini API types
 type geminiRequest struct {

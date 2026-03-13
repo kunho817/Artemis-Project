@@ -30,6 +30,7 @@ func NewGLM(cfg config.GLMConfig) *GLM {
 }
 
 func (g *GLM) Name() string { return "glm" }
+func (g *GLM) Model() string { return g.cfg.Model }
 
 // GLM API types (OpenAI-compatible format)
 type glmRequest struct {

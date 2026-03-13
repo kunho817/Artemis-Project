@@ -26,6 +26,7 @@ func NewRetryProvider(inner Provider, maxRetries int) *RetryProvider {
 }
 
 func (r *RetryProvider) Name() string { return r.inner.Name() }
+func (r *RetryProvider) Model() string { return r.inner.Model() }
 
 // Send retries with exponential backoff (1s, 2s, 4s...) on transient failures.
 func (r *RetryProvider) Send(ctx context.Context, messages []Message) (string, error) {

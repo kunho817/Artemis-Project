@@ -22,6 +22,7 @@ const (
 	ArtifactOrchestratorPlan ArtifactType = "ORCHESTRATOR_PLAN"
 	ArtifactError            ArtifactType = "ERROR"
 	ArtifactConsultation     ArtifactType = "CONSULTATION"
+	ArtifactReview           ArtifactType = "REVIEW"       // Phase C-6: review feedback from feedback loop
 )
 
 // Artifact represents a piece of data produced by an agent.

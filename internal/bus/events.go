@@ -28,6 +28,7 @@ const (
 	EventBackgroundTaskFail              // Background task encountered an error
 	EventAgentWarn                       // Non-critical agent failure (warning)
 	EventRecoveryAttempt                 // Recovery system attempting to fix a failure
+	EventReviewLoop                          // Phase C-6: review feedback loop iteration
 )
 
 // AgentEvent carries status updates from agents to the TUI.

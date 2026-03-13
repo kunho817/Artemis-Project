@@ -21,6 +21,7 @@ const (
 	OverlayAgentSelector
 	OverlayFilePicker
 	OverlayRecovery
+	OverlayResume
 )
 
 // OverlayResult carries the outcome when an overlay closes.

@@ -29,6 +29,7 @@ func NewGPT(cfg config.ProviderConfig) *GPT {
 }
 
 func (g *GPT) Name() string { return "gpt" }
+func (g *GPT) Model() string { return g.cfg.Model }
 
 // OpenAI API types
 type gptRequest struct {

@@ -23,8 +23,11 @@ type StreamChunk struct {
 
 // Provider defines the interface all LLM providers must implement.
 type Provider interface {
-	// Name returns the provider identifier.
+	// Name returns the provider identifier (e.g., "claude", "gpt").
 	Name() string
+
+	// Model returns the model name currently configured (e.g., "gpt-5.4").
+	Model() string
 
 	// Send sends a message and returns the full response.
 	Send(ctx context.Context, messages []Message) (string, error)
