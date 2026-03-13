@@ -137,7 +137,7 @@ The codebase is available via your tools (read_file, grep, list_dir, etc.).`, re
 				return ag
 			}
 
-			result := orchestrator.NewEngine(nil, eb).RunPlan(ctx, plan, ss, buildAgent)
+			result := orchestrator.NewEngine(nil, eb, nil, nil).RunPlan(ctx, plan, ss, buildAgent)
 			eb.Close()
 			if !result.Completed {
 				return "", fmt.Errorf("plan execution failed: %v", result.HaltError)

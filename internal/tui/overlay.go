@@ -20,6 +20,7 @@ const (
 	OverlayCommandPalette
 	OverlayAgentSelector
 	OverlayFilePicker
+	OverlayRecovery
 )
 
 // OverlayResult carries the outcome when an overlay closes.

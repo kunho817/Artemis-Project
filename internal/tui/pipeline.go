@@ -207,7 +207,12 @@ func (a App) executePlan(plan *orchestrator.ExecutionPlan, userText string) (tea
 	}
 
 	// Create engine (nil pipeline — using RunPlan instead)
-	engine := orchestrator.NewEngine(nil, eb)
+	// Create recovery bridge for failure recovery (Phase 6)
+	bridge := NewRecoveryBridge()
+	a.recoveryBridge = bridge
+
+	// Create engine with recovery support
+	engine := orchestrator.NewEngine(nil, eb, bridge, buildAgent)
 
 	// Create background task manager for parallel background tasks
 	bgMgr := orchestrator.NewBackgroundTaskManager(eb)
@@ -252,7 +257,7 @@ func (a App) executePlan(plan *orchestrator.ExecutionPlan, userText string) (tea
 		eb.Close()
 	}()
 
-	return a, a.waitForEvent(eb)
+	return a, tea.Batch(a.waitForEvent(eb), waitForRecoveryRequest(bridge))
 }
 
 // executeTrivial handles trivial intent — direct LLM streaming without Engine or tools.
@@ -359,7 +364,11 @@ func (a App) executeLegacyPipeline(text string) (tea.Model, tea.Cmd) {
 		Content: text,
 	})
 
-	engine := orchestrator.NewEngine(pipeline, eb)
+	// Create recovery bridge for failure recovery (Phase 6)
+	legacyBridge := NewRecoveryBridge()
+	a.recoveryBridge = legacyBridge
+
+	engine := orchestrator.NewEngine(pipeline, eb, legacyBridge, nil)
 
 	memStore := a.memStore
 	capturedRunID := runID
@@ -381,7 +390,7 @@ func (a App) executeLegacyPipeline(text string) (tea.Model, tea.Cmd) {
 		eb.Close()
 	}()
 
-	return a, a.waitForEvent(eb)
+	return a, tea.Batch(a.waitForEvent(eb), waitForRecoveryRequest(legacyBridge))
 }
 
 // buildAgentsForPhase creates agents for the given roles.

@@ -75,6 +75,8 @@ type Agent interface {
 
 	// SetSkills attaches domain-specific skills to inject into prompts.
 	SetSkills(skills []*Skill)
+	// OverrideTask returns the Orchestrator-assigned task override (empty if none).
+	OverrideTask() string
 }
 
 // BaseAgent provides shared logic for all agents.

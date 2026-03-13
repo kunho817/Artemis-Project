@@ -201,6 +201,20 @@ func (a App) handleAgentEvent(msg AgentEventMsg) (tea.Model, tea.Cmd) {
 			Status: StatusError,
 			Text:   fmt.Sprintf("  ⚡ %s [bg]: %s", displayName, event.Message),
 		})
+
+	case bus.EventAgentWarn:
+		displayName := agentDisplayName(event.AgentName)
+		a.activity.AddActivity(ActivityItem{
+			Status: StatusError,
+			Text:   fmt.Sprintf("  ⚠ %s: %s", displayName, event.Message),
+		})
+
+	case bus.EventRecoveryAttempt:
+		displayName := agentDisplayName(event.AgentName)
+		a.activity.AddActivity(ActivityItem{
+			Status: StatusRunning,
+			Text:   fmt.Sprintf("  🔄 %s: %s", displayName, event.Message),
+		})
 	}
 
 	// Continue listening for more events
@@ -219,6 +233,8 @@ func (a App) handlePipelineComplete(msg PipelineCompleteMsg) (tea.Model, tea.Cmd
 	a.focused = FocusChat
 	a.cancelPipeline = nil
 	a.eventBus = nil
+	a.recoveryBridge = nil
+	a.recoveryQueue = nil
 	a.recalcLayout()
 
 	// Save accumulated pipeline output to conversation history

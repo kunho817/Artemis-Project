@@ -122,6 +122,10 @@ type App struct {
 
 	overlayKind OverlayKind
 	overlay     Overlay
+
+	// Recovery system (Phase 6)
+	recoveryBridge *RecoveryBridge  // shared pointer — survives model copies
+	recoveryQueue  []RecoveryRequest // queued recovery requests from concurrent agent failures
 }
 
 // NewApp creates a new application model.
@@ -340,6 +344,42 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case PipelineCompleteMsg:
 		return a.handlePipelineComplete(msg)
 
+	case RecoveryRequestMsg:
+		// Queue the recovery request from Engine goroutine
+		a.recoveryQueue = append(a.recoveryQueue, msg.Request)
+		// Show overlay if this is the first queued request
+		if len(a.recoveryQueue) == 1 {
+			overlay := NewRecoveryOverlay(msg.Request, a.width, a.height)
+			a.overlayKind = OverlayRecovery
+			a.overlay = overlay
+		}
+		// Continue listening for more recovery requests
+		var rcmds []tea.Cmd
+		if a.recoveryBridge != nil {
+			rcmds = append(rcmds, waitForRecoveryRequest(a.recoveryBridge))
+		}
+		if a.eventBus != nil {
+			rcmds = append(rcmds, a.waitForEvent(a.eventBus))
+		}
+		return a, tea.Batch(rcmds...)
+
+	case RecoveryDecisionMsg:
+		// Send user's decision back to the Engine goroutine
+		if len(a.recoveryQueue) > 0 {
+			req := a.recoveryQueue[0]
+			req.ReplyCh <- msg.Action
+			a.recoveryQueue = a.recoveryQueue[1:]
+		}
+		// Show next queued recovery request, or dismiss overlay
+		if len(a.recoveryQueue) > 0 {
+			overlay := NewRecoveryOverlay(a.recoveryQueue[0], a.width, a.height)
+			a.overlayKind = OverlayRecovery
+			a.overlay = overlay
+		} else {
+			a.overlayKind = OverlayNone
+			a.overlay = nil
+		}
+		return a, nil
 	case fixIssueResultMsg:
 		if msg.err != nil {
 			a.chat.AddMessage(ChatMessage{Role: RoleSystem, Content: fmt.Sprintf("Fix failed for issue #%d: %v", msg.issueNumber, msg.err)})
@@ -603,6 +643,8 @@ func (a *App) clearChatState() {
 	a.history = nil
 	a.pipelineOutputs = nil
 	a.agentStreams = nil
+	a.recoveryBridge = nil
+	a.recoveryQueue = nil
 	a.totalTokens = 0
 	a.totalCost = 0
 	a.statusBar.SetTokens(0)

@@ -26,6 +26,8 @@ const (
 	EventBackgroundTaskStart            // Background task started running
 	EventBackgroundTaskComplete          // Background task finished successfully
 	EventBackgroundTaskFail              // Background task encountered an error
+	EventAgentWarn                       // Non-critical agent failure (warning)
+	EventRecoveryAttempt                 // Recovery system attempting to fix a failure
 )
 
 // AgentEvent carries status updates from agents to the TUI.
