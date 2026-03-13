@@ -353,15 +353,14 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.overlayKind = OverlayRecovery
 			a.overlay = overlay
 		}
-		// Continue listening for more recovery requests
-		var rcmds []tea.Cmd
+		// Re-subscribe ONLY to recovery requests.
+		// waitForEvent is still running from pipeline.go's initial tea.Batch;
+		// re-subscribing would create duplicate goroutines on the same EventBus channel,
+		// causing double PipelineCompleteMsg on close.
 		if a.recoveryBridge != nil {
-			rcmds = append(rcmds, waitForRecoveryRequest(a.recoveryBridge))
+			return a, waitForRecoveryRequest(a.recoveryBridge)
 		}
-		if a.eventBus != nil {
-			rcmds = append(rcmds, a.waitForEvent(a.eventBus))
-		}
-		return a, tea.Batch(rcmds...)
+		return a, nil
 
 	case RecoveryDecisionMsg:
 		// Send user's decision back to the Engine goroutine
