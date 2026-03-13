@@ -5,19 +5,22 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 )
 
 // PatchFileTool applies targeted line-level edits to a file.
 // More precise than write_file — allows insert, replace, and delete operations
 // without needing to rewrite the entire file.
+// Uses atomic writes and file locking for concurrent safety.
 type PatchFileTool struct {
-	baseDir string
+	baseDir  string
+	fileLock *FileLockManager
 }
 
 func (t *PatchFileTool) Name() string { return "patch_file" }
 func (t *PatchFileTool) Description() string {
-	return "Apply targeted line edits to a file (insert, replace, delete lines without rewriting)"
+	return "Apply targeted line edits to a file (insert, replace, delete lines without rewriting). Uses atomic writes for crash safety."
 }
 func (t *PatchFileTool) Parameters() string {
 	return `path (string, required) — relative file path; operations (array, required) — list of edit operations, each with: op ("insert"|"replace"|"delete"), line (number, 1-based line number), content (string, for insert/replace — the new line content), end_line (number, optional for replace/delete — end of range inclusive)`
@@ -48,16 +51,35 @@ func (t *PatchFileTool) Execute(ctx context.Context, params map[string]interface
 		return ToolResult{Error: "path outside project directory"}, nil
 	}
 
+	// Acquire file lock to prevent concurrent modifications
+	if t.fileLock != nil {
+		t.fileLock.Lock(fullPath)
+		defer t.fileLock.Unlock(fullPath)
+	}
+
 	// Read existing file
 	data, err := os.ReadFile(fullPath)
 	if err != nil {
 		return ToolResult{Error: fmt.Sprintf("failed to read file: %s", err)}, nil
 	}
 
-	lines := strings.Split(string(data), "\n")
+	// Detect and preserve line ending style (CRLF vs LF)
+	rawContent := string(data)
+	useCRLF := strings.Contains(rawContent, "\r\n")
+	// Normalize to LF for processing
+	normalized := strings.ReplaceAll(rawContent, "\r\n", "\n")
+	lines := strings.Split(normalized, "\n")
 
-	// Apply operations in reverse order (bottom-up) so line numbers stay valid
-	sortOpsReverse(ops)
+	// Create backup before modifying
+	if err := createBackup(fullPath); err != nil {
+		_ = err // non-fatal
+	}
+
+	// Sort operations by line number descending (bottom-up) so line numbers stay valid.
+	// Uses sort.Slice instead of bubble sort for O(n log n) performance.
+	sort.Slice(ops, func(i, j int) bool {
+		return ops[i].Line > ops[j].Line
+	})
 
 	for _, op := range ops {
 		lines, err = applyOperation(lines, op)
@@ -66,9 +88,15 @@ func (t *PatchFileTool) Execute(ctx context.Context, params map[string]interface
 		}
 	}
 
-	// Write back
-	result := strings.Join(lines, "\n")
-	if err := os.WriteFile(fullPath, []byte(result), 0644); err != nil {
+	// Rejoin with original line ending style
+	sep := "\n"
+	if useCRLF {
+		sep = "\r\n"
+	}
+	result := strings.Join(lines, sep)
+
+	// Atomic write: temp file → rename
+	if err := atomicWriteFile(fullPath, []byte(result), 0644); err != nil {
 		return ToolResult{Error: fmt.Sprintf("failed to write file: %s", err)}, nil
 	}
 
@@ -200,17 +228,5 @@ func applyOperation(lines []string, op patchOp) ([]string, error) {
 
 	default:
 		return nil, fmt.Errorf("unknown operation: %s", op.Op)
-	}
-}
-
-// sortOpsReverse sorts operations by line number descending,
-// so applying them bottom-up preserves line numbers.
-func sortOpsReverse(ops []patchOp) {
-	for i := 0; i < len(ops); i++ {
-		for j := i + 1; j < len(ops); j++ {
-			if ops[j].Line > ops[i].Line {
-				ops[i], ops[j] = ops[j], ops[i]
-			}
-		}
 	}
 }

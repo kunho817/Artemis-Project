@@ -13,16 +13,30 @@ type ListDirTool struct {
 	baseDir string
 }
 
-func (t *ListDirTool) Name() string        { return "list_dir" }
-func (t *ListDirTool) Description() string { return "List files and directories in a path" }
+func (t *ListDirTool) Name() string { return "list_dir" }
+func (t *ListDirTool) Description() string {
+	return "List files and directories in a path (max 200 entries)"
+}
 func (t *ListDirTool) Parameters() string {
-	return "path (string, optional, default \".\") — relative directory path"
+	return "path (string, optional, default \".\") — relative directory path; limit (number, optional, default 200) — max entries to show; include (string, optional) — file extension filter e.g. \".go\""
 }
 
 func (t *ListDirTool) Execute(ctx context.Context, params map[string]interface{}) (ToolResult, error) {
 	path := "."
 	if p, ok := params["path"].(string); ok && p != "" {
 		path = p
+	}
+
+	// Parse limit parameter
+	limit := 200
+	if l, ok := params["limit"].(float64); ok && l > 0 {
+		limit = int(l)
+	}
+
+	// Parse include filter parameter
+	include := ""
+	if inc, ok := params["include"].(string); ok {
+		include = inc
 	}
 
 	fullPath := filepath.Join(t.baseDir, filepath.Clean(path))
@@ -36,10 +50,19 @@ func (t *ListDirTool) Execute(ctx context.Context, params map[string]interface{}
 	}
 
 	var sb strings.Builder
+	shown := 0
+	total := len(entries)
 	for _, entry := range entries {
+		if shown >= limit {
+			break
+		}
 		name := entry.Name()
 		if entry.IsDir() {
 			name += "/"
+		}
+		// Filter by include extension if specified
+		if include != "" && !entry.IsDir() && !strings.HasSuffix(name, include) {
+			continue
 		}
 		info, _ := entry.Info()
 		if info != nil {
@@ -47,11 +70,17 @@ func (t *ListDirTool) Execute(ctx context.Context, params map[string]interface{}
 		} else {
 			sb.WriteString(name + "\n")
 		}
+		shown++
 	}
 
 	if sb.Len() == 0 {
 		return ToolResult{Content: "(empty directory)"}, nil
 	}
 
-	return ToolResult{Content: sb.String()}, nil
+	result := sb.String()
+	if shown >= limit && shown < total {
+		result += fmt.Sprintf("\nShowing %d of %d entries\n", shown, total)
+	}
+
+	return ToolResult{Content: result}, nil
 }

@@ -151,6 +151,8 @@ func NewApp() App {
 
 	// Initialize tool executor
 	cwd, _ := os.Getwd()
+	te := tools.NewToolExecutor(cwd)
+	te.SetAutoCommit(true)
 
 	// Initialize skill registry
 	skillReg := agent.NewSkillRegistry()
@@ -163,7 +165,7 @@ func NewApp() App {
 		viewMode:      ViewChat,
 		layoutMode:    LayoutSingle,
 		cfg:           cfg,
-		toolExecutor:  tools.NewToolExecutor(cwd),
+		toolExecutor:  te,
 		skillRegistry: skillReg,
 		sessionID:     fmt.Sprintf("ses_%d", time.Now().UnixNano()),
 		totalTokens:   0,

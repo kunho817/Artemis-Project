@@ -11,15 +11,17 @@ import (
 	"time"
 )
 
-// ShellExecTool executes a shell command with a 30-second timeout.
+// ShellExecTool executes a shell command with configurable timeout.
 type ShellExecTool struct {
 	baseDir string
 }
 
-func (t *ShellExecTool) Name() string        { return "shell_exec" }
-func (t *ShellExecTool) Description() string { return "Execute a shell command (30s timeout)" }
+func (t *ShellExecTool) Name() string { return "shell_exec" }
+func (t *ShellExecTool) Description() string {
+	return "Execute a shell command (configurable timeout, default 30s)"
+}
 func (t *ShellExecTool) Parameters() string {
-	return "command (string, required) — command to execute; workdir (string, optional) — working directory relative to project root"
+	return "command (string, required) — command to execute; workdir (string, optional) — working directory relative to project root; timeout (number, optional, default 30) — timeout in seconds (max 300)"
 }
 
 func (t *ShellExecTool) Execute(ctx context.Context, params map[string]interface{}) (ToolResult, error) {
@@ -36,8 +38,17 @@ func (t *ShellExecTool) Execute(ctx context.Context, params map[string]interface
 		}
 	}
 
+	// Parse timeout parameter
+	timeout := 30.0
+	if t, ok := params["timeout"].(float64); ok && t > 0 {
+		timeout = t
+		if timeout > 300 {
+			timeout = 300
+		}
+	}
+
 	// Create command with timeout
-	execCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	execCtx, cancel := context.WithTimeout(ctx, time.Duration(timeout)*time.Second)
 	defer cancel()
 
 	var cmd *exec.Cmd
@@ -68,7 +79,7 @@ func (t *ShellExecTool) Execute(ctx context.Context, params map[string]interface
 
 	// Truncate large outputs
 	output := sb.String()
-	const maxOutput = 50 * 1024 // 50KB
+	const maxOutput = 200 * 1024 // 200KB
 	if len(output) > maxOutput {
 		output = output[:maxOutput] + "\n... (truncated)"
 	}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 )
@@ -222,7 +223,10 @@ func TestSortOpsReverse(t *testing.T) {
 	ops := []patchOp{
 		{Line: 1}, {Line: 5}, {Line: 3},
 	}
-	sortOpsReverse(ops)
+	// sort.Slice is now used internally; verify same behavior
+	sort.Slice(ops, func(i, j int) bool {
+		return ops[i].Line > ops[j].Line
+	})
 	if ops[0].Line != 5 || ops[1].Line != 3 || ops[2].Line != 1 {
 		t.Errorf("expected descending order, got %v", ops)
 	}

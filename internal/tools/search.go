@@ -16,7 +16,7 @@ type SearchFilesTool struct {
 
 func (t *SearchFilesTool) Name() string { return "search_files" }
 func (t *SearchFilesTool) Description() string {
-	return "Search for a text pattern across project files"
+	return "Search for a text pattern across project files — max 300 matches"
 }
 func (t *SearchFilesTool) Parameters() string {
 	return "pattern (string, required) — text to search for; path (string, optional, default \".\") — directory to search in; include (string, optional) — file extension filter e.g. \".go\""
@@ -45,7 +45,7 @@ func (t *SearchFilesTool) Execute(ctx context.Context, params map[string]interfa
 
 	var sb strings.Builder
 	matchCount := 0
-	const maxMatches = 100
+	const maxMatches = 300
 
 	err := filepath.Walk(fullPath, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
@@ -72,7 +72,7 @@ func (t *SearchFilesTool) Execute(ctx context.Context, params map[string]interfa
 		}
 
 		// Skip binary/large files
-		if info.Size() > 1024*1024 { // 1MB
+		if info.Size() > 10*1024*1024 { // 10MB
 			return nil
 		}
 

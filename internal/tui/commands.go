@@ -56,9 +56,11 @@ func (a App) handleCommand(text string) (tea.Model, tea.Cmd) {
 	case "/help":
 		a.chat.AddMessage(ChatMessage{
 			Role:    RoleSystem,
-			Content: "Commands:\n  /sessions — List recent sessions\n  /load <id> — Resume a previous session\n  /issues — Sync and list GitHub issues\n  /fix <number> — Create draft fix PR scaffold for issue\n  /help — Show this help",
+			Content: "Commands:\n  /sessions — List recent sessions\n  /load <id> — Resume a previous session\n  /issues — Sync and list GitHub issues\n  /fix <number> — Create draft fix PR scaffold for issue\n  /undo — Revert last agent file change\n  /help — Show this help",
 		})
 		return a, nil
+	case "/undo":
+		return a.cmdUndo()
 	default:
 		a.chat.AddMessage(ChatMessage{
 			Role:    RoleSystem,
@@ -351,4 +353,27 @@ func (a *App) formatSessionEntry(sb *strings.Builder, s SessionSummary, idx int,
 		childIndent := indent + "  └─ "
 		a.formatSessionEntry(sb, child, ci+1, childIndent, childrenOf)
 	}
+}
+
+// cmdUndo reverts the last auto-committed file change.
+func (a App) cmdUndo() (tea.Model, tea.Cmd) {
+	if a.toolExecutor == nil {
+		a.chat.AddMessage(ChatMessage{Role: RoleSystem, Content: "Tool executor is not available."})
+		return a, nil
+	}
+	count := a.toolExecutor.UndoCount()
+	if count == 0 {
+		a.chat.AddMessage(ChatMessage{Role: RoleSystem, Content: "Nothing to undo — no auto-committed changes."})
+		return a, nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	hash, err := a.toolExecutor.Undo(ctx)
+	if err != nil {
+		a.chat.AddMessage(ChatMessage{Role: RoleSystem, Content: fmt.Sprintf("Undo failed: %v", err)})
+		return a, nil
+	}
+	remaining := a.toolExecutor.UndoCount()
+	a.chat.AddMessage(ChatMessage{Role: RoleSystem, Content: fmt.Sprintf("Reverted commit %s. (%d undo(s) remaining)", hash, remaining)})
+	return a, nil
 }

@@ -18,7 +18,7 @@ type GrepTool struct {
 
 func (t *GrepTool) Name() string { return "grep" }
 func (t *GrepTool) Description() string {
-	return "Search for a regex pattern across project files (supports regex, context lines, case-insensitive)"
+	return "Search for a regex pattern across project files (supports regex, context lines, case-insensitive) — max 500 matches"
 }
 func (t *GrepTool) Parameters() string {
 	return `pattern (string, required) — regex pattern to search for; path (string, optional, default ".") — directory to search in; include (string, optional) — file extension filter e.g. ".go"; context_lines (number, optional, default 0) — lines of context around matches; ignore_case (bool, optional, default false) — case-insensitive search`
@@ -74,7 +74,7 @@ func (t *GrepTool) Execute(ctx context.Context, params map[string]interface{}) (
 	var sb strings.Builder
 	matchCount := 0
 	fileCount := 0
-	const maxMatches = 200
+	const maxMatches = 500
 
 	walkErr := filepath.Walk(fullPath, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
@@ -100,7 +100,7 @@ func (t *GrepTool) Execute(ctx context.Context, params map[string]interface{}) (
 		}
 
 		// Skip binary/large files
-		if info.Size() > 1024*1024 {
+		if info.Size() > 10*1024*1024 {
 			return nil
 		}
 
@@ -139,11 +139,12 @@ func (t *GrepTool) Execute(ctx context.Context, params map[string]interface{}) (
 		return ToolResult{Content: fmt.Sprintf("No matches found for /%s/", pattern)}, nil
 	}
 
-	header := fmt.Sprintf("Found %d matches in %d files\n\n", matchCount, fileCount)
-	result := header + sb.String()
+	header := fmt.Sprintf("Found %d matches in %d files", matchCount, fileCount)
 	if matchCount >= maxMatches {
-		result += fmt.Sprintf("\n... (showing first %d matches)", maxMatches)
+		header += " (truncated)"
 	}
+	header += "\n\n"
+	result := header + sb.String()
 
 	return ToolResult{Content: result}, nil
 }

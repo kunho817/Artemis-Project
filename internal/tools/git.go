@@ -111,7 +111,7 @@ func (t *GitDiffTool) Execute(ctx context.Context, params map[string]interface{}
 
 	// Truncate very large diffs
 	output := sb.String()
-	const maxDiff = 100 * 1024 // 100KB
+	const maxDiff = 500 * 1024 // 500KB
 	if len(output) > maxDiff {
 		output = output[:maxDiff] + "\n... (diff truncated, too large)"
 	}
@@ -134,8 +134,8 @@ func (t *GitLogTool) Execute(ctx context.Context, params map[string]interface{})
 	count := 10
 	if c, ok := params["count"].(float64); ok && c > 0 {
 		count = int(c)
-		if count > 50 {
-			count = 50
+		if count > 100 {
+			count = 100
 		}
 	}
 
@@ -170,7 +170,7 @@ func (t *GitLogTool) Execute(ctx context.Context, params map[string]interface{})
 
 // runGitCommand executes a git command with a timeout and returns the output.
 func runGitCommand(ctx context.Context, workDir string, args ...string) (string, error) {
-	execCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	execCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
 	cmd := exec.CommandContext(execCtx, "git", args...)

@@ -4,7 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
 	"strings"
+	"sync"
 )
 
 // Tool defines the interface for agent-executable tools.
@@ -41,19 +46,24 @@ const DefaultMaxToolIterations = 50
 
 // ToolExecutor manages and executes agent tools.
 type ToolExecutor struct {
-	tools   map[string]Tool
-	workDir string
+	tools      map[string]Tool
+	workDir    string
+	fileLock   *FileLockManager
+	autoCommit bool     // if true, auto-commit after file writes
+	commitLog  []string // stack of auto-commit hashes for undo
 }
 
 // NewToolExecutor creates a new tool executor with all built-in tools registered.
 func NewToolExecutor(workDir string) *ToolExecutor {
+	fl := NewFileLockManager()
 	te := &ToolExecutor{
-		tools:   make(map[string]Tool),
-		workDir: workDir,
+		tools:    make(map[string]Tool),
+		workDir:  workDir,
+		fileLock: fl,
 	}
 	te.Register(&ReadFileTool{baseDir: workDir})
-	te.Register(&WriteFileTool{baseDir: workDir})
-	te.Register(&PatchFileTool{baseDir: workDir})
+	te.Register(&WriteFileTool{baseDir: workDir, fileLock: fl})
+	te.Register(&PatchFileTool{baseDir: workDir, fileLock: fl})
 	te.Register(&ListDirTool{baseDir: workDir})
 	te.Register(&SearchFilesTool{baseDir: workDir})
 	te.Register(&GrepTool{baseDir: workDir})
@@ -70,12 +80,93 @@ func (te *ToolExecutor) Register(tool Tool) {
 }
 
 // Execute runs a tool by name with the given parameters.
+// If autoCommit is enabled and the tool changes files, a shadow git commit is created.
 func (te *ToolExecutor) Execute(ctx context.Context, name string, params map[string]interface{}) (ToolResult, error) {
 	tool, ok := te.tools[name]
 	if !ok {
 		return ToolResult{Error: "unknown tool: " + name}, fmt.Errorf("unknown tool: %s", name)
 	}
-	return tool.Execute(ctx, params)
+	result, err := tool.Execute(ctx, params)
+
+	// Auto-commit changed files for safety
+	if te.autoCommit && len(result.FilesChanged) > 0 && result.Error == "" {
+		if hash, commitErr := te.shadowCommit(ctx, name, result.FilesChanged); commitErr == nil && hash != "" {
+			te.commitLog = append(te.commitLog, hash)
+		}
+	}
+
+	return result, err
+}
+
+// SetAutoCommit enables or disables automatic git commits after file writes.
+func (te *ToolExecutor) SetAutoCommit(enabled bool) {
+	te.autoCommit = enabled
+}
+
+// Undo reverts the last auto-committed change using git reset --hard.
+// Returns the reverted commit hash, or empty string if nothing to undo.
+func (te *ToolExecutor) Undo(ctx context.Context) (string, error) {
+	if len(te.commitLog) == 0 {
+		return "", fmt.Errorf("nothing to undo")
+	}
+
+	hash := te.commitLog[len(te.commitLog)-1]
+	te.commitLog = te.commitLog[:len(te.commitLog)-1]
+
+	// git reset --hard HEAD~1
+	cmd := exec.CommandContext(ctx, "git", "reset", "--hard", "HEAD~1")
+	cmd.Dir = te.workDir
+	if runtime.GOOS == "windows" {
+		setHiddenProcessAttrs(cmd)
+	}
+	if output, err := cmd.CombinedOutput(); err != nil {
+		return "", fmt.Errorf("git reset failed: %s — %s", err, string(output))
+	}
+
+	return hash, nil
+}
+
+// UndoCount returns the number of auto-commits available for undo.
+func (te *ToolExecutor) UndoCount() int {
+	return len(te.commitLog)
+}
+
+// shadowCommit creates a silent git commit for file changes made by a tool.
+func (te *ToolExecutor) shadowCommit(ctx context.Context, toolName string, files []string) (string, error) {
+	// git add <files>
+	addArgs := append([]string{"add", "--"}, files...)
+	addCmd := exec.CommandContext(ctx, "git", addArgs...)
+	addCmd.Dir = te.workDir
+	if runtime.GOOS == "windows" {
+		setHiddenProcessAttrs(addCmd)
+	}
+	if output, err := addCmd.CombinedOutput(); err != nil {
+		return "", fmt.Errorf("git add failed: %s — %s", err, string(output))
+	}
+
+	// git commit
+	msg := fmt.Sprintf("artemis: %s %s", toolName, strings.Join(files, ", "))
+	commitCmd := exec.CommandContext(ctx, "git", "commit", "-m", msg, "--no-verify")
+	commitCmd.Dir = te.workDir
+	if runtime.GOOS == "windows" {
+		setHiddenProcessAttrs(commitCmd)
+	}
+	if output, err := commitCmd.CombinedOutput(); err != nil {
+		return "", fmt.Errorf("git commit failed: %s — %s", err, string(output))
+	}
+
+	// Get the commit hash
+	hashCmd := exec.CommandContext(ctx, "git", "rev-parse", "--short", "HEAD")
+	hashCmd.Dir = te.workDir
+	if runtime.GOOS == "windows" {
+		setHiddenProcessAttrs(hashCmd)
+	}
+	hashOut, err := hashCmd.Output()
+	if err != nil {
+		return "", err
+	}
+
+	return strings.TrimSpace(string(hashOut)), nil
 }
 
 // ToolDescriptions returns a formatted string describing all available tools
@@ -174,4 +265,97 @@ func FormatToolResult(toolName string, result ToolResult) string {
 	}
 	sb.WriteString("</tool_result>")
 	return sb.String()
+}
+
+
+// --- FileLockManager: per-file mutex for concurrent write protection ---
+
+// FileLockManager provides per-filepath mutex locking to prevent
+// concurrent file modifications from multiple agents.
+type FileLockManager struct {
+	mu    sync.Mutex
+	locks map[string]*sync.Mutex
+}
+
+// NewFileLockManager creates a new file lock manager.
+func NewFileLockManager() *FileLockManager {
+	return &FileLockManager{
+		locks: make(map[string]*sync.Mutex),
+	}
+}
+
+// Lock acquires the mutex for the given file path.
+func (m *FileLockManager) Lock(path string) {
+	m.mu.Lock()
+	lock, ok := m.locks[path]
+	if !ok {
+		lock = &sync.Mutex{}
+		m.locks[path] = lock
+	}
+	m.mu.Unlock()
+	lock.Lock()
+}
+
+// Unlock releases the mutex for the given file path.
+func (m *FileLockManager) Unlock(path string) {
+	m.mu.Lock()
+	lock, ok := m.locks[path]
+	m.mu.Unlock()
+	if ok {
+		lock.Unlock()
+	}
+}
+
+// --- Atomic file write: temp file + rename for crash safety ---
+
+// atomicWriteFile writes content to a temporary file then renames it to the target path.
+// This prevents file corruption if the process crashes mid-write.
+func atomicWriteFile(path string, content []byte, perm os.FileMode) error {
+	dir := filepath.Dir(path)
+	tmp, err := os.CreateTemp(dir, ".artemis-tmp-*")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+
+	if _, err := tmp.Write(content); err != nil {
+		tmp.Close()
+		os.Remove(tmpName)
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		os.Remove(tmpName)
+		return err
+	}
+
+	// On Windows, os.Rename fails if target exists — remove first
+	if runtime.GOOS == "windows" {
+		os.Remove(path)
+	}
+
+	if err := os.Rename(tmpName, path); err != nil {
+		os.Remove(tmpName)
+		return err
+	}
+	return nil
+}
+
+// --- Shared utility functions ---
+
+// isInsideDir checks whether fullPath is inside baseDir.
+func isInsideDir(baseDir, fullPath string) bool {
+	absBase, err1 := filepath.Abs(baseDir)
+	absPath, err2 := filepath.Abs(fullPath)
+	if err1 != nil || err2 != nil {
+		return false
+	}
+	// Normalize separators for comparison
+	absBase = filepath.Clean(absBase)
+	absPath = filepath.Clean(absPath)
+
+	rel, err := filepath.Rel(absBase, absPath)
+	if err != nil {
+		return false
+	}
+	return !strings.HasPrefix(rel, "..")
 }
