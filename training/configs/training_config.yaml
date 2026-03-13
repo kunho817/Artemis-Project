@@ -1,0 +1,109 @@
+# Training and deployment configuration
+# Artemis Training Pipeline — Qwen2.5-Coder-7B QLoRA
+
+model:
+  base_model: "Qwen/Qwen2.5-Coder-7B"  # Base, NOT Instruct (better for FIM)
+  tokenizer: "Qwen/Qwen2.5-Coder-7B"
+  trust_remote_code: true
+  torch_dtype: "bfloat16"
+
+  # Special tokens (Qwen2.5-Coder)
+  fim_prefix_token: "<|fim_prefix|>"    # token_id: 151659
+  fim_middle_token: "<|fim_middle|>"    # token_id: 151660
+  fim_suffix_token: "<|fim_suffix|>"    # token_id: 151661
+  fim_pad_token: "<|fim_pad|>"          # token_id: 151662
+  repo_name_token: "<|repo_name|>"      # token_id: 151663
+  file_sep_token: "<|file_sep|>"        # token_id: 151664
+
+qlora:
+  # QLoRA hyperparameters
+  r: 64                    # LoRA rank
+  lora_alpha: 128          # alpha = 2 * r
+  lora_dropout: 0.05
+  target_modules: "all-linear"  # all linear layers
+  bias: "none"
+  task_type: "CAUSAL_LM"
+
+  # BitsAndBytes 4-bit config
+  load_in_4bit: true
+  bnb_4bit_quant_type: "nf4"
+  bnb_4bit_compute_dtype: "bfloat16"
+  bnb_4bit_use_double_quant: true
+
+training:
+  # SFTTrainer config
+  output_dir: "checkpoints/artemis-coder-7b-qlora"
+  num_train_epochs: 3
+  per_device_train_batch_size: 4
+  per_device_eval_batch_size: 4
+  gradient_accumulation_steps: 8  # effective batch size = 4 * 8 = 32
+  learning_rate: 1.5e-4           # sweet spot for QLoRA
+  weight_decay: 0.01
+  warmup_ratio: 0.03
+  lr_scheduler_type: "cosine"
+  max_seq_length: 2048
+
+  # FIM training
+  fim_rate: 0.4                # 40% of batches use FIM format
+  fim_spm_rate: 0.5            # 50% of FIM uses suffix-prefix-middle ordering
+
+  # Optimization
+  optim: "paged_adamw_8bit"
+  max_grad_norm: 0.3
+  gradient_checkpointing: true
+  bf16: true
+  tf32: true
+
+  # Logging & saving
+  logging_steps: 10
+  save_strategy: "steps"
+  save_steps: 500
+  save_total_limit: 3
+  eval_strategy: "steps"
+  eval_steps: 500
+  report_to: "wandb"
+  run_name: "artemis-coder-7b-qlora"
+
+  # Data
+  dataset_text_field: "text"
+  packing: true               # pack short sequences for efficiency
+
+  # CRITICAL: Use fim_pad_token as pad_token (NOT eos_token)
+  pad_token: "<|fim_pad|>"
+
+evaluation:
+  # HumanEval-Go style benchmark
+  benchmark: "humaneval-go"
+  num_samples: 164             # HumanEval problem count
+  temperature: 0.2
+  top_p: 0.95
+  max_new_tokens: 512
+  num_return_sequences: 1      # pass@1
+  # FIM-specific evaluation
+  fim_eval: true
+  fim_samples: 200
+
+deployment:
+  # Adapter merge
+  merge_output: "models/artemis-coder-7b-merged"
+
+  # AutoAWQ quantization (for RTX 3080 Ti 12GB)
+  quantize:
+    method: "awq"
+    bits: 4
+    group_size: 128
+    zero_point: true
+    output_dir: "models/artemis-coder-7b-awq"
+
+  # vLLM serving config (local inference)
+  vllm:
+    model_path: "models/artemis-coder-7b-awq"
+    host: "0.0.0.0"
+    port: 8000
+    gpu_memory_utilization: 0.85
+    max_model_len: 16384
+    enforce_eager: true          # RTX 3080 Ti doesn't benefit from CUDA graphs at this size
+    kv_cache_dtype: "auto"       # fp8 if supported, else fp16
+    dtype: "half"
+    api_key: ""                  # optional — leave empty for local
+    tensor_parallel_size: 1      # single GPU

@@ -1,0 +1,79 @@
+# Data collection and preprocessing configuration
+# Artemis Training Pipeline — Qwen2.5-Coder-7B Go Specialist
+
+collection:
+  # BigQuery settings (requires GOOGLE_APPLICATION_CREDENTIALS env var)
+  bigquery:
+    project_id: ""  # your GCP project ID
+    dataset: "bigquery-public-data.github_repos"
+    max_file_size_bytes: 102400  # 100KB — skip huge generated files
+    min_file_size_bytes: 100     # skip trivially small files
+    max_files: 500000            # collection cap
+    languages: ["Go"]
+
+  # The Stack v2 (HuggingFace datasets)
+  stack_v2:
+    dataset_name: "bigcode/the-stack-v2-dedup"
+    split: "train"
+    language_filter: "Go"
+    max_samples: 500000
+    streaming: true  # memory-efficient streaming
+
+  # Quality filter thresholds
+  quality:
+    min_stars: 5          # minimum repo star count (via GH Archive)
+    min_lines: 10         # minimum lines of code
+    max_lines: 2000       # maximum lines (avoid huge files)
+    min_comment_ratio: 0.02  # at least 2% comments
+    max_avg_line_length: 150 # skip minified/generated code
+    exclude_patterns:
+      - "vendor/"
+      - "generated"
+      - "_test.go"     # separate test files for test-specific scenarios
+      - "mock_"
+      - "pb.go"        # protobuf generated
+      - "zz_generated"
+      - "bindata.go"
+
+preprocessing:
+  # Tree-sitter Go AST extraction
+  ast:
+    extract_functions: true
+    extract_methods: true
+    extract_types: true
+    extract_interfaces: true
+    min_function_lines: 3    # skip trivial one-liners
+    max_function_lines: 200  # skip absurdly long functions
+    include_docstrings: true
+    include_imports: true    # preserve import context
+
+  # MinHash dedup (datasketch)
+  dedup:
+    num_perm: 128          # MinHash permutations
+    jaccard_threshold: 0.7 # similarity threshold for duplicate
+    shingle_size: 5        # 5-line shingles
+    batch_size: 10000
+
+  # Training format conversion
+  format:
+    # Scenario mix ratios (must sum to 1.0)
+    scenarios:
+      instruction: 0.30      # Natural language → code
+      function_generation: 0.25  # Signature + docstring → body
+      fim_completion: 0.20    # Fill-in-the-middle
+      bug_fix: 0.10          # Buggy → fixed code
+      code_review: 0.05      # Code → review comments
+      file_generation: 0.10  # Description → full file
+
+    # Token limits
+    max_instruction_tokens: 512
+    max_response_tokens: 1024
+    max_context_tokens: 2048
+
+output:
+  raw_dir: "data/raw"
+  processed_dir: "data/processed"
+  formatted_dir: "data/formatted"
+  train_file: "data/formatted/train.jsonl"
+  val_file: "data/formatted/val.jsonl"
+  val_split: 0.05  # 5% validation

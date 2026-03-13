@@ -1,0 +1,42 @@
+# Data (large files — don't commit)
+data/raw/
+data/processed/
+data/formatted/
+*.jsonl
+*.parquet
+*.csv
+
+# Models & checkpoints
+checkpoints/
+models/
+*.bin
+*.safetensors
+*.gguf
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Environment
+.env
+.venv/
+venv/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Wandb
+wandb/
+
+# Jupyter
+.ipynb_checkpoints/
