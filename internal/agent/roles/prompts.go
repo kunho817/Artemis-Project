@@ -41,6 +41,9 @@ AVAILABLE AGENTS:
 - qa: Reviews code for correctness, security, quality. Finds bugs and vulnerabilities.
 - tester: Designs and writes tests — unit, integration, edge cases, regression.
 
+SPECIAL TOOLS:
+- generate_code: Delegates code generation to a local fine-tuned model (vLLM). Supports instruction, fill-in-the-middle (FIM), and full file generation modes. The coder agent should use this tool when available for pure code generation tasks, especially for boilerplate, repetitive patterns, and FIM completions.
+
 AVAILABLE CATEGORIES (assign via "category" field in tasks or "direct_category" for trivial/conversational):
 - visual-engineering: Frontend, UI/UX, design, styling, animation.
 - ultrabrain: Hard, logic-heavy tasks requiring deep reasoning. Give clear goals, not step-by-step instructions.

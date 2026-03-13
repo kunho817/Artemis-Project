@@ -99,6 +99,7 @@ type Config struct {
 	Gemini         ProviderConfig `json:"gemini"`
 	GPT            ProviderConfig `json:"gpt"`
 	GLM            GLMConfig      `json:"glm"`
+	VLLM           ProviderConfig `json:"vllm"`
 	Agents         AgentConfig    `json:"agents"`
 	Memory         MemoryConfig   `json:"memory"`
 	Vector         VectorConfig   `json:"vector"`
@@ -130,6 +131,11 @@ func DefaultConfig() Config {
 		GLM: GLMConfig{
 			Endpoint: "https://api.z.ai/api/coding/paas/v4/chat/completions",
 			Model:    "glm-5",
+			Enabled:  false,
+		},
+		VLLM: ProviderConfig{
+			Endpoint: "http://localhost:8000/v1/chat/completions",
+			Model:    "qwen2.5-coder-7b",
 			Enabled:  false,
 		},
 		Agents:  DefaultAgentConfig(),
@@ -338,10 +344,10 @@ func Save(cfg Config) error {
 
 // ProviderNames returns the list of all provider names.
 func ProviderNames() []string {
-	return []string{"claude", "gemini", "gpt", "glm"}
+	return []string{"claude", "gemini", "gpt", "glm", "vllm"}
 }
 
-// GetProvider returns the ProviderConfig for a given name (Claude, Gemini, GPT only).
+// GetProvider returns the ProviderConfig for a given name (Claude, Gemini, GPT, VLLM).
 func (c *Config) GetProvider(name string) *ProviderConfig {
 	switch name {
 	case "claude":
@@ -350,6 +356,8 @@ func (c *Config) GetProvider(name string) *ProviderConfig {
 		return &c.Gemini
 	case "gpt":
 		return &c.GPT
+	case "vllm":
+		return &c.VLLM
 	default:
 		return nil
 	}

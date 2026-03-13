@@ -44,6 +44,8 @@ func NewProvider(name string, cfg *config.Config) Provider {
 		return NewGPT(cfg.GPT)
 	case "glm":
 		return NewGLM(cfg.GLM)
+	case "vllm":
+		return NewVLLM(cfg.VLLM)
 	default:
 		return nil
 	}
@@ -71,6 +73,10 @@ func NewProviderWithModel(name string, cfg *config.Config, model string) Provide
 		override := cfg.GLM
 		override.Model = model
 		return NewGLM(override)
+	case "vllm":
+		override := cfg.VLLM
+		override.Model = model
+		return NewVLLM(override)
 	default:
 		return nil
 	}

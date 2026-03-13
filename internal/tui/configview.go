@@ -14,9 +14,9 @@ import (
 )
 
 const (
-	tabAgents = 4 // 5th tab index (after 4 providers)
-	tabSystem = 5 // 6th tab: system settings sub-tabs
-	tabCount  = 6
+	tabAgents = 5 // 6th tab index (after 5 providers)
+	tabSystem = 6 // 7th tab: system settings sub-tabs
+	tabCount  = 7
 )
 
 const (
@@ -45,7 +45,7 @@ type ConfigView struct {
 }
 
 // tab labels: 4 providers + Agents + System
-var tabLabels = []string{"Claude", "Gemini", "GPT", "GLM", "Agents", "System"}
+var tabLabels = []string{"Claude", "Gemini", "GPT", "GLM", "VLLM", "Agents", "System"}
 
 // NewConfigView creates a new config view from current config.
 func NewConfigView(cfg config.Config) ConfigView {
@@ -255,6 +255,15 @@ func (cv *ConfigView) applyInputsToConfig() {
 		glm.Endpoint = cv.inputs[1].Value()
 		glm.Model = cv.inputs[2].Value()
 		glm.Enabled = glm.APIKey != ""
+	} else if providerName == "vllm" {
+		prov := cv.cfg.GetProvider(providerName)
+		if prov == nil {
+			return
+		}
+		prov.APIKey = cv.inputs[0].Value()
+		prov.Endpoint = cv.inputs[1].Value()
+		prov.Model = cv.inputs[2].Value()
+		prov.Enabled = prov.Endpoint != "" // vLLM: API key optional, endpoint required
 	} else {
 		prov := cv.cfg.GetProvider(providerName)
 		if prov == nil {
@@ -266,12 +275,18 @@ func (cv *ConfigView) applyInputsToConfig() {
 		prov.Enabled = prov.APIKey != ""
 	}
 }
-
 // isProviderEnabled checks if a provider is enabled.
 func (cv *ConfigView) isProviderEnabled(name string) bool {
 	if name == "glm" {
 		glm := cv.cfg.GetGLM()
 		return glm.Enabled || glm.APIKey != ""
+	}
+	if name == "vllm" {
+		prov := cv.cfg.GetProvider(name)
+		if prov == nil {
+			return false
+		}
+		return prov.Enabled || prov.Endpoint != "" // vLLM: API key optional
 	}
 	prov := cv.cfg.GetProvider(name)
 	if prov == nil {
@@ -557,10 +572,12 @@ func (cv *ConfigView) renderTabs() string {
 		if i == cv.tabIdx {
 			// Active tab
 			suffix := ""
-			if i < 4 {
+			if i < len(config.ProviderNames()) {
 				provName := config.ProviderNames()[i]
 				if provName == "glm" {
 					suffix = " (Coding Plan)"
+				} else if provName == "vllm" {
+					suffix = " (Local)"
 				}
 			}
 			tab := lipgloss.NewStyle().
@@ -573,7 +590,7 @@ func (cv *ConfigView) renderTabs() string {
 		} else {
 			// Inactive tab
 			style := lipgloss.NewStyle().Padding(0, 2).Foreground(ColorDimText)
-			if i < 4 {
+			if i < len(config.ProviderNames()) {
 				provName := config.ProviderNames()[i]
 				if cv.isProviderEnabled(provName) {
 					style = style.Foreground(ColorSuccess)
@@ -599,6 +616,9 @@ func (cv *ConfigView) renderProviderContent(sb *strings.Builder) {
 	fieldLabels := []string{"API Key", "Endpoint", "Model"}
 	if providerName == "glm" {
 		fieldLabels[1] = "Coding Plan Endpoint"
+	} else if providerName == "vllm" {
+		fieldLabels[0] = "API Key (optional)"
+		fieldLabels[1] = "vLLM Server Endpoint"
 	}
 
 	for i, label := range fieldLabels {

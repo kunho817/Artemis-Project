@@ -154,6 +154,12 @@ func NewApp() App {
 	te := tools.NewToolExecutor(cwd)
 	te.SetAutoCommit(true)
 
+	// Initialize local code generation provider (vLLM) if configured
+	if cfg.VLLM.Enabled && cfg.VLLM.Endpoint != "" {
+		vllmProvider := llm.NewVLLM(cfg.VLLM)
+		te.SetCodeGenProvider(vllmProvider)
+	}
+
 	// Initialize skill registry
 	skillReg := agent.NewSkillRegistry()
 	app := App{

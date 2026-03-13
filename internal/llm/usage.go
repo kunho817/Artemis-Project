@@ -41,6 +41,8 @@ var DefaultPricing = map[string]ModelPricing{
 	"glm-4":       {InputPerMillion: 1.40, OutputPerMillion: 1.40},
 	"glm-4-flash": {InputPerMillion: 0.014, OutputPerMillion: 0.014},
 	"glm-5":       {InputPerMillion: 1.40, OutputPerMillion: 1.40},
+	// Local vLLM (free — runs on user hardware)
+	"qwen2.5-coder-7b": {InputPerMillion: 0.0, OutputPerMillion: 0.0},
 }
 
 // CalculateCost computes USD cost for a TokenUsage given pricing.

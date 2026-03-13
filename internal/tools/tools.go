@@ -10,6 +10,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"github.com/artemis-project/artemis/internal/llm"
 )
 
 // Tool defines the interface for agent-executable tools.
@@ -51,6 +52,7 @@ type ToolExecutor struct {
 	fileLock   *FileLockManager
 	autoCommit bool     // if true, auto-commit after file writes
 	commitLog  []string // stack of auto-commit hashes for undo
+	codeGenProvider llm.Provider // local code-gen model (vLLM) for generate_code tool
 }
 
 // NewToolExecutor creates a new tool executor with all built-in tools registered.
@@ -101,6 +103,13 @@ func (te *ToolExecutor) Execute(ctx context.Context, name string, params map[str
 // SetAutoCommit enables or disables automatic git commits after file writes.
 func (te *ToolExecutor) SetAutoCommit(enabled bool) {
 	te.autoCommit = enabled
+}
+
+// SetCodeGenProvider configures the local code generation provider
+// and registers the generate_code tool.
+func (te *ToolExecutor) SetCodeGenProvider(provider llm.Provider) {
+	te.codeGenProvider = provider
+	te.Register(&GenerateCodeTool{baseDir: te.workDir, provider: provider})
 }
 
 // Undo reverts the last auto-committed change using git reset --hard.
@@ -192,7 +201,7 @@ func (te *ToolExecutor) ToolDescriptions() string {
 
 // toolList returns tools in a stable order for consistent prompt generation.
 func (te *ToolExecutor) toolList() []Tool {
-	order := []string{"read_file", "write_file", "patch_file", "list_dir", "search_files", "grep", "shell_exec", "git_status", "git_diff", "git_log"}
+	order := []string{"read_file", "write_file", "patch_file", "list_dir", "search_files", "grep", "shell_exec", "git_status", "git_diff", "git_log", "generate_code"}
 	var result []Tool
 	for _, name := range order {
 		if tool, ok := te.tools[name]; ok {
