@@ -20,6 +20,7 @@ import (
 	"github.com/artemis-project/artemis/internal/config"
 	ghub "github.com/artemis-project/artemis/internal/github"
 	"github.com/artemis-project/artemis/internal/llm"
+	"github.com/artemis-project/artemis/internal/lsp"
 	"github.com/artemis-project/artemis/internal/memory"
 	"github.com/artemis-project/artemis/internal/state"
 	"github.com/artemis-project/artemis/internal/tools"
@@ -90,22 +91,23 @@ type App struct {
 	pipelineRunning bool
 
 	// Tool executor
-	toolExecutor *tools.ToolExecutor
+	toolExecutor  *tools.ToolExecutor
 	skillRegistry *agent.SkillRegistry // Phase 4: skill resolution
 
 	// Persistent memory
-	memStore     memory.MemoryStore
-	vectorStore  memory.VectorSearcher // Phase 2: vector search
-	consolidator *memory.Consolidator
-	repoMapStore *memory.RepoMapStore // Phase 3: repo-map
-	ghSyncer     *ghub.Syncer
-	ghProcessor  *ghub.Processor
-	checkpointStore state.CheckpointStore // Phase C-5: step checkpoint persistence
-	pendingResumeRun *state.IncompleteRun  // Phase C-5: deferred resume overlay (shown after Init)
-	sessionID          string // unique ID for current session
-	parentSessionID    string // Phase 5: parent session (set when /load creates child)
-	activePipelineRunID string // Phase 5: current pipeline run ID (for message linking)
-	focused FocusedPanel
+	memStore            memory.MemoryStore
+	vectorStore         memory.VectorSearcher // Phase 2: vector search
+	consolidator        *memory.Consolidator
+	repoMapStore        *memory.RepoMapStore // Phase 3: repo-map
+	lspManager          *lsp.Manager         // Phase D: LSP Control Plane
+	ghSyncer            *ghub.Syncer
+	ghProcessor         *ghub.Processor
+	checkpointStore     state.CheckpointStore // Phase C-5: step checkpoint persistence
+	pendingResumeRun    *state.IncompleteRun  // Phase C-5: deferred resume overlay (shown after Init)
+	sessionID           string                // unique ID for current session
+	parentSessionID     string                // Phase 5: parent session (set when /load creates child)
+	activePipelineRunID string                // Phase 5: current pipeline run ID (for message linking)
+	focused             FocusedPanel
 
 	layoutMode LayoutMode
 	width      int
@@ -114,7 +116,7 @@ type App struct {
 
 	// Conversation history
 	history          []llm.Message               // multi-turn conversation (user + assistant)
-	historyWindow    *agent.HistoryWindow         // Phase C: token-aware history management
+	historyWindow    *agent.HistoryWindow        // Phase C: token-aware history management
 	streamingContent string                      // accumulates streaming response for history (single mode)
 	pipelineOutputs  []string                    // accumulates agent output during pipeline run
 	streamCh         <-chan llm.StreamChunk      // active stream channel (single mode)
@@ -128,7 +130,7 @@ type App struct {
 	overlay     Overlay
 
 	// Recovery system (Phase 6)
-	recoveryBridge *RecoveryBridge  // shared pointer — survives model copies
+	recoveryBridge *RecoveryBridge   // shared pointer — survives model copies
 	recoveryQueue  []RecoveryRequest // queued recovery requests from concurrent agent failures
 }
 

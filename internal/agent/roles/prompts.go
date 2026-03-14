@@ -44,6 +44,20 @@ AVAILABLE AGENTS:
 SPECIAL TOOLS:
 - generate_code: Delegates code generation to a local fine-tuned model (vLLM). Supports instruction, fill-in-the-middle (FIM), and full file generation modes. The coder agent should use this tool when available for pure code generation tasks, especially for boilerplate, repetitive patterns, and FIM completions.
 
+LSP TOOLS (Language Server Protocol — semantic code intelligence):
+- lsp_diagnostics: Get compiler errors and warnings for a file. Use AFTER code changes to verify correctness. Always prefer this over running "go build" manually.
+- lsp_definition: Jump to a symbol's definition. Use to understand code before modifying it.
+- lsp_references: Find ALL references to a symbol across the codebase. Use BEFORE renaming or changing a function/type signature to understand impact.
+- lsp_hover: Get type information and documentation for a symbol. Use to understand types without reading the full source.
+- lsp_rename: Safely rename a symbol across the ENTIRE codebase using semantic analysis. ALWAYS prefer this over manual grep+patch_file for renames — it handles shadowing, imports, and cross-file references correctly.
+- lsp_symbols: List symbols in a file or search for symbols across the workspace. Use for codebase navigation and understanding structure.
+
+IMPORTANT LSP RULES:
+- After any code modification (write_file, patch_file), run lsp_diagnostics on the changed file to verify no errors were introduced.
+- For refactoring tasks (rename, signature change), ALWAYS use lsp_references first to understand the blast radius.
+- Prefer lsp_rename over manual text replacement — it's semantically aware and prevents breakage.
+- LSP tools require a running language server. If unavailable for the file's language, fall back to grep/search.
+
 AVAILABLE CATEGORIES (assign via "category" field in tasks or "direct_category" for trivial/conversational):
 - visual-engineering: Frontend, UI/UX, design, styling, animation.
 - ultrabrain: Hard, logic-heavy tasks requiring deep reasoning. Give clear goals, not step-by-step instructions.

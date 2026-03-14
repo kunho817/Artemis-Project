@@ -6,6 +6,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/artemis-project/artemis/internal/lsp"
 	"github.com/artemis-project/artemis/internal/memory"
 )
 
@@ -85,6 +86,9 @@ func (a *App) initMemory() {
 		}
 	}
 
+	// Phase D: LSP Control Plane
+	a.initLSP()
+
 	// Phase 4: GitHub issue tracker
 	a.initGitHub()
 
@@ -108,6 +112,7 @@ func (a *App) initMemory() {
 	// Phase C-5: Check for incomplete pipeline runs (deferred overlay)
 	a.checkForIncompleteRuns()
 }
+
 // shutdownMemory runs consolidation and closes the memory store.
 // Called when the application exits.
 func (a *App) shutdownMemory() {
@@ -165,6 +170,11 @@ func (a *App) shutdownMemory() {
 		a.vectorStore.Close()
 	}
 
+	// Phase D: Shutdown LSP servers
+	if a.lspManager != nil {
+		a.lspManager.Shutdown()
+	}
+
 	if a.ghSyncer != nil {
 		a.ghSyncer.Stop()
 	}
@@ -191,6 +201,51 @@ func (a *App) saveMessageToDB(role, content, agentRole string) {
 		defer cancel()
 		_ = a.memStore.SaveMessage(ctx, msg)
 	}()
+}
+
+// initLSP initializes the LSP Control Plane if enabled in config.
+func (a *App) initLSP() {
+	if !a.cfg.LSP.Enabled {
+		return
+	}
+
+	// Convert config LSPServerConfigs to lsp.ServerConfig
+	serverConfigs := make(map[string]lsp.ServerConfig)
+	for lang, sc := range a.cfg.LSP.Servers {
+		serverConfigs[lang] = lsp.ServerConfig{
+			Command: sc.Command,
+			Args:    sc.Args,
+			Enabled: sc.Enabled,
+		}
+	}
+
+	cwd, _ := os.Getwd()
+	mgr := lsp.NewManager(cwd, serverConfigs)
+	a.lspManager = mgr
+
+	// Wire into tool executor
+	a.toolExecutor.SetLSPManager(mgr)
+
+	// Report configured languages
+	langs := mgr.ConfiguredLanguages()
+	if len(langs) > 0 {
+		a.chat.AddMessage(ChatMessage{
+			Role:    RoleSystem,
+			Content: fmt.Sprintf("LSP enabled for: %s (lazy loading)", joinStrings(langs)),
+		})
+	}
+}
+
+// joinStrings joins a slice with commas.
+func joinStrings(ss []string) string {
+	result := ""
+	for i, s := range ss {
+		if i > 0 {
+			result += ", "
+		}
+		result += s
+	}
+	return result
 }
 
 // checkForIncompleteRuns queries for interrupted pipeline runs and stores the

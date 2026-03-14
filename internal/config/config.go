@@ -34,9 +34,9 @@ type RoleMapping struct {
 // When Tier="premium", failed calls fall back to the Budget mapping for that role.
 type AgentConfig struct {
 	Enabled        bool              `json:"enabled"`
-	Tier           string            `json:"tier"`             // "premium" or "budget"
-	Premium        []RoleMapping     `json:"premium"`           // all 4 providers
-	Budget         []RoleMapping     `json:"budget"`            // gemini + glm only
+	Tier           string            `json:"tier"`                      // "premium" or "budget"
+	Premium        []RoleMapping     `json:"premium"`                   // all 4 providers
+	Budget         []RoleMapping     `json:"budget"`                    // gemini + glm only
 	ModelOverrides map[string]string `json:"model_overrides,omitempty"` // per-role model override (e.g., "scout": "gemini-3-flash-preview")
 }
 
@@ -69,16 +69,55 @@ type RepoMapConfig struct {
 	CTagsPath       string   `json:"ctags_path"`       // custom ctags binary path (empty = auto-detect)
 }
 
+// LSPConfig holds settings for the Language Server Protocol integration.
+type LSPConfig struct {
+	Enabled    bool                       `json:"enabled"`
+	AutoDetect bool                       `json:"auto_detect"` // auto-detect LSP servers in PATH
+	Servers    map[string]LSPServerConfig `json:"servers"`     // language → server config
+}
+
+// LSPServerConfig defines how to start a specific LSP server.
+type LSPServerConfig struct {
+	Command string   `json:"command"`        // executable name (e.g., "gopls")
+	Args    []string `json:"args,omitempty"` // command-line arguments (e.g., ["serve"])
+	Enabled bool     `json:"enabled"`        // whether this server is active
+}
+
+// DefaultLSPConfig returns sensible defaults for the LSP system.
+func DefaultLSPConfig() LSPConfig {
+	return LSPConfig{
+		Enabled:    true, // on by default — degrades gracefully if no LSP servers found
+		AutoDetect: true,
+		Servers: map[string]LSPServerConfig{
+			"go": {
+				Command: "gopls",
+				Args:    []string{"serve"},
+				Enabled: true,
+			},
+			"python": {
+				Command: "pyright-langserver",
+				Args:    []string{"--stdio"},
+				Enabled: false,
+			},
+			"typescript": {
+				Command: "typescript-language-server",
+				Args:    []string{"--stdio"},
+				Enabled: false,
+			},
+		},
+	}
+}
+
 // GitHubConfig holds settings for the GitHub Issue tracker integration.
 type GitHubConfig struct {
 	Enabled      bool   `json:"enabled"`
-	Token        string `json:"token"`          // Personal Access Token
-	Owner        string `json:"owner"`          // Repository owner (user or org)
-	Repo         string `json:"repo"`           // Repository name
-	PollInterval int    `json:"poll_interval"`  // Minutes between sync (0 = manual only, default: 5)
-	AutoTriage   bool   `json:"auto_triage"`    // Auto-analyze new issues on sync
-	AutoFix      bool   `json:"auto_fix"`       // Auto-fix issues classified as auto_fix
-	BaseBranch   string `json:"base_branch"`    // Target branch for PRs (default: "main")
+	Token        string `json:"token"`         // Personal Access Token
+	Owner        string `json:"owner"`         // Repository owner (user or org)
+	Repo         string `json:"repo"`          // Repository name
+	PollInterval int    `json:"poll_interval"` // Minutes between sync (0 = manual only, default: 5)
+	AutoTriage   bool   `json:"auto_triage"`   // Auto-analyze new issues on sync
+	AutoFix      bool   `json:"auto_fix"`      // Auto-fix issues classified as auto_fix
+	BaseBranch   string `json:"base_branch"`   // Target branch for PRs (default: "main")
 }
 
 // DefaultGitHubConfig returns sensible defaults for the GitHub integration.
@@ -104,6 +143,7 @@ type Config struct {
 	Memory         MemoryConfig   `json:"memory"`
 	Vector         VectorConfig   `json:"vector"`
 	RepoMap        RepoMapConfig  `json:"repo_map"`
+	LSP            LSPConfig      `json:"lsp"`
 	GitHub         GitHubConfig   `json:"github"`
 	MaxToolIter    int            `json:"max_tool_iterations"`
 	Theme          string         `json:"theme"`
@@ -142,6 +182,7 @@ func DefaultConfig() Config {
 		Memory:  DefaultMemoryConfig(),
 		Vector:  DefaultVectorConfig(),
 		RepoMap: DefaultRepoMapConfig(),
+		LSP:     DefaultLSPConfig(),
 		GitHub:  DefaultGitHubConfig(),
 		Theme:   "default",
 	}
@@ -202,8 +243,8 @@ func DefaultMemoryConfig() MemoryConfig {
 		ConsolidateOnExit: true,
 		MaxFactAge:        90,   // prune facts unused for 90 days
 		MinFactUseCount:   2,    // facts used <2 times get pruned
-		ArchiveEnabled:    true,  // COLD tier on by default
-		ArchivePath:       "", // empty = use default (~/.artemis/archive/)
+		ArchiveEnabled:    true, // COLD tier on by default
+		ArchivePath:       "",   // empty = use default (~/.artemis/archive/)
 	}
 }
 

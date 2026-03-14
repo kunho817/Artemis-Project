@@ -4,13 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/artemis-project/artemis/internal/llm"
+	"github.com/artemis-project/artemis/internal/lsp"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
-	"github.com/artemis-project/artemis/internal/llm"
 )
 
 // Tool defines the interface for agent-executable tools.
@@ -47,12 +48,13 @@ const DefaultMaxToolIterations = 50
 
 // ToolExecutor manages and executes agent tools.
 type ToolExecutor struct {
-	tools      map[string]Tool
-	workDir    string
-	fileLock   *FileLockManager
-	autoCommit bool     // if true, auto-commit after file writes
-	commitLog  []string // stack of auto-commit hashes for undo
+	tools           map[string]Tool
+	workDir         string
+	fileLock        *FileLockManager
+	autoCommit      bool         // if true, auto-commit after file writes
+	commitLog       []string     // stack of auto-commit hashes for undo
 	codeGenProvider llm.Provider // local code-gen model (vLLM) for generate_code tool
+	lspManager      *lsp.Manager
 }
 
 // NewToolExecutor creates a new tool executor with all built-in tools registered.
@@ -110,6 +112,17 @@ func (te *ToolExecutor) SetAutoCommit(enabled bool) {
 func (te *ToolExecutor) SetCodeGenProvider(provider llm.Provider) {
 	te.codeGenProvider = provider
 	te.Register(&GenerateCodeTool{baseDir: te.workDir, provider: provider})
+}
+
+// SetLSPManager configures the LSP manager and registers LSP tools.
+func (te *ToolExecutor) SetLSPManager(manager *lsp.Manager) {
+	te.lspManager = manager
+	te.Register(&LSPDiagnosticsTool{baseDir: te.workDir, manager: manager})
+	te.Register(&LSPDefinitionTool{baseDir: te.workDir, manager: manager})
+	te.Register(&LSPReferencesTool{baseDir: te.workDir, manager: manager})
+	te.Register(&LSPHoverTool{baseDir: te.workDir, manager: manager})
+	te.Register(&LSPRenameTool{baseDir: te.workDir, manager: manager, fileLock: te.fileLock})
+	te.Register(&LSPSymbolsTool{baseDir: te.workDir, manager: manager})
 }
 
 // Undo reverts the last auto-committed change using git reset --hard.
@@ -201,7 +214,7 @@ func (te *ToolExecutor) ToolDescriptions() string {
 
 // toolList returns tools in a stable order for consistent prompt generation.
 func (te *ToolExecutor) toolList() []Tool {
-	order := []string{"read_file", "write_file", "patch_file", "list_dir", "search_files", "grep", "shell_exec", "git_status", "git_diff", "git_log", "generate_code"}
+	order := []string{"read_file", "write_file", "patch_file", "list_dir", "search_files", "grep", "shell_exec", "git_status", "git_diff", "git_log", "generate_code", "lsp_diagnostics", "lsp_definition", "lsp_references", "lsp_hover", "lsp_rename", "lsp_symbols"}
 	var result []Tool
 	for _, name := range order {
 		if tool, ok := te.tools[name]; ok {
@@ -275,7 +288,6 @@ func FormatToolResult(toolName string, result ToolResult) string {
 	sb.WriteString("</tool_result>")
 	return sb.String()
 }
-
 
 // --- FileLockManager: per-file mutex for concurrent write protection ---
 
