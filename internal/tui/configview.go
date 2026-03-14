@@ -26,10 +26,11 @@ const (
 	sysSubRepoMap    = 3
 	sysSubGitHub     = 4
 	sysSubAppearance = 5
-	sysSubCount      = 6
+	sysSubLSP        = 6
+	sysSubCount      = 7
 )
 
-var sysSubLabels = []string{"Memory", "Tools", "Vector", "RepoMap", "GitHub", "Appearance"}
+var sysSubLabels = []string{"Memory", "Tools", "Vector", "RepoMap", "GitHub", "Appearance", "LSP"}
 
 // ConfigView is the settings screen for API and agent configuration.
 type ConfigView struct {
@@ -75,6 +76,8 @@ func (cv *ConfigView) fieldCountForTab() int {
 			return 8
 		case sysSubAppearance:
 			return 1
+		case sysSubLSP:
+			return 2
 		default:
 			return 4
 		}
@@ -140,6 +143,8 @@ func (cv *ConfigView) systemFieldToInputIdx(fieldIdx int) int {
 		default:
 			return -1
 		}
+	case sysSubLSP:
+		return -1
 	default:
 		return -1
 	}
@@ -275,6 +280,7 @@ func (cv *ConfigView) applyInputsToConfig() {
 		prov.Enabled = prov.APIKey != ""
 	}
 }
+
 // isProviderEnabled checks if a provider is enabled.
 func (cv *ConfigView) isProviderEnabled(name string) bool {
 	if name == "glm" {
@@ -356,6 +362,14 @@ func (cv *ConfigView) toggleSystemField() {
 			}
 		}
 		cv.cfg.Theme = themes[(idx+1)%len(themes)]
+
+	case sysSubLSP:
+		switch cv.fieldIdx {
+		case 0:
+			cv.cfg.LSP.Enabled = !cv.cfg.LSP.Enabled
+		case 1:
+			cv.cfg.LSP.AutoDetect = !cv.cfg.LSP.AutoDetect
+		}
 	}
 }
 
@@ -377,6 +391,8 @@ func (cv *ConfigView) isSystemToggleField() bool {
 		return cv.fieldIdx == 0 || cv.fieldIdx == 5 || cv.fieldIdx == 6
 	case sysSubAppearance:
 		return cv.fieldIdx == 0
+	case sysSubLSP:
+		return cv.fieldIdx == 0 || cv.fieldIdx == 1
 	default:
 		return false
 	}
@@ -857,6 +873,9 @@ func (cv *ConfigView) buildSystemInputs() {
 		cv.inputs[4].SetValue(cv.cfg.GitHub.BaseBranch)
 		cv.inputs[4].CharLimit = 64
 
+	case sysSubLSP:
+		cv.inputs = make([]textinput.Model, 0)
+
 	default:
 		cv.inputs = nil
 	}
@@ -921,6 +940,9 @@ func (cv *ConfigView) applySystemInputs() {
 		if base != "" {
 			cv.cfg.GitHub.BaseBranch = base
 		}
+
+	case sysSubLSP:
+		// No text inputs to apply — LSP only has toggles
 	}
 }
 
@@ -983,6 +1005,25 @@ func (cv *ConfigView) renderSystemContent(sb *strings.Builder) {
 			sb.WriteString(fmt.Sprintf("  %s %s\n",
 				lipgloss.NewStyle().Width(22).Render(""),
 				hint))
+		}
+
+	case sysSubLSP:
+		cv.renderToggleField(sb, 0, "LSP", cv.cfg.LSP.Enabled, "Enabled", "Disabled")
+		cv.renderToggleField(sb, 1, "Auto-Detect", cv.cfg.LSP.AutoDetect, "Enabled", "Disabled")
+		if cv.cfg.LSP.Enabled {
+			// Display configured servers
+			sb.WriteString("\n")
+			for lang, sc := range cv.cfg.LSP.Servers {
+				status := "disabled"
+				if sc.Enabled {
+					status = sc.Command
+				}
+				sb.WriteString(fmt.Sprintf("  %s %s\n",
+					lipgloss.NewStyle().Width(22).Align(lipgloss.Right).Padding(0, 1).
+						Foreground(ColorDimText).Render(lang+":"),
+					lipgloss.NewStyle().Foreground(ColorMuted).Render(status),
+				))
+			}
 		}
 	}
 }
