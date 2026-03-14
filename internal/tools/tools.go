@@ -55,6 +55,7 @@ type ToolExecutor struct {
 	commitLog       []string     // stack of auto-commit hashes for undo
 	codeGenProvider llm.Provider // local code-gen model (vLLM) for generate_code tool
 	lspManager      *lsp.Manager
+	astGrepPath     string
 }
 
 // NewToolExecutor creates a new tool executor with all built-in tools registered.
@@ -75,6 +76,9 @@ func NewToolExecutor(workDir string) *ToolExecutor {
 	te.Register(&GitStatusTool{baseDir: workDir})
 	te.Register(&GitDiffTool{baseDir: workDir})
 	te.Register(&GitLogTool{baseDir: workDir})
+	te.Register(&RunTestsTool{baseDir: workDir})
+	te.Register(&FindDependenciesTool{baseDir: workDir})
+	te.Register(&FindDependentsTool{baseDir: workDir})
 	return te
 }
 
@@ -123,6 +127,13 @@ func (te *ToolExecutor) SetLSPManager(manager *lsp.Manager) {
 	te.Register(&LSPHoverTool{baseDir: te.workDir, manager: manager})
 	te.Register(&LSPRenameTool{baseDir: te.workDir, manager: manager, fileLock: te.fileLock})
 	te.Register(&LSPSymbolsTool{baseDir: te.workDir, manager: manager})
+}
+
+// SetAstGrep configures ast-grep path and registers AST-aware tools.
+func (te *ToolExecutor) SetAstGrep(sgPath string) {
+	te.astGrepPath = sgPath
+	te.Register(&AstSearchTool{baseDir: te.workDir, sgPath: sgPath})
+	te.Register(&AstReplaceTool{baseDir: te.workDir, sgPath: sgPath, fileLock: te.fileLock})
 }
 
 // Undo reverts the last auto-committed change using git reset --hard.
@@ -214,7 +225,7 @@ func (te *ToolExecutor) ToolDescriptions() string {
 
 // toolList returns tools in a stable order for consistent prompt generation.
 func (te *ToolExecutor) toolList() []Tool {
-	order := []string{"read_file", "write_file", "patch_file", "list_dir", "search_files", "grep", "shell_exec", "git_status", "git_diff", "git_log", "generate_code", "lsp_diagnostics", "lsp_definition", "lsp_references", "lsp_hover", "lsp_rename", "lsp_symbols"}
+	order := []string{"read_file", "write_file", "patch_file", "list_dir", "search_files", "grep", "ast_search", "ast_replace", "shell_exec", "git_status", "git_diff", "git_log", "run_tests", "find_dependencies", "find_dependents", "generate_code", "lsp_diagnostics", "lsp_definition", "lsp_references", "lsp_hover", "lsp_rename", "lsp_symbols"}
 	var result []Tool
 	for _, name := range order {
 		if tool, ok := te.tools[name]; ok {

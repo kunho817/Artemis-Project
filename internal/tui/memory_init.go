@@ -8,6 +8,7 @@ import (
 
 	"github.com/artemis-project/artemis/internal/lsp"
 	"github.com/artemis-project/artemis/internal/memory"
+	"github.com/artemis-project/artemis/internal/tools"
 )
 
 // initMemory initializes the persistent memory store if enabled in config.
@@ -86,8 +87,11 @@ func (a *App) initMemory() {
 		}
 	}
 
-	// Phase D: LSP Control Plane
+	// Phase D-1: LSP Control Plane
 	a.initLSP()
+
+	// Phase D-2: ast-grep (structural search/replace)
+	a.initAstGrep()
 
 	// Phase 4: GitHub issue tracker
 	a.initGitHub()
@@ -201,6 +205,24 @@ func (a *App) saveMessageToDB(role, content, agentRole string) {
 		defer cancel()
 		_ = a.memStore.SaveMessage(ctx, msg)
 	}()
+}
+
+// initAstGrep tries to find ast-grep and wires it into the tool executor.
+func (a *App) initAstGrep() {
+	cachePath := ""
+	if dir, err := os.UserHomeDir(); err == nil {
+		cachePath = dir + "/.artemis/bin"
+	}
+	sgPath, err := tools.EnsureAstGrep("", cachePath)
+	if err != nil {
+		// ast-grep is optional — silently skip if not found
+		return
+	}
+	a.toolExecutor.SetAstGrep(sgPath)
+	a.chat.AddMessage(ChatMessage{
+		Role:    RoleSystem,
+		Content: fmt.Sprintf("ast-grep enabled (%s)", sgPath),
+	})
 }
 
 // initLSP initializes the LSP Control Plane if enabled in config.

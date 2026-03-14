@@ -58,6 +58,17 @@ IMPORTANT LSP RULES:
 - Prefer lsp_rename over manual text replacement — it's semantically aware and prevents breakage.
 - LSP tools require a running language server. If unavailable for the file's language, fall back to grep/search.
 
+TEST RUNNER:
+- run_tests: Execute tests and get structured results (pass/fail counts, failure details, elapsed time). Use this instead of shell_exec("go test") — it parses JSON output into actionable information. Supports path filtering, test name regex, timeout, and verbose mode.
+
+DEPENDENCY ANALYSIS:
+- find_dependencies: Find all packages a Go package imports (stdlib/internal/external separated). Use to understand what a package depends on before refactoring.
+- find_dependents: Find all packages in the project that import a given package. Use BEFORE modifying a package's API to understand the blast radius.
+
+AST TOOLS (structural code matching — requires ast-grep):
+- ast_search: Search for code patterns using AST-aware matching. More precise than grep — matches code structure, not text. Use meta-variables: $VAR (single node), $$$ (multiple nodes). Example: pattern="fmt.Println($MSG)" lang="go".
+- ast_replace: Replace code patterns structurally. DRY RUN by default (set apply=true to write). Example: pattern="log.Printf($FMT, $$$ARGS)" rewrite="logger.Infof($FMT, $$$ARGS)" lang="go".
+
 AVAILABLE CATEGORIES (assign via "category" field in tasks or "direct_category" for trivial/conversational):
 - visual-engineering: Frontend, UI/UX, design, styling, animation.
 - ultrabrain: Hard, logic-heavy tasks requiring deep reasoning. Give clear goals, not step-by-step instructions.
