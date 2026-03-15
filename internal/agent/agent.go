@@ -27,8 +27,8 @@ const (
 	RoleEngineer     Role = "engineer"
 	RoleQA           Role = "qa"
 	RoleTester       Role = "tester"
-	RoleScout       Role = "scout"
-	RoleConsultant  Role = "consultant"
+	RoleScout        Role = "scout"
+	RoleConsultant   Role = "consultant"
 )
 
 // AllRoles returns all defined agent roles.
@@ -81,24 +81,33 @@ type Agent interface {
 
 	// OverrideTask returns the Orchestrator-assigned task override (empty if none).
 	OverrideTask() string
+
+	// SetAutonomous enables verify-gated autonomous loop for this agent.
+	SetAutonomous(verify VerifyFunc, maxIter int)
+
+	// IsAutonomous returns whether the agent is in autonomous mode.
+	IsAutonomous() bool
 }
 
 // BaseAgent provides shared logic for all agents.
 type BaseAgent struct {
-	name           string
-	role           Role
-	provider       llm.Provider
-	system         string // system prompt defining persona
-	eventBus       *bus.EventBus
-	critical       bool
-	overrideTask   string               // task assigned by Orchestrator (overrides default)
-	toolExec       *tools.ToolExecutor  // tool executor for file/shell operations
-	memStore       memory.MemoryStore   // persistent memory (nil if disabled)
-	maxToolIter    int                  // max tool iterations (0 = unlimited)
-	repoMap        *memory.RepoMapStore // Phase 3: repo-map (nil if disabled)
-	category       TaskCategory         // Phase 4: task category (empty = use role defaults)
-	skills         []*Skill             // Phase 4: loaded skill content for prompt injection
-	historyWindow  *HistoryWindow       // Phase C: token-aware history management (nil = legacy)
+	name          string
+	role          Role
+	provider      llm.Provider
+	system        string // system prompt defining persona
+	eventBus      *bus.EventBus
+	critical      bool
+	overrideTask  string               // task assigned by Orchestrator (overrides default)
+	toolExec      *tools.ToolExecutor  // tool executor for file/shell operations
+	memStore      memory.MemoryStore   // persistent memory (nil if disabled)
+	maxToolIter   int                  // max tool iterations (0 = unlimited)
+	repoMap       *memory.RepoMapStore // Phase 3: repo-map (nil if disabled)
+	category      TaskCategory         // Phase 4: task category (empty = use role defaults)
+	skills        []*Skill             // Phase 4: loaded skill content for prompt injection
+	historyWindow *HistoryWindow       // Phase C: token-aware history management (nil = legacy)
+	autonomous    bool                 // Phase E-2: run in verify-gated autonomous loop
+	verifyFunc    VerifyFunc           // Phase E-2: verification function for autonomous loop
+	maxAutoIter   int                  // Phase E-2: max autonomous iterations (0 = default)
 }
 
 // NewBaseAgent creates a new base agent.
@@ -134,6 +143,16 @@ func (b *BaseAgent) SetRepoMap(rm *memory.RepoMapStore) { b.repoMap = rm }
 
 // SetCategory assigns a task category that overrides the role's default provider/model.
 func (b *BaseAgent) SetCategory(cat TaskCategory) { b.category = cat }
+
+// SetAutonomous enables verify-gated autonomous loop for this agent.
+func (b *BaseAgent) SetAutonomous(verify VerifyFunc, maxIter int) {
+	b.autonomous = true
+	b.verifyFunc = verify
+	b.maxAutoIter = maxIter
+}
+
+// IsAutonomous returns whether the agent is in autonomous mode.
+func (b *BaseAgent) IsAutonomous() bool { return b.autonomous }
 
 // SetSkills attaches loaded skill content for injection into prompts.
 func (b *BaseAgent) SetSkills(skills []*Skill) { b.skills = skills }
@@ -318,6 +337,82 @@ func (b *BaseAgent) CallLLMWithTools(ctx context.Context, userPrompt string, pha
 		return "", fmt.Errorf("agent %s: max tool iterations (%d) reached", b.name, maxIter)
 	}
 	return "", fmt.Errorf("agent %s: tool loop did not terminate", b.name)
+}
+
+// DefaultMaxAutonomousIterations is the hard limit for autonomous loops.
+const DefaultMaxAutonomousIterations = 5
+
+// RunAutonomous executes a verify-gated autonomous loop:
+//  1. Run agent (CallLLMWithTools) to produce output
+//  2. Run verification function (build, test, etc.)
+//  3. If verification passes → return output (success)
+//  4. If verification fails → inject error feedback and loop back to 1
+//  5. Stop conditions: verification passes, maxIterations reached, or loop detection
+//
+// Returns the final agent output and any error.
+func (b *BaseAgent) RunAutonomous(ctx context.Context, task string, phase string, verify VerifyFunc, maxIter int) (string, error) {
+	if maxIter <= 0 {
+		maxIter = DefaultMaxAutonomousIterations
+	}
+	if verify == nil {
+		verify = VerifyNone()
+	}
+
+	b.EmitProgress(phase, fmt.Sprintf("Starting autonomous loop (max %d iterations)", maxIter))
+
+	currentTask := task
+	var lastFeedback string
+	var prevFeedbacks []string // for loop detection
+
+	for i := 0; i < maxIter; i++ {
+		iterLabel := fmt.Sprintf("iteration %d/%d", i+1, maxIter)
+
+		// Build the prompt — include feedback from previous iteration
+		prompt := currentTask
+		if lastFeedback != "" {
+			prompt = fmt.Sprintf(`%s
+
+PREVIOUS ATTEMPT FAILED VERIFICATION (attempt %d):
+%s
+
+Fix the issues above and try again. Make sure your changes pass verification before responding.`, currentTask, i, lastFeedback)
+		}
+
+		b.EmitProgress(phase, fmt.Sprintf("Autonomous %s: running agent...", iterLabel))
+
+		// Run the agent's tool loop
+		output, err := b.CallLLMWithTools(ctx, prompt, phase)
+		if err != nil {
+			return "", fmt.Errorf("autonomous %s: agent error: %w", iterLabel, err)
+		}
+
+		// Verify the output
+		b.EmitProgress(phase, fmt.Sprintf("Autonomous %s: verifying...", iterLabel))
+
+		passed, feedback, verifyErr := verify(ctx, output)
+		if verifyErr != nil {
+			return output, fmt.Errorf("autonomous %s: verification error: %w", iterLabel, verifyErr)
+		}
+
+		if passed {
+			b.EmitProgress(phase, fmt.Sprintf("Autonomous %s: verification PASSED", iterLabel))
+			return output, nil
+		}
+
+		// Loop detection: if same feedback appears 3+ times, stop
+		for _, prev := range prevFeedbacks {
+			if prev == feedback {
+				b.EmitProgress(phase, "Autonomous loop: repeated failure detected, stopping")
+				return output, fmt.Errorf("autonomous loop: repeated verification failure — %s", feedback)
+			}
+		}
+		prevFeedbacks = append(prevFeedbacks, feedback)
+
+		lastFeedback = feedback
+		b.EmitProgress(phase, fmt.Sprintf("Autonomous %s: verification FAILED, will retry", iterLabel))
+	}
+
+	return "", fmt.Errorf("agent %s: autonomous loop exhausted (%d iterations)", b.name, maxIter)
 }
 
 // streamAndAccumulate streams an LLM response, emitting chunks to the TUI

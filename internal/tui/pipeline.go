@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -205,6 +206,12 @@ func (a App) executePlan(plan *orchestrator.ExecutionPlan, userText string) (tea
 		}
 		if a.historyWindow != nil {
 			ag.SetHistoryWindow(a.historyWindow)
+		}
+		// Phase E-2: Autonomous mode
+		if task.Autonomous {
+			cwd, _ := os.Getwd()
+			verifyFn := agent.ResolveVerifyFunc(task.VerifyWith, cwd)
+			ag.SetAutonomous(verifyFn, task.MaxRetries)
 		}
 		return ag
 	}
@@ -638,6 +645,12 @@ func (a App) executeResume(run state.IncompleteRun) (tea.Model, tea.Cmd) {
 		}
 		if a.historyWindow != nil {
 			ag.SetHistoryWindow(a.historyWindow)
+		}
+		// Phase E-2: Autonomous mode
+		if task.Autonomous {
+			cwd, _ := os.Getwd()
+			verifyFn := agent.ResolveVerifyFunc(task.VerifyWith, cwd)
+			ag.SetAutonomous(verifyFn, task.MaxRetries)
 		}
 		return ag
 	}

@@ -41,7 +41,12 @@ func (r *RoleAgent) Run(ctx context.Context, ss *state.SessionState) error {
 	var response string
 	var err error
 	streamed := false
-	if r.ToolExecutor() != nil {
+	if r.IsAutonomous() && r.ToolExecutor() != nil {
+		// Phase E-2: Verify-gated autonomous loop
+		r.EmitProgress(phase, "Starting autonomous mode...")
+		response, err = r.RunAutonomous(ctx, prompt, phase, nil, 0)
+		streamed = true
+	} else if r.ToolExecutor() != nil {
 		r.EmitProgress(phase, "Calling LLM (with tools)...")
 		response, err = r.CallLLMWithTools(ctx, prompt, phase)
 		streamed = true // CallLLMWithTools now streams chunks via EventBus

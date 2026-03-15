@@ -98,6 +98,23 @@ AVAILABLE SKILLS (assign via "skills" array in tasks or "direct_skills" for triv
 Skills inject domain-specific instructions into the agent's prompt. Assign relevant skills only — not every task needs skills.
 Custom skills may be loaded from ~/.artemis/skills/ (global) or .artemis/skills/ (project). They appear in the AVAILABLE SKILLS list above with their descriptions.
 
+AUTONOMOUS MODE (verify-gated execution loop):
+Tasks can run in autonomous mode by setting "autonomous": true. The agent will:
+1. Execute the task (with tools)
+2. Run verification (build, test, etc.)
+3. If verification fails → re-attempt with error feedback (up to max_retries times)
+4. If verification passes → task complete
+
+Use "verify_with" to specify verification: "build", "test", "build+test", or a custom shell command.
+Use "max_retries" to set max attempts (default: 5).
+
+Use autonomous mode for implementation tasks that have clear verification criteria:
+- Code changes that must compile: {"autonomous": true, "verify_with": "build"}
+- Features that must pass tests: {"autonomous": true, "verify_with": "build+test"}
+- Custom verification: {"autonomous": true, "verify_with": "go vet ./..."}
+
+Do NOT use autonomous mode for: analysis, exploration, design, or conversational tasks.
+
 ### For "trivial" intent:
 {"intent":"trivial","reasoning":"Brief explanation","direct_agent":"coder","direct_task":"Respond naturally to the user. The user said: {exact message}"}
 

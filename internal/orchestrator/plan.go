@@ -21,17 +21,20 @@ type ExecutionPlan struct {
 // Steps themselves run sequentially — step 2 waits for step 1 to finish.
 type ExecutionStep struct {
 	Tasks        []AgentTask `json:"tasks"`
-	IsReview     bool        `json:"is_review,omitempty"`      // Phase C-6: marks step as a review/feedback step
+	IsReview     bool        `json:"is_review,omitempty"`     // Phase C-6: marks step as a review/feedback step
 	ReviewTarget int         `json:"review_target,omitempty"` // Phase C-6: step index (1-based) to re-run on issues (0=previous step)
 }
 
 // AgentTask is a single agent assignment from the Orchestrator.
 type AgentTask struct {
-	Agent    string   `json:"agent"`              // Role name (e.g., "coder", "analyzer")
-	Task     string   `json:"task"`               // Specific task description
-	Critical bool     `json:"critical"`           // If true, failure stops the plan
-	Category string   `json:"category,omitempty"` // Task category for model/prompt override
-	Skills   []string `json:"skills,omitempty"`   // Skill IDs to load into agent prompt
+	Agent      string   `json:"agent"`                 // Role name (e.g., "coder", "analyzer")
+	Task       string   `json:"task"`                  // Specific task description
+	Critical   bool     `json:"critical"`              // If true, failure stops the plan
+	Category   string   `json:"category,omitempty"`    // Task category for model/prompt override
+	Skills     []string `json:"skills,omitempty"`      // Skill IDs to load into agent prompt
+	Autonomous bool     `json:"autonomous,omitempty"`  // If true, run in verify-gated autonomous loop
+	VerifyWith string   `json:"verify_with,omitempty"` // Verification: "build", "test", "build+test", or custom command
+	MaxRetries int      `json:"max_retries,omitempty"` // Max autonomous iterations (default: 5)
 }
 
 // IntentType classifies the user's request intent.
@@ -39,9 +42,9 @@ type IntentType string
 
 const (
 	IntentTrivial        IntentType = "trivial"        // Simple greeting or question — no tools needed
-	IntentConversational IntentType = "conversational"  // Single agent task — may use tools
-	IntentExploratory    IntentType = "exploratory"     // Needs codebase/external exploration first
-	IntentComplex        IntentType = "complex"         // Full multi-agent pipeline
+	IntentConversational IntentType = "conversational" // Single agent task — may use tools
+	IntentExploratory    IntentType = "exploratory"    // Needs codebase/external exploration first
+	IntentComplex        IntentType = "complex"        // Full multi-agent pipeline
 )
 
 // ExplorationTask defines a pre-execution exploration query (Phase 3).
@@ -70,6 +73,7 @@ type OrchestratorResponse struct {
 	// For exploratory/complex — full execution plan steps
 	Steps []ExecutionStep `json:"steps,omitempty"`
 }
+
 // ToExecutionPlan converts an OrchestratorResponse to an ExecutionPlan.
 // For trivial/conversational, it creates a minimal 1-step plan.
 func (r *OrchestratorResponse) ToExecutionPlan() *ExecutionPlan {
