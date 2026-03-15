@@ -22,6 +22,7 @@ const (
 	OverlayFilePicker
 	OverlayRecovery
 	OverlayResume
+	OverlayDiff
 )
 
 // OverlayResult carries the outcome when an overlay closes.

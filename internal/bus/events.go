@@ -6,29 +6,31 @@ import "time"
 type EventType int
 
 const (
-	EventAgentStart            EventType = iota // Agent began execution
-	EventAgentProgress                          // Agent intermediate update
-	EventAgentComplete                          // Agent finished successfully
-	EventAgentFail                              // Agent encountered an error
-	EventAgentOutput                            // Agent produced displayable output
-	EventPhaseStart                             // Pipeline phase began
-	EventPhaseComplete                          // Pipeline phase finished
-	EventPipelineDone                           // Entire pipeline completed
-	EventOrchestratorStart                      // Orchestrator began planning
-	EventOrchestratorPlanReady                  // Orchestrator produced an execution plan
-	EventStepStart                              // Dynamic plan step began
-	EventStepComplete                           // Dynamic plan step finished
-	EventFileChanged                            // Agent modified a file via tool
-	EventAgentStreamStart                       // Agent began streaming a response
-	EventAgentStreamChunk                       // Agent streaming chunk (partial text)
-	EventAgentStreamDone                        // Agent streaming completed
-	EventAgentUsage                             // Agent reported token usage
-	EventBackgroundTaskStart            // Background task started running
-	EventBackgroundTaskComplete          // Background task finished successfully
-	EventBackgroundTaskFail              // Background task encountered an error
-	EventAgentWarn                       // Non-critical agent failure (warning)
-	EventRecoveryAttempt                 // Recovery system attempting to fix a failure
-	EventReviewLoop                          // Phase C-6: review feedback loop iteration
+	EventAgentStart             EventType = iota // Agent began execution
+	EventAgentProgress                           // Agent intermediate update
+	EventAgentComplete                           // Agent finished successfully
+	EventAgentFail                               // Agent encountered an error
+	EventAgentOutput                             // Agent produced displayable output
+	EventPhaseStart                              // Pipeline phase began
+	EventPhaseComplete                           // Pipeline phase finished
+	EventPipelineDone                            // Entire pipeline completed
+	EventOrchestratorStart                       // Orchestrator began planning
+	EventOrchestratorPlanReady                   // Orchestrator produced an execution plan
+	EventStepStart                               // Dynamic plan step began
+	EventStepComplete                            // Dynamic plan step finished
+	EventFileChanged                             // Agent modified a file via tool
+	EventAgentStreamStart                        // Agent began streaming a response
+	EventAgentStreamChunk                        // Agent streaming chunk (partial text)
+	EventAgentStreamDone                         // Agent streaming completed
+	EventAgentUsage                              // Agent reported token usage
+	EventBackgroundTaskStart                     // Background task started running
+	EventBackgroundTaskComplete                  // Background task finished successfully
+	EventBackgroundTaskFail                      // Background task encountered an error
+	EventAgentWarn                               // Non-critical agent failure (warning)
+	EventRecoveryAttempt                         // Recovery system attempting to fix a failure
+	EventReviewLoop                              // Phase C-6: review feedback loop iteration
+	EventTestResults                             // Test execution results
+	EventPipelineProgress                        // Pipeline progress update (step N/M)
 )
 
 // AgentEvent carries status updates from agents to the TUI.

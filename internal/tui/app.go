@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -307,6 +308,21 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				a.overlay = fp
 			}
 			return a, nil
+		case "ctrl+d":
+			if a.overlayKind == OverlayNone {
+				cwd, _ := os.Getwd()
+				cmd := exec.Command("git", "diff")
+				cmd.Dir = cwd
+				out, _ := cmd.CombinedOutput()
+				if len(out) > 0 {
+					return a, func() tea.Msg {
+						return DiffViewMsg{FileName: "Working Directory", Diff: string(out)}
+					}
+				} else {
+					a.chat.AddMessage(ChatMessage{Role: RoleSystem, Content: "No uncommitted changes found."})
+				}
+			}
+			return a, nil
 		case "ctrl+c":
 			if a.cancelPipeline != nil {
 				a.cancelPipeline()
@@ -429,6 +445,12 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			a.chat.AddMessage(ChatMessage{Role: RoleSystem, Content: fmt.Sprintf("Fix pipeline scaffold completed for issue #%d.", msg.issueNumber)})
 		}
+		return a, nil
+
+	case DiffViewMsg:
+		overlay := NewDiffOverlay(msg.FileName, msg.Diff, a.width, a.height)
+		a.overlay = overlay
+		a.overlayKind = OverlayDiff
 		return a, nil
 
 	case OrchestratorPlanMsg:
@@ -816,6 +838,22 @@ func (a *App) handleOverlayResult(result OverlayResult) {
 			return
 		}
 		a.initProvider()
+
+	case "diff":
+		// Just close the overlay
+
+	case "view_diff":
+		cwd, _ := os.Getwd()
+		cmd := exec.Command("git", "diff")
+		cmd.Dir = cwd
+		out, _ := cmd.CombinedOutput()
+		if len(out) > 0 {
+			overlay := NewDiffOverlay("Working Directory", string(out), a.width, a.height)
+			a.overlay = overlay
+			a.overlayKind = OverlayDiff
+		} else {
+			a.chat.AddMessage(ChatMessage{Role: RoleSystem, Content: "No uncommitted changes found."})
+		}
 
 	case "select_file":
 		path := strings.TrimSpace(result.Value)

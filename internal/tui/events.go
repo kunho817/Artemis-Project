@@ -49,6 +49,11 @@ func (a App) handleAgentEvent(msg AgentEventMsg) (tea.Model, tea.Cmd) {
 		})
 
 	case bus.EventStepStart:
+		var current, total int
+		if n, err := fmt.Sscanf(event.Message, "Step %d of %d", &current, &total); err == nil && n == 2 {
+			a.activity.SetPipelineProgress(current, total)
+			a.statusBar.SetPipelineProgress(current, total)
+		}
 		a.activity.AddActivity(ActivityItem{
 			Status: StatusRunning,
 			Text:   event.Message,
@@ -91,9 +96,11 @@ func (a App) handleAgentEvent(msg AgentEventMsg) (tea.Model, tea.Cmd) {
 			})
 		}
 	case bus.EventAgentComplete:
+		tokens := a.activity.GetAgentTokens(event.AgentName)
 		a.activity.AddActivity(ActivityItem{
 			Status: StatusDone,
 			Text:   fmt.Sprintf("  %s: done", event.AgentName),
+			Tokens: tokens,
 		})
 
 	case bus.EventAgentFail:
@@ -126,6 +133,8 @@ func (a App) handleAgentEvent(msg AgentEventMsg) (tea.Model, tea.Cmd) {
 		})
 
 	case bus.EventPipelineDone:
+		a.activity.ClearPipelineProgress()
+		a.statusBar.SetPipelineProgress(0, 0)
 		a.activity.AddActivity(ActivityItem{
 			Status: StatusDone,
 			Text:   "Execution complete",
@@ -179,6 +188,7 @@ func (a App) handleAgentEvent(msg AgentEventMsg) (tea.Model, tea.Cmd) {
 		if usage, ok := event.Data.(*llm.TokenUsage); ok && usage != nil {
 			model := a.modelForRole(event.AgentName)
 			a.addUsage(usage, model)
+			a.activity.SetAgentTokens(event.AgentName, usage.TotalTokens)
 		}
 
 	case bus.EventBackgroundTaskStart:
@@ -221,6 +231,11 @@ func (a App) handleAgentEvent(msg AgentEventMsg) (tea.Model, tea.Cmd) {
 			Status: StatusRunning,
 			Text:   fmt.Sprintf("  🔁 %s", event.Message),
 		})
+
+	case bus.EventTestResults:
+		if tr, ok := event.Data.(*TestResult); ok {
+			a.activity.SetTestResults(tr)
+		}
 	}
 
 	// Continue listening for more events
@@ -235,6 +250,8 @@ func (a App) handleAgentEvent(msg AgentEventMsg) (tea.Model, tea.Cmd) {
 // The EventPipelineDone event already handles activity panel notification.
 func (a App) handlePipelineComplete(msg PipelineCompleteMsg) (tea.Model, tea.Cmd) {
 	a.pipelineRunning = false
+	a.activity.ClearPipelineProgress()
+	a.statusBar.SetPipelineProgress(0, 0)
 	a.layoutMode = LayoutSingle
 	a.focused = FocusChat
 	a.cancelPipeline = nil

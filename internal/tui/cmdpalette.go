@@ -67,6 +67,7 @@ func NewCommandPalette(termWidth, termHeight int) *CommandPalette {
 			{Label: "Switch Theme", Description: "Cycle to next theme", Shortcut: "—", Action: "switch_theme"},
 			{Label: "Export Theme", Description: "Save current theme to ~/.artemis/themes/", Shortcut: "—", Action: "export_theme"},
 			{Label: "Undo", Description: "Revert last agent file change", Shortcut: "—", Action: "command", Value: "/undo"},
+			{Label: "View Git Diff", Description: "Show current uncommitted changes", Shortcut: "Ctrl+D", Action: "view_diff"},
 		},
 	}
 	cp.SetSize(termWidth, termHeight)

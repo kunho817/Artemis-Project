@@ -9,14 +9,15 @@ import (
 
 // StatusBar displays model info, tokens, and keybindings.
 type StatusBar struct {
-	model     string
-	tokens    int
-	cost      float64
-	width     int
-	mode      string // "single" or "multi"
-	tier      string // "premium" or "budget"
-	keyHints  []KeyHint
-	startedAt time.Time
+	model            string
+	tokens           int
+	cost             float64
+	width            int
+	mode             string // "single" or "multi"
+	tier             string // "premium" or "budget"
+	keyHints         []KeyHint
+	startedAt        time.Time
+	pipelineProgress string // "Step 2/5" or ""
 }
 
 // KeyHint represents a keyboard shortcut hint.
@@ -84,6 +85,14 @@ func (s *StatusBar) SetKeyHints(hints []KeyHint) {
 	s.keyHints = hints
 }
 
+func (s *StatusBar) SetPipelineProgress(current, total int) {
+	if current > 0 && total > 0 {
+		s.pipelineProgress = fmt.Sprintf("Step %d/%d", current, total)
+	} else {
+		s.pipelineProgress = ""
+	}
+}
+
 // View renders the status bar.
 func (s *StatusBar) View() string {
 	// Left section: model + mode/tier + stats
@@ -130,6 +139,13 @@ func (s *StatusBar) View() string {
 			left,
 			StatusBarStyle.Render(" · "),
 			costLabel,
+		)
+	}
+	if s.pipelineProgress != "" {
+		left = lipgloss.JoinHorizontal(lipgloss.Center,
+			left,
+			StatusBarStyle.Render(" · "),
+			StatusTokenStyle.Copy().Foreground(ColorAccent).Render(s.pipelineProgress),
 		)
 	}
 	left = lipgloss.JoinHorizontal(lipgloss.Center,
