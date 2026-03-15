@@ -87,6 +87,9 @@ func (a *App) initMemory() {
 		}
 	}
 
+	// Phase E-1: Custom skills
+	a.initCustomSkills()
+
 	// Phase D-1: LSP Control Plane
 	a.initLSP()
 
@@ -205,6 +208,48 @@ func (a *App) saveMessageToDB(role, content, agentRole string) {
 		defer cancel()
 		_ = a.memStore.SaveMessage(ctx, msg)
 	}()
+}
+
+// initCustomSkills loads custom skills from global and project directories.
+func (a *App) initCustomSkills() {
+	if !a.cfg.Skills.Enabled || a.skillRegistry == nil {
+		return
+	}
+
+	totalLoaded := 0
+
+	// 1. Load global skills (~/.artemis/skills/)
+	globalDir := a.cfg.GlobalSkillsDir()
+	if n, err := a.skillRegistry.LoadCustomSkills(globalDir, "global"); err != nil {
+		a.chat.AddMessage(ChatMessage{
+			Role:    RoleSystem,
+			Content: fmt.Sprintf("Warning: global skills load error: %v", err),
+		})
+	} else if n > 0 {
+		totalLoaded += n
+	}
+
+	// 2. Load project-local skills (.artemis/skills/)
+	if a.cfg.Skills.AutoLoad {
+		cwd, _ := os.Getwd()
+		projectDir := cwd + "/.artemis/skills"
+		if n, err := a.skillRegistry.LoadCustomSkills(projectDir, "project"); err != nil {
+			a.chat.AddMessage(ChatMessage{
+				Role:    RoleSystem,
+				Content: fmt.Sprintf("Warning: project skills load error: %v", err),
+			})
+		} else if n > 0 {
+			totalLoaded += n
+		}
+	}
+
+	if totalLoaded > 0 {
+		customIDs := a.skillRegistry.CustomSkillIDs()
+		a.chat.AddMessage(ChatMessage{
+			Role:    RoleSystem,
+			Content: fmt.Sprintf("Custom skills loaded: %s (%d total)", joinStrings(customIDs), totalLoaded),
+		})
+	}
 }
 
 // initAstGrep tries to find ast-grep and wires it into the tool executor.

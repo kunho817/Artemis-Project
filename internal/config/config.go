@@ -108,6 +108,21 @@ func DefaultLSPConfig() LSPConfig {
 	}
 }
 
+// SkillsConfig holds settings for the custom skill/plugin system.
+type SkillsConfig struct {
+	Enabled   bool   `json:"enabled"`
+	GlobalDir string `json:"global_dir,omitempty"` // global skills dir (default: ~/.artemis/skills/)
+	AutoLoad  bool   `json:"auto_load"`            // auto-load skills from project .artemis/skills/
+}
+
+// DefaultSkillsConfig returns sensible defaults for the skills system.
+func DefaultSkillsConfig() SkillsConfig {
+	return SkillsConfig{
+		Enabled:  true, // on by default
+		AutoLoad: true, // auto-load project skills
+	}
+}
+
 // GitHubConfig holds settings for the GitHub Issue tracker integration.
 type GitHubConfig struct {
 	Enabled      bool   `json:"enabled"`
@@ -144,6 +159,7 @@ type Config struct {
 	Vector         VectorConfig   `json:"vector"`
 	RepoMap        RepoMapConfig  `json:"repo_map"`
 	LSP            LSPConfig      `json:"lsp"`
+	Skills         SkillsConfig   `json:"skills"`
 	GitHub         GitHubConfig   `json:"github"`
 	MaxToolIter    int            `json:"max_tool_iterations"`
 	Theme          string         `json:"theme"`
@@ -183,6 +199,7 @@ func DefaultConfig() Config {
 		Vector:  DefaultVectorConfig(),
 		RepoMap: DefaultRepoMapConfig(),
 		LSP:     DefaultLSPConfig(),
+		Skills:  DefaultSkillsConfig(),
 		GitHub:  DefaultGitHubConfig(),
 		Theme:   "default",
 	}
@@ -316,6 +333,18 @@ func (c *Config) ArchivePath() string {
 		return "archive" // fallback to current directory
 	}
 	return filepath.Join(dir, "archive")
+}
+
+// GlobalSkillsDir returns the resolved global skills directory.
+func (c *Config) GlobalSkillsDir() string {
+	if c.Skills.GlobalDir != "" {
+		return c.Skills.GlobalDir
+	}
+	dir, err := configDir()
+	if err != nil {
+		return "skills"
+	}
+	return filepath.Join(dir, "skills")
 }
 
 // configDir returns the configuration directory path.

@@ -1,5 +1,12 @@
 package roles
 
+import (
+	"fmt"
+	"strings"
+
+	"github.com/artemis-project/artemis/internal/agent"
+)
+
 // System prompts defining each agent's persona and instructions.
 
 // OrchestratorPrompt defines the Orchestrator's routing behavior.
@@ -89,6 +96,7 @@ AVAILABLE SKILLS (assign via "skills" array in tasks or "direct_skills" for triv
 - documentation: Technical writing, API docs, README structure, doc style.
 
 Skills inject domain-specific instructions into the agent's prompt. Assign relevant skills only — not every task needs skills.
+Custom skills may be loaded from ~/.artemis/skills/ (global) or .artemis/skills/ (project). They appear in the AVAILABLE SKILLS list above with their descriptions.
 
 ### For "trivial" intent:
 {"intent":"trivial","reasoning":"Brief explanation","direct_agent":"coder","direct_task":"Respond naturally to the user. The user said: {exact message}"}
@@ -201,3 +209,41 @@ security/performance concerns, multi-system tradeoff analysis, and design review
 Rules: NEVER use write_file or patch_file. NEVER suggest quick hacks. Think deeply.
 Output structured advice with clear reasoning, tradeoff analysis, and concrete recommendations.
 If you identify risks, rank them by severity and provide mitigation strategies.`
+
+// BuildOrchestratorPrompt returns the Orchestrator prompt with dynamically
+// injected custom skill descriptions from the SkillRegistry.
+func BuildOrchestratorPrompt(registry *agent.SkillRegistry) string {
+	if registry == nil {
+		return OrchestratorPrompt
+	}
+
+	customIDs := registry.CustomSkillIDs()
+	if len(customIDs) == 0 {
+		return OrchestratorPrompt
+	}
+
+	// Build custom skill descriptions
+	var lines []string
+	for _, id := range customIDs {
+		s := registry.Get(id)
+		if s != nil && s.Description != "" {
+			lines = append(lines, fmt.Sprintf("- %s: %s (custom)", s.ID, s.Description))
+		}
+	}
+
+	if len(lines) == 0 {
+		return OrchestratorPrompt
+	}
+
+	// Inject after the built-in skills section
+	marker := "Custom skills may be loaded from"
+
+	idx := strings.Index(OrchestratorPrompt, marker)
+	if idx >= 0 {
+		// Insert custom skill list before the "Custom skills may be loaded" line
+		return OrchestratorPrompt[:idx] + strings.Join(lines, "\n") + "\n\n" + OrchestratorPrompt[idx:]
+	}
+
+	// Fallback: append to end
+	return OrchestratorPrompt + "\n\nADDITIONAL CUSTOM SKILLS:\n" + strings.Join(lines, "\n")
+}

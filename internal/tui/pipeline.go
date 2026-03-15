@@ -51,7 +51,7 @@ func (a App) handleOrchestratedSubmit(text string) (tea.Model, tea.Cmd) {
 	// Fire async Orchestrator LLM call
 	userText := text
 	history := make([]llm.Message, 0, len(a.history)+1)
-	history = append(history, llm.Message{Role: "system", Content: roles.OrchestratorPrompt})
+	history = append(history, llm.Message{Role: "system", Content: roles.BuildOrchestratorPrompt(a.skillRegistry)})
 	history = append(history, a.history...)
 	cmd := func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
@@ -523,7 +523,6 @@ func (a *App) buildHistorySummary() []string {
 	}
 	return lines
 }
-
 
 // savePipelineRun persists a new pipeline run record (best-effort, async).
 func (a *App) savePipelineRun(runID, planJSON, intent string) {
