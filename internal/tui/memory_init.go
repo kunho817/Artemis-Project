@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/artemis-project/artemis/internal/lsp"
+	"github.com/artemis-project/artemis/internal/mcp"
 	"github.com/artemis-project/artemis/internal/memory"
 	"github.com/artemis-project/artemis/internal/tools"
 )
@@ -96,6 +97,9 @@ func (a *App) initMemory() {
 	// Phase D-2: ast-grep (structural search/replace)
 	a.initAstGrep()
 
+	// MCP server tools
+	a.initMCP()
+
 	// Phase 4: GitHub issue tracker
 	a.initGitHub()
 
@@ -178,6 +182,10 @@ func (a *App) shutdownMemory() {
 	}
 
 	// Phase D: Shutdown LSP servers
+	if a.mcpManager != nil {
+		a.mcpManager.Shutdown()
+	}
+
 	if a.lspManager != nil {
 		a.lspManager.Shutdown()
 	}
@@ -299,6 +307,47 @@ func (a *App) initLSP() {
 		a.chat.AddMessage(ChatMessage{
 			Role:    RoleSystem,
 			Content: fmt.Sprintf("LSP enabled for: %s (lazy loading)", joinStrings(langs)),
+		})
+	}
+}
+
+// initMCP initializes MCP servers and dynamically registers discovered MCP tools.
+func (a *App) initMCP() {
+	if !a.cfg.MCP.Enabled || len(a.cfg.MCP.Servers) == 0 {
+		return
+	}
+
+	// Convert config to mcp.ServerDef
+	var servers []mcp.ServerDef
+	for _, s := range a.cfg.MCP.Servers {
+		servers = append(servers, mcp.ServerDef{
+			ID:      s.ID,
+			Command: s.Command,
+			Args:    s.Args,
+			Env:     s.Env,
+			Enabled: s.Enabled,
+		})
+	}
+
+	mgr := mcp.NewManager(servers)
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	if err := mgr.Connect(ctx); err != nil {
+		a.chat.AddMessage(ChatMessage{
+			Role:    RoleSystem,
+			Content: fmt.Sprintf("Warning: MCP connection error: %v", err),
+		})
+	}
+
+	connected := mgr.ConnectedServers()
+	if len(connected) > 0 {
+		a.mcpManager = mgr
+		a.toolExecutor.SetMCPManager(mgr)
+		mcpTools := mgr.DiscoveredTools()
+		a.chat.AddMessage(ChatMessage{
+			Role:    RoleSystem,
+			Content: fmt.Sprintf("MCP enabled: %d servers, %d tools discovered", len(connected), len(mcpTools)),
 		})
 	}
 }

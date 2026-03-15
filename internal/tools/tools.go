@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"github.com/artemis-project/artemis/internal/llm"
 	"github.com/artemis-project/artemis/internal/lsp"
+	"github.com/artemis-project/artemis/internal/mcp"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -55,6 +56,7 @@ type ToolExecutor struct {
 	commitLog       []string     // stack of auto-commit hashes for undo
 	codeGenProvider llm.Provider // local code-gen model (vLLM) for generate_code tool
 	lspManager      *lsp.Manager
+	mcpManager      *mcp.Manager
 	astGrepPath     string
 }
 
@@ -127,6 +129,20 @@ func (te *ToolExecutor) SetLSPManager(manager *lsp.Manager) {
 	te.Register(&LSPHoverTool{baseDir: te.workDir, manager: manager})
 	te.Register(&LSPRenameTool{baseDir: te.workDir, manager: manager, fileLock: te.fileLock})
 	te.Register(&LSPSymbolsTool{baseDir: te.workDir, manager: manager})
+}
+
+// SetMCPManager configures the MCP manager and registers discovered MCP tools.
+func (te *ToolExecutor) SetMCPManager(manager *mcp.Manager) {
+	te.mcpManager = manager
+	// Register all discovered MCP tools
+	for _, dt := range manager.DiscoveredTools() {
+		te.Register(&MCPTool{
+			serverID:   dt.ServerID,
+			serverName: dt.ServerName,
+			toolDef:    dt.Tool,
+			manager:    manager,
+		})
+	}
 }
 
 // SetAstGrep configures ast-grep path and registers AST-aware tools.

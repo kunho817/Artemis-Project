@@ -115,6 +115,28 @@ type SkillsConfig struct {
 	AutoLoad  bool   `json:"auto_load"`            // auto-load skills from project .artemis/skills/
 }
 
+// MCPConfig holds settings for MCP server integrations.
+type MCPConfig struct {
+	Enabled bool           `json:"enabled"`
+	Servers []MCPServerDef `json:"servers,omitempty"`
+}
+
+// MCPServerDef defines one MCP server process configuration.
+type MCPServerDef struct {
+	ID      string            `json:"id"`
+	Command string            `json:"command"`
+	Args    []string          `json:"args,omitempty"`
+	Env     map[string]string `json:"env,omitempty"`
+	Enabled bool              `json:"enabled"`
+}
+
+// DefaultMCPConfig returns sensible defaults for MCP integration.
+func DefaultMCPConfig() MCPConfig {
+	return MCPConfig{
+		Enabled: false, // opt-in
+	}
+}
+
 // DefaultSkillsConfig returns sensible defaults for the skills system.
 func DefaultSkillsConfig() SkillsConfig {
 	return SkillsConfig{
@@ -160,6 +182,7 @@ type Config struct {
 	RepoMap        RepoMapConfig  `json:"repo_map"`
 	LSP            LSPConfig      `json:"lsp"`
 	Skills         SkillsConfig   `json:"skills"`
+	MCP            MCPConfig      `json:"mcp"`
 	GitHub         GitHubConfig   `json:"github"`
 	MaxToolIter    int            `json:"max_tool_iterations"`
 	Theme          string         `json:"theme"`
@@ -200,6 +223,7 @@ func DefaultConfig() Config {
 		RepoMap: DefaultRepoMapConfig(),
 		LSP:     DefaultLSPConfig(),
 		Skills:  DefaultSkillsConfig(),
+		MCP:     DefaultMCPConfig(),
 		GitHub:  DefaultGitHubConfig(),
 		Theme:   "default",
 	}

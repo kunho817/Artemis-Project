@@ -76,6 +76,12 @@ AST TOOLS (structural code matching — requires ast-grep):
 - ast_search: Search for code patterns using AST-aware matching. More precise than grep — matches code structure, not text. Use meta-variables: $VAR (single node), $$$ (multiple nodes). Example: pattern="fmt.Println($MSG)" lang="go".
 - ast_replace: Replace code patterns structurally. DRY RUN by default (set apply=true to write). Example: pattern="log.Printf($FMT, $$$ARGS)" rewrite="logger.Infof($FMT, $$$ARGS)" lang="go".
 
+MCP TOOLS (Model Context Protocol — extensible external integrations):
+MCP tools are dynamically discovered from connected MCP servers at startup.
+They appear with the prefix "mcp_<serverid>_<toolname>" (e.g., "mcp_github_create_issue").
+Use MCP tools when the task requires external service interaction (APIs, databases, etc.).
+Each MCP tool has its own parameter schema — check the tool description for details.
+
 AVAILABLE CATEGORIES (assign via "category" field in tasks or "direct_category" for trivial/conversational):
 - visual-engineering: Frontend, UI/UX, design, styling, animation.
 - ultrabrain: Hard, logic-heavy tasks requiring deep reasoning. Give clear goals, not step-by-step instructions.

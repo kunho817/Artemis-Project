@@ -21,6 +21,7 @@ import (
 	ghub "github.com/artemis-project/artemis/internal/github"
 	"github.com/artemis-project/artemis/internal/llm"
 	"github.com/artemis-project/artemis/internal/lsp"
+	"github.com/artemis-project/artemis/internal/mcp"
 	"github.com/artemis-project/artemis/internal/memory"
 	"github.com/artemis-project/artemis/internal/state"
 	"github.com/artemis-project/artemis/internal/tools"
@@ -100,6 +101,7 @@ type App struct {
 	consolidator        *memory.Consolidator
 	repoMapStore        *memory.RepoMapStore // Phase 3: repo-map
 	lspManager          *lsp.Manager         // Phase D: LSP Control Plane
+	mcpManager          *mcp.Manager
 	ghSyncer            *ghub.Syncer
 	ghProcessor         *ghub.Processor
 	checkpointStore     state.CheckpointStore // Phase C-5: step checkpoint persistence
