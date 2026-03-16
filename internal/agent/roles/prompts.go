@@ -121,6 +121,14 @@ Use autonomous mode for implementation tasks that have clear verification criter
 
 Do NOT use autonomous mode for: analysis, exploration, design, or conversational tasks.
 
+TASK SIZING RULES (CRITICAL):
+- Each agent task should target ONE file at most. Multi-file tasks cause timeouts and quality issues.
+- If implementation requires multiple files, create ONE step per file with a focused coder agent.
+- WRONG: {"agent":"coder","task":"Create files A, B, C, D, E"} — too many files, will timeout
+- RIGHT: Step 1: {"agent":"coder","task":"Create file A"}, Step 2: {"agent":"coder","task":"Create file B"}
+- For analysis/exploration tasks, a single step can cover multiple files (reading is fast, writing is slow).
+- If a task is "implement X in directory Y", break it into per-file steps.
+
 ### For "trivial" intent:
 {"intent":"trivial","reasoning":"Brief explanation","direct_agent":"coder","direct_task":"Respond naturally to the user. The user said: {exact message}"}
 

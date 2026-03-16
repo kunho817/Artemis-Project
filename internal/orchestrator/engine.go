@@ -54,13 +54,18 @@ type EngineResult struct {
 // Supports 3-stage failure recovery: retry → Consultant diagnosis → user escalation.
 // Supports step checkpointing for pipeline resume (Phase C-5).
 // Supports conditional re-planning on failure (Phase C-7).
+// DefaultStepTimeout is the per-step time limit for agent execution.
+// Prevents a single slow step from consuming the entire pipeline timeout.
+const DefaultStepTimeout = 3 * time.Minute
+
 type Engine struct {
 	pipeline          *Pipeline
 	eventBus          *bus.EventBus
-	recoveryPrompter  RecoveryPrompter // Stage 3: user escalation (nil = disabled)
-	consultantBuilder AgentBuilder     // Stage 2: Consultant agent factory (nil = skip to Stage 3)
-	checkpointStore   state.CheckpointStore  // Phase C-5: step checkpoint persistence (nil = disabled)
-	replanner         Replanner              // Phase C-7: conditional re-planning on failure (nil = disabled)
+	recoveryPrompter  RecoveryPrompter      // Stage 3: user escalation (nil = disabled)
+	consultantBuilder AgentBuilder          // Stage 2: Consultant agent factory (nil = skip to Stage 3)
+	checkpointStore   state.CheckpointStore // Phase C-5: step checkpoint persistence (nil = disabled)
+	replanner         Replanner             // Phase C-7: conditional re-planning on failure (nil = disabled)
+	stepTimeout       time.Duration         // per-step timeout (0 = use DefaultStepTimeout)
 }
 
 // NewEngine creates a new pipeline execution engine.
@@ -73,6 +78,19 @@ func NewEngine(pipeline *Pipeline, eb *bus.EventBus, prompter RecoveryPrompter, 
 		recoveryPrompter:  prompter,
 		consultantBuilder: consultant,
 	}
+}
+
+// SetStepTimeout sets the per-step timeout. 0 uses DefaultStepTimeout.
+func (e *Engine) SetStepTimeout(d time.Duration) {
+	e.stepTimeout = d
+}
+
+// getStepTimeout returns the configured or default step timeout.
+func (e *Engine) getStepTimeout() time.Duration {
+	if e.stepTimeout > 0 {
+		return e.stepTimeout
+	}
+	return DefaultStepTimeout
 }
 
 // SetCheckpointStore enables step checkpointing for pipeline resume.
@@ -497,7 +515,10 @@ func (e *Engine) RunPlan(ctx context.Context, plan *ExecutionPlan, ss *state.Ses
 			Agents: agents,
 		}
 
-		phaseResult := e.runPhase(ctx, phase, ss)
+		// Per-step timeout prevents one slow step from consuming the entire pipeline
+		stepCtx, stepCancel := context.WithTimeout(ctx, e.getStepTimeout())
+		phaseResult := e.runPhase(stepCtx, phase, ss)
+		stepCancel()
 		result.PhaseResults = append(result.PhaseResults, phaseResult)
 
 		e.emitStepComplete(stepIdx+1, len(phaseResult.Errors))

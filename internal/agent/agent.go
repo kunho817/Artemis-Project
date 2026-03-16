@@ -275,6 +275,7 @@ func (b *BaseAgent) CallLLMWithTools(ctx context.Context, userPrompt string, pha
 		systemPrompt := b.system
 		if b.toolExec != nil {
 			systemPrompt += b.toolExec.ToolDescriptions()
+			systemPrompt += toolUsageGuidelines
 		}
 		messages = append(messages, llm.Message{
 			Role:    "system",
@@ -289,10 +290,10 @@ func (b *BaseAgent) CallLLMWithTools(ctx context.Context, userPrompt string, pha
 
 	maxIter := b.maxToolIter
 	if maxIter <= 0 {
-		maxIter = 0 // unlimited
+		maxIter = 20 // default safety limit — prevents runaway tool loops
 	}
 	totalUsage := &llm.TokenUsage{}
-	for i := 0; maxIter == 0 || i < maxIter; i++ {
+	for i := 0; i < maxIter; i++ {
 		// Stream the LLM response, accumulating the full text
 		response, usage, err := b.streamAndAccumulate(ctx, messages, phase)
 		if err != nil {
@@ -338,6 +339,19 @@ func (b *BaseAgent) CallLLMWithTools(ctx context.Context, userPrompt string, pha
 	}
 	return "", fmt.Errorf("agent %s: tool loop did not terminate", b.name)
 }
+
+// toolUsageGuidelines are appended to every agent's system prompt when tools are available.
+const toolUsageGuidelines = `
+
+TOOL USAGE RULES:
+- Focus on the assigned task. Do NOT create test files, benchmarks, or examples unless explicitly asked.
+- Do NOT run compilers, linters, or build commands unless the task specifically requires verification.
+- Each file creation/modification should be a single write_file or patch_file call.
+- Prefer write_file for new files, patch_file for targeted edits to existing files.
+- After using write_file, do NOT immediately read the file back — you just wrote it.
+- If a tool call fails, try a different approach instead of repeating the same call.
+- Minimize shell_exec usage — prefer file tools (read_file, write_file, grep) over shell commands.
+- Complete the task and return your response. Do NOT enter verification loops.`
 
 // DefaultMaxAutonomousIterations is the hard limit for autonomous loops.
 const DefaultMaxAutonomousIterations = 5
