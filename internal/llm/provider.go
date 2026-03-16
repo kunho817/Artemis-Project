@@ -2,9 +2,24 @@ package llm
 
 import (
 	"context"
+	"net/http"
+	"time"
 
 	"github.com/artemis-project/artemis/internal/config"
 )
+
+// newHTTPClient creates a properly configured HTTP client for LLM API calls.
+// Prevents the default zero-timeout http.Client that causes "context deadline exceeded" errors.
+func newHTTPClient() *http.Client {
+	return &http.Client{
+		Timeout: 180 * time.Second, // 3 min hard limit per request
+		Transport: &http.Transport{
+			MaxIdleConns:        100,
+			MaxIdleConnsPerHost: 10,
+			IdleConnTimeout:     90 * time.Second,
+		},
+	}
+}
 
 // Message represents a single message in a conversation.
 type Message struct {

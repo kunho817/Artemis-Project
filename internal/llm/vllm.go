@@ -24,11 +24,11 @@ type VLLM struct {
 func NewVLLM(cfg config.ProviderConfig) *VLLM {
 	return &VLLM{
 		cfg:    cfg,
-		client: &http.Client{},
+		client: newHTTPClient(),
 	}
 }
 
-func (v *VLLM) Name() string { return "vllm" }
+func (v *VLLM) Name() string  { return "vllm" }
 func (v *VLLM) Model() string { return v.cfg.Model }
 
 // vLLM API types (OpenAI-compatible)

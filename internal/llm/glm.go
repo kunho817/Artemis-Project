@@ -25,11 +25,11 @@ type GLM struct {
 func NewGLM(cfg config.GLMConfig) *GLM {
 	return &GLM{
 		cfg:    cfg,
-		client: &http.Client{},
+		client: newHTTPClient(),
 	}
 }
 
-func (g *GLM) Name() string { return "glm" }
+func (g *GLM) Name() string  { return "glm" }
 func (g *GLM) Model() string { return g.cfg.Model }
 
 // GLM API types (OpenAI-compatible format)

@@ -55,7 +55,7 @@ func (a App) handleOrchestratedSubmit(text string) (tea.Model, tea.Cmd) {
 	history = append(history, llm.Message{Role: "system", Content: roles.BuildOrchestratorPrompt(a.skillRegistry)})
 	history = append(history, a.history...)
 	cmd := func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 		defer cancel()
 		resp, err := orchProvider.Send(ctx, history)
 		if err != nil {

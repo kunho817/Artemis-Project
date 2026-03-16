@@ -24,11 +24,11 @@ type Gemini struct {
 func NewGemini(cfg config.ProviderConfig) *Gemini {
 	return &Gemini{
 		cfg:    cfg,
-		client: &http.Client{},
+		client: newHTTPClient(),
 	}
 }
 
-func (g *Gemini) Name() string { return "gemini" }
+func (g *Gemini) Name() string  { return "gemini" }
 func (g *Gemini) Model() string { return g.cfg.Model }
 
 // Gemini API types

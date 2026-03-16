@@ -25,7 +25,7 @@ func NewRetryProvider(inner Provider, maxRetries int) *RetryProvider {
 	}
 }
 
-func (r *RetryProvider) Name() string { return r.inner.Name() }
+func (r *RetryProvider) Name() string  { return r.inner.Name() }
 func (r *RetryProvider) Model() string { return r.inner.Model() }
 
 // Send retries with exponential backoff (1s, 2s, 4s...) on transient failures.
@@ -33,6 +33,12 @@ func (r *RetryProvider) Send(ctx context.Context, messages []Message) (string, e
 	var lastErr error
 	for attempt := 0; attempt <= r.maxRetries; attempt++ {
 		if attempt > 0 {
+			// Check if context has enough time for another attempt
+			if deadline, ok := ctx.Deadline(); ok && time.Until(deadline) < 15*time.Second {
+				return "", fmt.Errorf("insufficient time for retry (%.0fs remaining): %w",
+					time.Until(deadline).Seconds(), lastErr)
+			}
+
 			delay := r.baseDelay * time.Duration(1<<uint(attempt-1))
 			select {
 			case <-ctx.Done():
