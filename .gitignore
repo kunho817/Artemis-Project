@@ -29,8 +29,8 @@ nul
 # Artemis data
 .artemis/
 
-# Project knowledge base (local only)
-AGENTS.md
+# Project knowledge base
+# AGENTS.md
 
 # Temporary reference repos
 temp_omo/
