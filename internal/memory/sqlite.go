@@ -43,16 +43,20 @@ func NewSQLiteStore(dbPath string) (*SQLiteStore, error) {
 		return nil, fmt.Errorf("memory: open db: %w", err)
 	}
 
-	// Enable WAL mode for better concurrent read/write performance
-	if _, err := db.Exec("PRAGMA journal_mode=WAL"); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("memory: set WAL mode: %w", err)
+	// Performance pragmas
+	pragmas := []string{
+		"PRAGMA journal_mode=WAL",    // concurrent read/write
+		"PRAGMA foreign_keys=ON",     // referential integrity
+		"PRAGMA synchronous=NORMAL",  // faster writes (safe with WAL)
+		"PRAGMA cache_size=-64000",   // 64MB page cache (default ~2MB)
+		"PRAGMA busy_timeout=5000",   // 5s retry on lock instead of immediate fail
+		"PRAGMA mmap_size=268435456", // 256MB memory-mapped I/O
 	}
-
-	// Enable foreign keys
-	if _, err := db.Exec("PRAGMA foreign_keys=ON"); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("memory: enable foreign keys: %w", err)
+	for _, p := range pragmas {
+		if _, err := db.Exec(p); err != nil {
+			db.Close()
+			return nil, fmt.Errorf("memory: %s: %w", p, err)
+		}
 	}
 
 	store := &SQLiteStore{db: db, dbPath: dbPath}

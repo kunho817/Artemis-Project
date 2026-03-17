@@ -548,7 +548,8 @@ func (b *BaseAgent) BuildPromptWithContext(ss *state.SessionState, task string) 
 			var factLines []string
 			for _, f := range facts {
 				factLines = append(factLines, fmt.Sprintf("- %s", f.Content))
-				b.memStore.IncrementFactUsage(context.Background(), f.ID)
+				fID := f.ID
+				go b.memStore.IncrementFactUsage(context.Background(), fID) // async — don't block prompt building
 			}
 			budget.Allocate(llm.P5, "facts", "## Project Knowledge\n"+strings.Join(factLines, "\n"), 4_000)
 		}

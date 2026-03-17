@@ -59,6 +59,8 @@ type ToolExecutor struct {
 	lspManager      *lsp.Manager
 	mcpManager      *mcp.Manager
 	astGrepPath     string
+	mu              sync.Mutex // protects toolDescCache
+	toolDescCache   string     // cached ToolDescriptions result
 }
 
 // NewToolExecutor creates a new tool executor with all built-in tools registered.
@@ -88,6 +90,7 @@ func NewToolExecutor(workDir string) *ToolExecutor {
 // Register adds a tool to the executor.
 func (te *ToolExecutor) Register(tool Tool) {
 	te.tools[tool.Name()] = tool
+	te.invalidateToolCache()
 }
 
 // Execute runs a tool by name with the given parameters.
@@ -220,9 +223,20 @@ func (te *ToolExecutor) shadowCommit(ctx context.Context, toolName string, files
 }
 
 // ToolDescriptions returns a formatted string describing all available tools
-// for injection into agent system prompts.
+// for injection into agent system prompts. Cached — rebuilt only when tools change.
 func (te *ToolExecutor) ToolDescriptions() string {
+	te.mu.Lock()
+	defer te.mu.Unlock()
+	if te.toolDescCache != "" {
+		return te.toolDescCache
+	}
+	te.toolDescCache = te.buildToolDescriptions()
+	return te.toolDescCache
+}
+
+func (te *ToolExecutor) buildToolDescriptions() string {
 	var sb strings.Builder
+	sb.Grow(4096) // pre-allocate
 	sb.WriteString("\n\nAVAILABLE TOOLS:\n")
 	sb.WriteString("You can use tools by including <tool_use> blocks in your response.\n")
 	sb.WriteString("Format: <tool_use>{\"tool\": \"tool_name\", \"params\": {\"key\": \"value\"}}</tool_use>\n\n")
@@ -238,6 +252,11 @@ func (te *ToolExecutor) ToolDescriptions() string {
 	sb.WriteString("- When your task is COMPLETE, provide your final response WITHOUT any <tool_use> tags.\n")
 	sb.WriteString("- All file paths are relative to the project root.\n")
 	return sb.String()
+}
+
+// invalidateToolCache clears the tool description cache (called when tools are registered).
+func (te *ToolExecutor) invalidateToolCache() {
+	te.toolDescCache = ""
 }
 
 // toolList returns tools in a stable order for consistent prompt generation.
