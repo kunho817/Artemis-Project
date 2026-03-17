@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>반물질 차원 (Antimatter Dimensions Clone)</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #121212;
+            color: #e0e0e0;
+            margin: 0;
+            padding: 20px;
+            text-align: center;
+        }
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+        }
+        h1 {
+            color: #ffffff;
+            margin-bottom: 30px;
+        }
+        .antimatter-display {
+            font-size: 24px;
+            margin-bottom: 10px;
+        }
+        .antimatter-count {
+            font-size: 32px;
+            font-weight: bold;
+            color: #ffffff;
+        }
+        .antimatter-per-second {
+            font-size: 16px;
+            color: #aaaaaa;
+            margin-bottom: 40px;
+        }
+        .dimensions-container {
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+        }
+        .dimension-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            background-color: #1e1e1e;
+            padding: 15px 20px;
+            border-radius: 8px;
+            border: 1px solid #333;
+        }
+        .dimension-info {
+            display: flex;
+            align-items: center;
+            gap: 20px;
+            font-size: 18px;
+        }
+        .dimension-name {
+            font-weight: bold;
+            min-width: 150px;
+            text-align: left;
+        }
+        .buy-button {
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            font-size: 16px;
+            cursor: pointer;
+            border-radius: 5px;
+            transition: background-color 0.2s;
+            min-width: 180px;
+        }
+        .buy-button:hover:not(:disabled) {
+            background-color: #45a049;
+        }
+        .buy-button:disabled {
+            background-color: #444;
+            color: #888;
+            cursor: not-allowed;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>반물질 차원</h1>
+        
+        <div class="antimatter-display">
+            현재 <span id="antimatter" class="antimatter-count">10</span>의 반물질을 가지고 있습니다.
+        </div>
+        <div class="antimatter-per-second">
+            초당 생산량: <span id="antimatter-per-sec">0</span>
+        </div>
+
+        <div class="dimensions-container">
+            <div class="dimension-row">
+                <div class="dimension-info">
+                    <span class="dimension-name">제 1 반물질 차원</span>
+                    <span>수량: <span id="dim1-amount">0</span></span>
+                    <span>배율: <span id="dim1-multiplier">1</span>x</span>
+                </div>
+                <button id="buy-dim1" class="buy-button">
+                    비용: <span id="dim1-cost">10</span> 반물질
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // 게임 상태 관리
+        const game = {
+            antimatter: 10,
+            dimensions: {
+                1: {
+                    amount: 0,
+                    cost: 10,
+                    multiplier: 1
+                }
+            }
+        };
+
+        // DOM 요소 캐싱
+        const ui = {
+            antimatter: document.getElementById('antimatter'),
+            antimatterPerSec: document.getElementById('antimatter-per-sec'),
+            dim1Amount: document.getElementById('dim1-amount'),
+            dim1Multiplier: document.getElementById('dim1-multiplier'),
+            dim1Cost: document.getElementById('dim1-cost'),
+            buyDim1Btn: document.getElementById('buy-dim1')
+        };
+
+        // 화면 업데이트 함수
+        function updateUI() {
+            ui.antimatter.textContent = Math.floor(game.antimatter);
+            
+            // 제 1 차원 UI 업데이트
+            const dim1 = game.dimensions[1];
+            ui.dim1Amount.textContent = dim1.amount;
+            ui.dim1Multiplier.textContent = dim1.multiplier;
+            ui.dim1Cost.textContent = dim1.cost;
+
+            // 버튼 활성화/비활성화 상태 업데이트
+            ui.buyDim1Btn.disabled = game.antimatter < dim1.cost;
+
+            // 초당 생산량 계산 및 표시
+            const productionPerSec = dim1.amount * dim1.multiplier;
+            ui.antimatterPerSec.textContent = productionPerSec;
+        }
+
+        // 차원 구매 이벤트 리스너
+        ui.buyDim1Btn.addEventListener('click', () => {
+            const dim1 = game.dimensions[1];
+            if (game.antimatter >= dim1.cost) {
+                game.antimatter -= dim1.cost;
+                dim1.amount += 1;
+                // 구매 시 비용 증가 (예: 10배씩)
+                dim1.cost *= 10;
+                updateUI();
+            }
+        });
+
+        // 메인 게임 루프 (초당 10번 실행, 100ms 간격)
+        function gameLoop() {
+            const dim1 = game.dimensions[1];
+            const productionPerTick = (dim1.amount * dim1.multiplier) / 10;
+            game.antimatter += productionPerTick;
+            
+            updateUI();
+        }
+
+        // 게임 루프 시작
+        setInterval(gameLoop, 100);
+        
+        // 초기 UI 설정
+        updateUI();
+    </script>
+</body>
+</html>
