@@ -203,6 +203,10 @@ func (c *Client) Shutdown() {
 	atomic.StoreInt32(&c.closed, 1)
 	c.stdin.Close()
 	_ = c.cmd.Wait()
+	// Force kill if still running (prevents orphaned processes)
+	if c.cmd.Process != nil {
+		_ = c.cmd.Process.Kill()
+	}
 }
 
 // ServerName returns the server's self-reported name.

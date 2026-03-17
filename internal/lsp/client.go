@@ -257,12 +257,19 @@ func (c *Client) Shutdown(ctx context.Context) error {
 	}
 	atomic.StoreInt32(&c.closed, 1)
 
+	// Try graceful shutdown first
 	var result json.RawMessage
 	_ = c.call(ctx, "shutdown", nil, &result)
 	_ = c.notify(ctx, "exit", nil)
 
 	c.stdin.Close()
-	return c.cmd.Wait()
+	err := c.cmd.Wait()
+
+	// Force kill if still running (prevents orphaned processes)
+	if c.cmd.Process != nil {
+		_ = c.cmd.Process.Kill()
+	}
+	return err
 }
 
 // Language returns the language this client handles.
