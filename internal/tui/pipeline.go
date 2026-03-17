@@ -195,11 +195,14 @@ func (a App) executePlan(plan *orchestrator.ExecutionPlan, userText string) (tea
 			ag.SetRepoMap(a.repoMapStore)
 		}
 		ag.SetMaxToolIter(a.cfg.MaxToolIter)
-		// Apply task, criticality, category, and skills
+		// Apply task, criticality, category, skills, context
 		ag.SetTask(task.Task)
 		ag.SetCritical(task.Critical)
 		if a.projectRules != "" {
 			ag.SetProjectRules(a.projectRules)
+		}
+		if a.codeIndex != nil {
+			ag.SetCodeIndex(a.codeIndex)
 		}
 		if task.Category != "" {
 			ag.SetCategory(agent.TaskCategory(task.Category))
@@ -642,6 +645,9 @@ func (a App) executeResume(run state.IncompleteRun) (tea.Model, tea.Cmd) {
 		ag.SetCritical(task.Critical)
 		if a.projectRules != "" {
 			ag.SetProjectRules(a.projectRules)
+		}
+		if a.codeIndex != nil {
+			ag.SetCodeIndex(a.codeIndex)
 		}
 		if task.Category != "" {
 			ag.SetCategory(agent.TaskCategory(task.Category))

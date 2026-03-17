@@ -29,9 +29,10 @@ type VectorStore struct {
 	docEmbedFunc   chromem.EmbeddingFunc // input_type: "document"
 	queryEmbedFunc chromem.EmbeddingFunc // input_type: "query"
 
-	facts     *chromem.Collection
-	sessions  *chromem.Collection
-	decisions *chromem.Collection
+	facts      *chromem.Collection
+	sessions   *chromem.Collection
+	decisions  *chromem.Collection
+	codeChunks *chromem.Collection // semantic code search
 
 	mu sync.RWMutex
 }
@@ -79,6 +80,11 @@ func (vs *VectorStore) initCollections() error {
 	vs.decisions, err = vs.db.GetOrCreateCollection("decisions", nil, vs.docEmbedFunc)
 	if err != nil {
 		return fmt.Errorf("decisions collection: %w", err)
+	}
+
+	vs.codeChunks, err = vs.db.GetOrCreateCollection("code_chunks", nil, vs.docEmbedFunc)
+	if err != nil {
+		return fmt.Errorf("code_chunks collection: %w", err)
 	}
 
 	return nil
@@ -238,4 +244,71 @@ func cosineSimilarity(a, b []float32) float32 {
 	}
 
 	return float32(dot / (math.Sqrt(normA) * math.Sqrt(normB)))
+}
+
+// --- Code Chunk Methods (Semantic Context Engine) ---
+
+// CodeChunk represents an indexed code fragment.
+type CodeChunk struct {
+	ID       string // file:startLine-endLine
+	FilePath string
+	Content  string
+	Score    float32 // similarity score (only set in search results)
+}
+
+// AddCodeChunk embeds and stores a code chunk.
+func (vs *VectorStore) AddCodeChunk(ctx context.Context, chunk CodeChunk) error {
+	vs.mu.Lock()
+	defer vs.mu.Unlock()
+
+	return vs.codeChunks.AddDocument(ctx, chromem.Document{
+		ID:       chunk.ID,
+		Content:  chunk.Content,
+		Metadata: map[string]string{"file": chunk.FilePath},
+	})
+}
+
+// QueryCodeChunks finds code chunks semantically similar to a query.
+func (vs *VectorStore) QueryCodeChunks(ctx context.Context, query string, limit int) ([]CodeChunk, error) {
+	vs.mu.RLock()
+	defer vs.mu.RUnlock()
+
+	if limit <= 0 {
+		limit = 10
+	}
+
+	count := vs.codeChunks.Count()
+	if count == 0 {
+		return nil, nil
+	}
+	if limit > count {
+		limit = count
+	}
+
+	// Generate query embedding
+	embedding, err := vs.queryEmbedFunc(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("code chunk embed query: %w", err)
+	}
+
+	results, err := vs.codeChunks.QueryEmbedding(ctx, embedding, limit, nil, nil)
+	if err != nil {
+		return nil, fmt.Errorf("code chunk query: %w", err)
+	}
+
+	var chunks []CodeChunk
+	for _, r := range results {
+		chunks = append(chunks, CodeChunk{
+			ID:       r.ID,
+			FilePath: r.Metadata["file"],
+			Content:  r.Content,
+			Score:    r.Similarity,
+		})
+	}
+	return chunks, nil
+}
+
+// CodeChunkCount returns the number of indexed code chunks.
+func (vs *VectorStore) CodeChunkCount() int {
+	return vs.codeChunks.Count()
 }

@@ -102,6 +102,7 @@ type App struct {
 	consolidator        *memory.Consolidator
 	repoMapStore        *memory.RepoMapStore // Phase 3: repo-map
 	projectRules        string               // ARTEMIS.md project rules
+	codeIndex           *memory.CodeIndex    // Semantic code search
 	lspManager          *lsp.Manager         // Phase D: LSP Control Plane
 	mcpManager          *mcp.Manager
 	ghSyncer            *ghub.Syncer

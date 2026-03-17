@@ -91,6 +91,9 @@ type Agent interface {
 
 	// SetProjectRules sets project-specific rules (from ARTEMIS.md).
 	SetProjectRules(rules string)
+
+	// SetCodeIndex attaches the semantic code index.
+	SetCodeIndex(ci *memory.CodeIndex)
 }
 
 // BaseAgent provides shared logic for all agents.
@@ -113,6 +116,7 @@ type BaseAgent struct {
 	verifyFunc    VerifyFunc           // Phase E-2: verification function for autonomous loop
 	maxAutoIter   int                  // Phase E-2: max autonomous iterations (0 = default)
 	projectRules  string               // Project rules from ARTEMIS.md / .artemis/RULES.md
+	codeIndex     *memory.CodeIndex    // Semantic code search (nil if disabled)
 }
 
 // NewBaseAgent creates a new base agent.
@@ -150,8 +154,10 @@ func (b *BaseAgent) SetRepoMap(rm *memory.RepoMapStore) { b.repoMap = rm }
 func (b *BaseAgent) SetCategory(cat TaskCategory) { b.category = cat }
 
 // SetProjectRules sets project-specific rules to inject into agent prompts.
-// Loaded from ARTEMIS.md or .artemis/RULES.md at the project root.
 func (b *BaseAgent) SetProjectRules(rules string) { b.projectRules = rules }
+
+// SetCodeIndex attaches the semantic code index for automatic context injection.
+func (b *BaseAgent) SetCodeIndex(ci *memory.CodeIndex) { b.codeIndex = ci }
 
 // SetAutonomous enables verify-gated autonomous loop for this agent.
 func (b *BaseAgent) SetAutonomous(verify VerifyFunc, maxIter int) {
@@ -536,6 +542,16 @@ func (b *BaseAgent) BuildPromptWithContext(ss *state.SessionState, task string) 
 		history := ss.HistorySummary()
 		if history != "" {
 			budget.Allocate(llm.P2, "history", "## Conversation History\n"+history, 16_000)
+		}
+	}
+
+	// P3: Semantic code context (auto-retrieved relevant code)
+	if b.codeIndex != nil && b.codeIndex.IndexedChunkCount() > 0 {
+		if codeChunks, err := b.codeIndex.Search(context.Background(), task, 5); err == nil && len(codeChunks) > 0 {
+			formatted := memory.FormatChunksForPrompt(codeChunks, 4000)
+			if formatted != "" {
+				budget.Allocate(llm.P3, "code-context", "## Relevant Code\n"+formatted, 8_000)
+			}
 		}
 	}
 

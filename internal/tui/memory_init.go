@@ -89,6 +89,22 @@ func (a *App) initMemory() {
 		}
 	}
 
+	// Semantic Code Index (requires VectorStore)
+	if vs, ok := a.vectorStore.(*memory.VectorStore); ok && a.cfg.Vector.Enabled {
+		cwd, _ := os.Getwd()
+		a.codeIndex = memory.NewCodeIndex(vs, cwd, a.cfg.RepoMap.ExcludePatterns)
+		// Index in background
+		go func() {
+			n, err := a.codeIndex.IndexDirectory(context.Background(), cwd)
+			if err == nil && n > 0 {
+				a.chat.AddMessage(ChatMessage{
+					Role:    RoleSystem,
+					Content: fmt.Sprintf("Code index: %d chunks from %d files", n, a.codeIndex.IndexedFileCount()),
+				})
+			}
+		}()
+	}
+
 	// Load project rules (ARTEMIS.md / .artemis/RULES.md)
 	cwd, _ := os.Getwd()
 	a.projectRules = agent.LoadProjectRules(cwd)
