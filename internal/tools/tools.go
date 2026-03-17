@@ -49,6 +49,11 @@ type ToolInvocation struct {
 const DefaultMaxToolIterations = 50
 
 // ToolExecutor manages and executes agent tools.
+// HookFunc is called before or after tool execution.
+// Pre-hooks can return (false, msg) to block the tool call.
+// Post-hooks receive the result and can modify it.
+type HookFunc func(ctx context.Context, toolName string, params map[string]interface{}, result *ToolResult) (allow bool, message string)
+
 type ToolExecutor struct {
 	tools           map[string]Tool
 	workDir         string
@@ -61,6 +66,8 @@ type ToolExecutor struct {
 	astGrepPath     string
 	mu              sync.Mutex // protects toolDescCache
 	toolDescCache   string     // cached ToolDescriptions result
+	preHooks        []HookFunc // executed before tool call
+	postHooks       []HookFunc // executed after tool call
 }
 
 // NewToolExecutor creates a new tool executor with all built-in tools registered.
@@ -71,6 +78,10 @@ func NewToolExecutor(workDir string) *ToolExecutor {
 		workDir:  workDir,
 		fileLock: fl,
 	}
+	// Register default safety hooks
+	te.AddPreHook(DangerousCommandHook())
+	te.AddPreHook(FilePathHook(workDir))
+
 	te.Register(&ReadFileTool{baseDir: workDir})
 	te.Register(&WriteFileTool{baseDir: workDir, fileLock: fl})
 	te.Register(&PatchFileTool{baseDir: workDir, fileLock: fl})
@@ -93,14 +104,93 @@ func (te *ToolExecutor) Register(tool Tool) {
 	te.invalidateToolCache()
 }
 
+// --- Built-in Hooks ---
+
+// DangerousCommandHook blocks shell commands that could cause data loss.
+func DangerousCommandHook() HookFunc {
+	dangerous := []string{
+		"rm -rf /", "rm -rf ~", "rm -rf .",
+		"format ", "mkfs.", "dd if=",
+		":(){:|:&};:", "fork bomb",
+		"> /dev/sda", "chmod -R 777 /",
+		"git push --force", "git reset --hard",
+		"DROP TABLE", "DROP DATABASE", "TRUNCATE",
+	}
+	return func(ctx context.Context, toolName string, params map[string]interface{}, result *ToolResult) (bool, string) {
+		if toolName != "shell_exec" {
+			return true, ""
+		}
+		cmd, _ := params["command"].(string)
+		cmdLower := strings.ToLower(cmd)
+		for _, d := range dangerous {
+			if strings.Contains(cmdLower, strings.ToLower(d)) {
+				return false, fmt.Sprintf("dangerous command blocked: contains '%s'", d)
+			}
+		}
+		return true, ""
+	}
+}
+
+// FilePathHook blocks writes outside the project directory.
+func FilePathHook(projectDir string) HookFunc {
+	return func(ctx context.Context, toolName string, params map[string]interface{}, result *ToolResult) (bool, string) {
+		if toolName != "write_file" && toolName != "patch_file" {
+			return true, ""
+		}
+		path, _ := params["path"].(string)
+		if strings.Contains(path, "..") {
+			return false, "path traversal blocked: contains '..'"
+		}
+		return true, ""
+	}
+}
+
+// LoggingPostHook logs tool executions for audit.
+func LoggingPostHook(logFn func(toolName, summary string)) HookFunc {
+	return func(ctx context.Context, toolName string, params map[string]interface{}, result *ToolResult) (bool, string) {
+		if result == nil {
+			return true, ""
+		}
+		summary := fmt.Sprintf("tool=%s files_changed=%d error=%v", toolName, len(result.FilesChanged), result.Error != "")
+		logFn(toolName, summary)
+		return true, ""
+	}
+}
+
+// AddPreHook registers a hook that runs before every tool execution.
+// If the hook returns allow=false, the tool call is blocked.
+func (te *ToolExecutor) AddPreHook(hook HookFunc) {
+	te.preHooks = append(te.preHooks, hook)
+}
+
+// AddPostHook registers a hook that runs after every tool execution.
+func (te *ToolExecutor) AddPostHook(hook HookFunc) {
+	te.postHooks = append(te.postHooks, hook)
+}
+
 // Execute runs a tool by name with the given parameters.
+// Pre-hooks run before execution (can block), post-hooks run after.
 // If autoCommit is enabled and the tool changes files, a shadow git commit is created.
 func (te *ToolExecutor) Execute(ctx context.Context, name string, params map[string]interface{}) (ToolResult, error) {
 	tool, ok := te.tools[name]
 	if !ok {
 		return ToolResult{Error: "unknown tool: " + name}, fmt.Errorf("unknown tool: %s", name)
 	}
+
+	// Run pre-hooks
+	for _, hook := range te.preHooks {
+		allow, msg := hook(ctx, name, params, nil)
+		if !allow {
+			return ToolResult{Error: fmt.Sprintf("blocked by pre-hook: %s", msg)}, nil
+		}
+	}
+
 	result, err := tool.Execute(ctx, params)
+
+	// Run post-hooks
+	for _, hook := range te.postHooks {
+		hook(ctx, name, params, &result)
+	}
 
 	// Auto-commit changed files for safety
 	if te.autoCommit && len(result.FilesChanged) > 0 && result.Error == "" {
