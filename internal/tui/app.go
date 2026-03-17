@@ -317,9 +317,11 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "ctrl+d":
 			if a.overlayKind == OverlayNone {
 				cwd, _ := os.Getwd()
-				cmd := exec.Command("git", "diff")
+				diffCtx, diffCancel := context.WithTimeout(context.Background(), 10*time.Second)
+				cmd := exec.CommandContext(diffCtx, "git", "diff")
 				cmd.Dir = cwd
 				out, _ := cmd.CombinedOutput()
+				diffCancel()
 				if len(out) > 0 {
 					return a, func() tea.Msg {
 						return DiffViewMsg{FileName: "Working Directory", Diff: string(out)}
@@ -860,9 +862,11 @@ func (a *App) handleOverlayResult(result OverlayResult) {
 
 	case "view_diff":
 		cwd, _ := os.Getwd()
-		cmd := exec.Command("git", "diff")
+		diffCtx, diffCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		cmd := exec.CommandContext(diffCtx, "git", "diff")
 		cmd.Dir = cwd
 		out, _ := cmd.CombinedOutput()
+		diffCancel()
 		if len(out) > 0 {
 			overlay := NewDiffOverlay("Working Directory", string(out), a.width, a.height)
 			a.overlay = overlay

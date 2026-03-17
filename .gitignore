@@ -26,13 +26,22 @@ go.work.sum
 Thumbs.db
 nul
 
+# Dependencies
+node_modules/
+package-lock.json
+
 # Artemis data
 .artemis/
 
 # Project knowledge base
 # AGENTS.md
 
-# Temporary reference repos
+# Backup files from Artemis tools
+*.artemis-backup
+*.bak
+
+# Temporary/test directories
 temp_omo/
 ad-source
 dogfood/
+AD_Test/
