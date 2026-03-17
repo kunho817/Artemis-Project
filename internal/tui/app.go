@@ -140,12 +140,12 @@ type App struct {
 // NewApp creates a new application model.
 func NewApp() App {
 	ta := textarea.New()
-	ta.Placeholder = "Type a message... (Ctrl+Enter to send)"
+	ta.Placeholder = "Type a message... (Enter to send, Shift+Enter for newline)"
 	ta.Focus()
 	ta.CharLimit = 4096
 	ta.SetHeight(1)
 	ta.ShowLineNumbers = false
-	ta.KeyMap.InsertNewline.SetKeys("enter")
+	ta.KeyMap.InsertNewline.SetKeys("shift+enter") // Shift+Enter = newline
 	ta.Prompt = "│ "
 	ta.FocusedStyle.CursorLine = lipgloss.NewStyle()
 	ta.FocusedStyle.Prompt = lipgloss.NewStyle().Foreground(ColorAccent)
@@ -351,8 +351,18 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			a.cycleFocus()
 			return a, nil
+		case "enter":
+			// Enter = send message (Shift+Enter for newline is handled by textarea)
+			if strings.TrimSpace(a.input.Value()) != "" {
+				return a.handleSubmit()
+			}
+			return a, nil // Empty input: do nothing
 		case "ctrl+enter":
-			return a.handleSubmit()
+			// Legacy keybinding — also sends
+			if strings.TrimSpace(a.input.Value()) != "" {
+				return a.handleSubmit()
+			}
+			return a, nil
 		case "up", "down", "pgup", "pgdown":
 			// Forward scroll keys to chat viewport
 			scrollCmd := a.chat.Update(msg)

@@ -29,7 +29,7 @@ type KeyHint struct {
 // DefaultKeyHints returns the default keybindings.
 func DefaultKeyHints() []KeyHint {
 	return []KeyHint{
-		{Key: "^↵", Desc: "Send"},
+		{Key: "↵", Desc: "Send"},
 		{Key: "^S", Desc: "Settings"},
 		{Key: "^L", Desc: "Clear"},
 		{Key: "/help", Desc: "Cmds"},
