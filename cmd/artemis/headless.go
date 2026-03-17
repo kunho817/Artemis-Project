@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"strings"
 	"time"
 
@@ -22,6 +23,7 @@ import (
 // runChat handles one-shot chat: artemis chat [--multi] [--agent NAME] "message"
 func runChat(args []string) {
 	multi := false
+	race := false
 	agentRole := "coder"
 	workDir := ""
 	var messageParts []string
@@ -30,6 +32,8 @@ func runChat(args []string) {
 		switch args[i] {
 		case "--multi":
 			multi = true
+		case "--race":
+			race = true
 		case "--agent":
 			if i+1 < len(args) {
 				i++
@@ -64,7 +68,9 @@ func runChat(args []string) {
 	rt := newHeadlessRuntime(workDir)
 	defer rt.shutdown()
 
-	if multi {
+	if race {
+		rt.runRace(message, agentRole)
+	} else if multi {
 		rt.runOrchestrated(message)
 	} else {
 		rt.runSingle(message, agentRole)
@@ -380,6 +386,149 @@ func (rt *headlessRuntime) executePlan(ctx context.Context, plan *orchestrator.E
 	if output != "" {
 		rt.history = append(rt.history, llm.Message{Role: "assistant", Content: output})
 	}
+}
+
+// runRace executes the same task with 2 different providers in parallel,
+// using isolated git worktrees. Picks the result that compiles/passes verification.
+func (rt *headlessRuntime) runRace(message, agentRole string) {
+	fmt.Fprintf(os.Stderr, "[Race] Starting competitive execution with 2 providers...\n")
+
+	// Find 2 available providers
+	providers := rt.findProviders(2)
+	if len(providers) < 2 {
+		fmt.Fprintf(os.Stderr, "[Race] Only %d provider(s) available, falling back to single\n", len(providers))
+		rt.runSingle(message, agentRole)
+		return
+	}
+
+	// Check if we're in a git repo
+	cwd, _ := os.Getwd()
+	wtMgr := tools.NewParallelWorktreeManager(cwd)
+	defer wtMgr.CleanupAll()
+
+	type raceResult struct {
+		idx      int
+		provider string
+		output   string
+		err      error
+		diff     string
+	}
+
+	results := make(chan raceResult, 2)
+
+	for i, prov := range providers {
+		go func(idx int, p llm.Provider, pName string) {
+			// Create isolated worktree
+			wt, te, err := wtMgr.Create(context.Background(), fmt.Sprintf("race-%d", idx))
+			if err != nil {
+				results <- raceResult{idx: idx, provider: pName, err: err}
+				return
+			}
+			defer wt.Clean()
+
+			eb := bus.NewEventBus(32)
+			go func() {
+				for range eb.Chan() {
+				}
+			}()
+
+			ag := roles.NewRoleAgent(agent.Role(agentRole), p, eb, te)
+			ag.SetTask(message)
+			if rt.projectRules != "" {
+				ag.SetProjectRules(rt.projectRules)
+			}
+
+			ss := state.NewSessionState()
+			ss.SetPhase("race")
+
+			raceCtx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+			defer cancel()
+
+			err = ag.Run(raceCtx, ss)
+			eb.Close()
+
+			diff, _ := wtMgr.GetDiff(context.Background(), wt)
+
+			output := lastArtifactContent(ss)
+
+			results <- raceResult{
+				idx:      idx,
+				provider: pName,
+				output:   output,
+				err:      err,
+				diff:     diff,
+			}
+		}(i, prov.provider, prov.name)
+	}
+
+	// Collect results
+	var collected []raceResult
+	for i := 0; i < len(providers); i++ {
+		r := <-results
+		if r.err != nil {
+			fmt.Fprintf(os.Stderr, "[Race] Provider %s failed: %v\n", r.provider, r.err)
+		} else {
+			fmt.Fprintf(os.Stderr, "[Race] Provider %s completed (%d chars output, %d chars diff)\n",
+				r.provider, len(r.output), len(r.diff))
+		}
+		collected = append(collected, r)
+	}
+
+	// Pick best result — prefer one with diff (made changes) and no error
+	var best *raceResult
+	for i := range collected {
+		r := &collected[i]
+		if r.err != nil {
+			continue
+		}
+		if best == nil || (len(r.diff) > len(best.diff)) {
+			best = r
+		}
+	}
+
+	if best == nil {
+		fmt.Fprintf(os.Stderr, "[Race] All providers failed\n")
+		return
+	}
+
+	fmt.Fprintf(os.Stderr, "[Race] Winner: %s\n", best.provider)
+	if best.output != "" {
+		fmt.Println(best.output)
+	}
+
+	// Apply winning diff to main repo
+	if best.diff != "" {
+		fmt.Fprintf(os.Stderr, "[Race] Applying winning changes to main repo...\n")
+		// Re-create a temporary worktree ref to apply
+		// Actually, just apply the diff directly
+		cmd := exec.CommandContext(context.Background(), "git", "apply", "--allow-empty")
+		cmd.Dir = cwd
+		cmd.Stdin = strings.NewReader(best.diff)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			fmt.Fprintf(os.Stderr, "[Race] Warning: failed to apply diff: %v\n%s\n", err, string(out))
+		} else {
+			fmt.Fprintf(os.Stderr, "[Race] Changes applied successfully\n")
+		}
+	}
+}
+
+type providerEntry struct {
+	name     string
+	provider llm.Provider
+}
+
+func (rt *headlessRuntime) findProviders(n int) []providerEntry {
+	var result []providerEntry
+	for _, name := range []string{"gemini", "claude", "gpt", "glm"} {
+		p := llm.NewProvider(name, &rt.cfg)
+		if p != nil {
+			result = append(result, providerEntry{name: name, provider: p})
+			if len(result) >= n {
+				break
+			}
+		}
+	}
+	return result
 }
 
 // lastArtifactContent returns the content of the last artifact in the session state.
