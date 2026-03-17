@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"sync"
 )
@@ -248,8 +249,9 @@ func (te *ToolExecutor) toolList() []Tool {
 			result = append(result, tool)
 		}
 	}
-	// Add any tools not in the predefined order
-	for name, tool := range te.tools {
+	// Add any tools not in the predefined order (e.g., MCP tools) — sorted for consistency
+	var extra []string
+	for name := range te.tools {
 		found := false
 		for _, n := range order {
 			if n == name {
@@ -258,8 +260,12 @@ func (te *ToolExecutor) toolList() []Tool {
 			}
 		}
 		if !found {
-			result = append(result, tool)
+			extra = append(extra, name)
 		}
+	}
+	sort.Strings(extra)
+	for _, name := range extra {
+		result = append(result, te.tools[name])
 	}
 	return result
 }

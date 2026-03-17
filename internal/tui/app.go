@@ -151,15 +151,21 @@ func NewApp() App {
 	ta.FocusedStyle.Prompt = lipgloss.NewStyle().Foreground(ColorAccent)
 	ta.BlurredStyle.Prompt = lipgloss.NewStyle().Foreground(ColorDimText)
 
-	// Load config
-	cfg, _ := config.Load()
+	// Load config (fallback to defaults on error)
+	cfg, err := config.Load()
+	if err != nil {
+		cfg = config.DefaultConfig()
+	}
 
 	// Load theme
 	theme.Load(cfg.Theme)
 	RefreshStyles()
 
 	// Initialize tool executor
-	cwd, _ := os.Getwd()
+	cwd, err := os.Getwd()
+	if err != nil {
+		cwd = "."
+	}
 	te := tools.NewToolExecutor(cwd)
 	te.SetAutoCommit(true)
 

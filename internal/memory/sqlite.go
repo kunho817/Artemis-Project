@@ -821,7 +821,7 @@ func (s *SQLiteStore) GetSession(ctx context.Context, sessionID string) (*Sessio
 	if err != nil {
 		return nil, fmt.Errorf("memory: get session: %w", err)
 	}
-	json.Unmarshal([]byte(filesJSON), &ss.FilesTouched)
+	_ = json.Unmarshal([]byte(filesJSON), &ss.FilesTouched) // best-effort: partial data acceptable
 	return &ss, nil
 }
 
@@ -1374,7 +1374,7 @@ func scanSessions(rows *sql.Rows) ([]SessionSummary, error) {
 			&ss.FactsLearned, &ss.Outcome, &ss.MessageCount, &ss.CreatedAt); err != nil {
 			return nil, err
 		}
-		json.Unmarshal([]byte(filesJSON), &ss.FilesTouched)
+		_ = json.Unmarshal([]byte(filesJSON), &ss.FilesTouched) // best-effort
 		sessions = append(sessions, ss)
 	}
 	return sessions, rows.Err()

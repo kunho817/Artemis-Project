@@ -27,10 +27,12 @@ const (
 	sysSubGitHub     = 4
 	sysSubAppearance = 5
 	sysSubLSP        = 6
-	sysSubCount      = 7
+	sysSubSkills     = 7
+	sysSubMCP        = 8
+	sysSubCount      = 9
 )
 
-var sysSubLabels = []string{"Memory", "Tools", "Vector", "RepoMap", "GitHub", "Appearance", "LSP"}
+var sysSubLabels = []string{"Memory", "Tools", "Vector", "RepoMap", "GitHub", "Appearance", "LSP", "Skills", "MCP"}
 
 // ConfigView is the settings screen for API and agent configuration.
 type ConfigView struct {
@@ -78,6 +80,10 @@ func (cv *ConfigView) fieldCountForTab() int {
 			return 1
 		case sysSubLSP:
 			return 2
+		case sysSubSkills:
+			return 2
+		case sysSubMCP:
+			return 1
 		default:
 			return 4
 		}
@@ -144,6 +150,10 @@ func (cv *ConfigView) systemFieldToInputIdx(fieldIdx int) int {
 			return -1
 		}
 	case sysSubLSP:
+		return -1
+	case sysSubSkills:
+		return -1
+	case sysSubMCP:
 		return -1
 	default:
 		return -1
@@ -370,6 +380,20 @@ func (cv *ConfigView) toggleSystemField() {
 		case 1:
 			cv.cfg.LSP.AutoDetect = !cv.cfg.LSP.AutoDetect
 		}
+
+	case sysSubSkills:
+		switch cv.fieldIdx {
+		case 0:
+			cv.cfg.Skills.Enabled = !cv.cfg.Skills.Enabled
+		case 1:
+			cv.cfg.Skills.AutoLoad = !cv.cfg.Skills.AutoLoad
+		}
+
+	case sysSubMCP:
+		switch cv.fieldIdx {
+		case 0:
+			cv.cfg.MCP.Enabled = !cv.cfg.MCP.Enabled
+		}
 	}
 }
 
@@ -393,6 +417,10 @@ func (cv *ConfigView) isSystemToggleField() bool {
 		return cv.fieldIdx == 0
 	case sysSubLSP:
 		return cv.fieldIdx == 0 || cv.fieldIdx == 1
+	case sysSubSkills:
+		return true
+	case sysSubMCP:
+		return cv.fieldIdx == 0
 	default:
 		return false
 	}
@@ -411,6 +439,10 @@ func (cv *ConfigView) canSwitchSubTab() bool {
 	// Sub-tabs with no toggles: always allow sub-tab switch
 	switch cv.sysSubTab {
 	case sysSubTools:
+		return true
+	case sysSubSkills:
+		return true
+	case sysSubMCP:
 		return true
 	}
 	return false
@@ -876,6 +908,12 @@ func (cv *ConfigView) buildSystemInputs() {
 	case sysSubLSP:
 		cv.inputs = make([]textinput.Model, 0)
 
+	case sysSubSkills:
+		cv.inputs = make([]textinput.Model, 0)
+
+	case sysSubMCP:
+		cv.inputs = make([]textinput.Model, 0)
+
 	default:
 		cv.inputs = nil
 	}
@@ -943,6 +981,12 @@ func (cv *ConfigView) applySystemInputs() {
 
 	case sysSubLSP:
 		// No text inputs to apply — LSP only has toggles
+
+	case sysSubSkills:
+		// No text inputs
+
+	case sysSubMCP:
+		// No text inputs
 	}
 }
 
@@ -1024,6 +1068,43 @@ func (cv *ConfigView) renderSystemContent(sb *strings.Builder) {
 					lipgloss.NewStyle().Foreground(ColorMuted).Render(status),
 				))
 			}
+		}
+
+	case sysSubSkills:
+		cv.renderToggleField(sb, 0, "Skills", cv.cfg.Skills.Enabled, "Enabled", "Disabled")
+		cv.renderToggleField(sb, 1, "Auto-Load Project", cv.cfg.Skills.AutoLoad, "Enabled", "Disabled")
+		// Show global skills directory
+		globalDir := cv.cfg.GlobalSkillsDir()
+		sb.WriteString(fmt.Sprintf("\n  %s %s\n",
+			lipgloss.NewStyle().Width(22).Align(lipgloss.Right).Padding(0, 1).
+				Foreground(ColorDimText).Render("Global Dir:"),
+			lipgloss.NewStyle().Foreground(ColorMuted).Render(globalDir),
+		))
+		sb.WriteString(fmt.Sprintf("  %s %s\n",
+			lipgloss.NewStyle().Width(22).Align(lipgloss.Right).Padding(0, 1).
+				Foreground(ColorDimText).Render("Project Dir:"),
+			lipgloss.NewStyle().Foreground(ColorMuted).Render(".artemis/skills/"),
+		))
+
+	case sysSubMCP:
+		cv.renderToggleField(sb, 0, "MCP", cv.cfg.MCP.Enabled, "Enabled", "Disabled")
+		if cv.cfg.MCP.Enabled && len(cv.cfg.MCP.Servers) > 0 {
+			sb.WriteString("\n")
+			for _, srv := range cv.cfg.MCP.Servers {
+				status := "disabled"
+				if srv.Enabled {
+					status = srv.Command
+				}
+				sb.WriteString(fmt.Sprintf("  %s %s\n",
+					lipgloss.NewStyle().Width(22).Align(lipgloss.Right).Padding(0, 1).
+						Foreground(ColorDimText).Render(srv.ID+":"),
+					lipgloss.NewStyle().Foreground(ColorMuted).Render(status),
+				))
+			}
+		} else if cv.cfg.MCP.Enabled {
+			sb.WriteString(fmt.Sprintf("\n  %s\n",
+				lipgloss.NewStyle().Foreground(ColorMuted).Render("No MCP servers configured. Edit config.json to add servers."),
+			))
 		}
 	}
 }
