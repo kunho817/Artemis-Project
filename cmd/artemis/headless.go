@@ -137,6 +137,7 @@ type headlessRuntime struct {
 	lspMgr       *lsp.Manager
 	history      []llm.Message
 	multi        bool
+	projectRules string
 }
 
 func newHeadlessRuntime(workDir string) *headlessRuntime {
@@ -187,12 +188,16 @@ func newHeadlessRuntime(workDir string) *headlessRuntime {
 		te.SetLSPManager(lspMgr)
 	}
 
+	// Load project rules
+	projectRules := agent.LoadProjectRules(workDir)
+
 	return &headlessRuntime{
 		cfg:          cfg,
 		provider:     provider,
 		providerName: providerName,
 		toolExec:     te,
 		lspMgr:       lspMgr,
+		projectRules: projectRules,
 	}
 }
 
@@ -222,6 +227,9 @@ func (rt *headlessRuntime) runSingle(message, agentRole string) {
 
 	ag := roles.NewRoleAgent(agent.Role(agentRole), rt.provider, eb, rt.toolExec)
 	ag.SetTask(message)
+	if rt.projectRules != "" {
+		ag.SetProjectRules(rt.projectRules)
+	}
 
 	ss := state.NewSessionState()
 	ss.SetPhase("headless")
@@ -346,6 +354,9 @@ func (rt *headlessRuntime) executePlan(ctx context.Context, plan *orchestrator.E
 		ag := roles.NewRoleAgent(agent.Role(task.Agent), rt.provider, eb, rt.toolExec)
 		ag.SetTask(task.Task)
 		ag.SetCritical(task.Critical)
+		if rt.projectRules != "" {
+			ag.SetProjectRules(rt.projectRules)
+		}
 		return ag
 	}
 

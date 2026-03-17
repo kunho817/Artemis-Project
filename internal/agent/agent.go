@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/artemis-project/artemis/internal/bus"
@@ -87,6 +88,9 @@ type Agent interface {
 
 	// IsAutonomous returns whether the agent is in autonomous mode.
 	IsAutonomous() bool
+
+	// SetProjectRules sets project-specific rules (from ARTEMIS.md).
+	SetProjectRules(rules string)
 }
 
 // BaseAgent provides shared logic for all agents.
@@ -108,6 +112,7 @@ type BaseAgent struct {
 	autonomous    bool                 // Phase E-2: run in verify-gated autonomous loop
 	verifyFunc    VerifyFunc           // Phase E-2: verification function for autonomous loop
 	maxAutoIter   int                  // Phase E-2: max autonomous iterations (0 = default)
+	projectRules  string               // Project rules from ARTEMIS.md / .artemis/RULES.md
 }
 
 // NewBaseAgent creates a new base agent.
@@ -143,6 +148,10 @@ func (b *BaseAgent) SetRepoMap(rm *memory.RepoMapStore) { b.repoMap = rm }
 
 // SetCategory assigns a task category that overrides the role's default provider/model.
 func (b *BaseAgent) SetCategory(cat TaskCategory) { b.category = cat }
+
+// SetProjectRules sets project-specific rules to inject into agent prompts.
+// Loaded from ARTEMIS.md or .artemis/RULES.md at the project root.
+func (b *BaseAgent) SetProjectRules(rules string) { b.projectRules = rules }
 
 // SetAutonomous enables verify-gated autonomous loop for this agent.
 func (b *BaseAgent) SetAutonomous(verify VerifyFunc, maxIter int) {
@@ -340,6 +349,30 @@ func (b *BaseAgent) CallLLMWithTools(ctx context.Context, userPrompt string, pha
 	return "", fmt.Errorf("agent %s: tool loop did not terminate", b.name)
 }
 
+// LoadProjectRules reads project rules from well-known file locations.
+// Search order: ARTEMIS.md, .artemis/RULES.md, .artemis/rules.md
+// Returns empty string if no rules file found.
+func LoadProjectRules(projectDir string) string {
+	candidates := []string{
+		projectDir + "/ARTEMIS.md",
+		projectDir + "/AGENTS.md",
+		projectDir + "/.artemis/RULES.md",
+		projectDir + "/.artemis/rules.md",
+	}
+	for _, path := range candidates {
+		data, err := os.ReadFile(path)
+		if err == nil && len(data) > 0 {
+			content := string(data)
+			// Truncate if too large (max 16KB)
+			if len(content) > 16384 {
+				content = content[:16384] + "\n...(truncated)"
+			}
+			return content
+		}
+	}
+	return ""
+}
+
 // toolUsageGuidelines are appended to every agent's system prompt when tools are available.
 const toolUsageGuidelines = `
 
@@ -486,6 +519,11 @@ func (b *BaseAgent) BuildPromptWithContext(ss *state.SessionState, task string) 
 
 	// P0: Task — always included, never truncated
 	budget.Reserve("task", "## Your task\n"+task)
+
+	// P1: Project rules (ARTEMIS.md) — high priority, shapes all behavior
+	if b.projectRules != "" {
+		budget.Allocate(llm.P1, "project-rules", "## Project Rules\n"+b.projectRules, 8_000)
+	}
 
 	// P2: Recent conversation history
 	if b.historyWindow != nil {

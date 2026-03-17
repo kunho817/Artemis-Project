@@ -101,6 +101,7 @@ type App struct {
 	vectorStore         memory.VectorSearcher // Phase 2: vector search
 	consolidator        *memory.Consolidator
 	repoMapStore        *memory.RepoMapStore // Phase 3: repo-map
+	projectRules        string               // ARTEMIS.md project rules
 	lspManager          *lsp.Manager         // Phase D: LSP Control Plane
 	mcpManager          *mcp.Manager
 	ghSyncer            *ghub.Syncer

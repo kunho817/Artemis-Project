@@ -6,6 +6,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/artemis-project/artemis/internal/agent"
 	"github.com/artemis-project/artemis/internal/lsp"
 	"github.com/artemis-project/artemis/internal/mcp"
 	"github.com/artemis-project/artemis/internal/memory"
@@ -86,6 +87,16 @@ func (a *App) initMemory() {
 				Content: fmt.Sprintf("Repo-map enabled (ctags: %s)", ctagsPath),
 			})
 		}
+	}
+
+	// Load project rules (ARTEMIS.md / .artemis/RULES.md)
+	cwd, _ := os.Getwd()
+	a.projectRules = agent.LoadProjectRules(cwd)
+	if a.projectRules != "" {
+		a.chat.AddMessage(ChatMessage{
+			Role:    RoleSystem,
+			Content: "Project rules loaded (ARTEMIS.md)",
+		})
 	}
 
 	// Phase E-1: Custom skills
