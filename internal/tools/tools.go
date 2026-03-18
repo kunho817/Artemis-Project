@@ -64,10 +64,11 @@ type ToolExecutor struct {
 	lspManager      *lsp.Manager
 	mcpManager      *mcp.Manager
 	astGrepPath     string
-	mu              sync.Mutex // protects toolDescCache
-	toolDescCache   string     // cached ToolDescriptions result
-	preHooks        []HookFunc // executed before tool call
-	postHooks       []HookFunc // executed after tool call
+	mu              sync.Mutex   // protects toolDescCache
+	toolDescCache   string       // cached ToolDescriptions result
+	preHooks        []HookFunc   // executed before tool call
+	postHooks       []HookFunc   // executed after tool call
+	flowTracker     *FlowTracker // tracks file access patterns
 }
 
 // NewToolExecutor creates a new tool executor with all built-in tools registered.
@@ -78,9 +79,13 @@ func NewToolExecutor(workDir string) *ToolExecutor {
 		workDir:  workDir,
 		fileLock: fl,
 	}
-	// Register default safety hooks
+	// Flow tracking
+	te.flowTracker = NewFlowTracker()
+
+	// Register default hooks
 	te.AddPreHook(DangerousCommandHook())
 	te.AddPreHook(FilePathHook(workDir))
+	te.AddPostHook(FlowAwareHook(te.flowTracker))
 
 	te.Register(&ReadFileTool{baseDir: workDir})
 	te.Register(&WriteFileTool{baseDir: workDir, fileLock: fl})
@@ -155,6 +160,11 @@ func LoggingPostHook(logFn func(toolName, summary string)) HookFunc {
 		logFn(toolName, summary)
 		return true, ""
 	}
+}
+
+// FlowTracker returns the tool executor's flow tracker.
+func (te *ToolExecutor) FlowTracker() *FlowTracker {
+	return te.flowTracker
 }
 
 // AddPreHook registers a hook that runs before every tool execution.

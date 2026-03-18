@@ -531,6 +531,16 @@ func (b *BaseAgent) BuildPromptWithContext(ss *state.SessionState, task string) 
 		budget.Allocate(llm.P1, "project-rules", "## Project Rules\n"+b.projectRules, 8_000)
 	}
 
+	// P1: Flow context (recently edited files)
+	if b.toolExec != nil {
+		if ft := b.toolExec.FlowTracker(); ft != nil {
+			flowCtx := ft.FormatFlowContext()
+			if flowCtx != "" {
+				budget.Allocate(llm.P1, "flow-context", "## Recent Activity\n"+flowCtx, 2_000)
+			}
+		}
+	}
+
 	// P2: Recent conversation history
 	if b.historyWindow != nil {
 		recent := b.historyWindow.RecentFormatted()
