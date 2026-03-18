@@ -235,6 +235,7 @@ func (rt *headlessRuntime) runSingle(message, agentRole string) {
 	ag.SetTask(message)
 	if rt.projectRules != "" {
 		ag.SetProjectRules(rt.projectRules)
+		// TODO: CodeIndex requires VectorStore — init when Voyage API key available
 	}
 
 	ss := state.NewSessionState()
@@ -362,6 +363,7 @@ func (rt *headlessRuntime) executePlan(ctx context.Context, plan *orchestrator.E
 		ag.SetCritical(task.Critical)
 		if rt.projectRules != "" {
 			ag.SetProjectRules(rt.projectRules)
+			// TODO: CodeIndex requires VectorStore — init when Voyage API key available
 		}
 		return ag
 	}

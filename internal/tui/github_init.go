@@ -134,6 +134,12 @@ The codebase is available via your tools (read_file, grep, list_dir, etc.).`, re
 				ag.SetMaxToolIter(a.cfg.MaxToolIter)
 				ag.SetTask(task.Task)
 				ag.SetCritical(task.Critical)
+				if a.projectRules != "" {
+					ag.SetProjectRules(a.projectRules)
+				}
+				if a.codeIndex != nil {
+					ag.SetCodeIndex(a.codeIndex)
+				}
 				return ag
 			}
 

@@ -29,7 +29,7 @@ type streamStartMsg struct {
 }
 
 // handleSingleSubmit sends a message directly to the active LLM provider.
-func (a App) handleSingleSubmit(text string) (tea.Model, tea.Cmd) {
+func (a App) handleSingleSubmit(_ string) (tea.Model, tea.Cmd) {
 	// Check if provider is available
 	if a.provider == nil {
 		a.chat.AddMessage(ChatMessage{
@@ -65,6 +65,28 @@ func (a App) handleSingleSubmit(text string) (tea.Model, tea.Cmd) {
 	provider := a.provider
 	history := make([]llm.Message, len(a.history))
 	copy(history, a.history)
+	systemPrompt := ""
+	if len(history) > 0 && history[0].Role == "system" {
+		systemPrompt = history[0].Content
+	}
+	if a.projectRules != "" {
+		systemPrompt += "\n\n## Project Rules\n" + a.projectRules
+	}
+	if a.toolExecutor != nil {
+		if ft := a.toolExecutor.FlowTracker(); ft != nil {
+			flowCtx := ft.FormatFlowContext()
+			if flowCtx != "" {
+				systemPrompt += "\n\n## Recent Activity\n" + flowCtx
+			}
+		}
+	}
+	if systemPrompt != "" {
+		if len(history) > 0 && history[0].Role == "system" {
+			history[0].Content = systemPrompt
+		} else {
+			history = append([]llm.Message{{Role: "system", Content: systemPrompt}}, history...)
+		}
+	}
 	a.chat.AddMessage(ChatMessage{Role: RoleAssistant, Content: ""})
 	cmd := func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)

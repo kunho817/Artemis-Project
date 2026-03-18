@@ -289,7 +289,7 @@ func (a App) executePlan(plan *orchestrator.ExecutionPlan, userText string) (tea
 // executeTrivial handles trivial intent — direct LLM streaming without Engine or tools.
 // Stays in single layout for a lightweight, fast response path.
 // Optional category/skills from OrchestratorResponse are used for provider/prompt selection.
-func (a App) executeTrivial(agentRole, task, category string, skills []string) (tea.Model, tea.Cmd) {
+func (a App) executeTrivial(agentRole, _ string, category string, skills []string) (tea.Model, tea.Cmd) {
 	// Use category-based provider if specified, otherwise role-based
 	provider := a.buildProviderForTask(agentRole, category)
 	if provider == nil {
@@ -319,6 +319,11 @@ func (a App) executeTrivial(agentRole, task, category string, skills []string) (
 		if content := agent.FormatSkillsContent(resolved); content != "" {
 			systemPrompt += "\n\n## Skills\n" + content
 		}
+	}
+
+	// Add project rules to the trivial agent's prompt
+	if a.projectRules != "" {
+		systemPrompt += "\n\n## Project Rules\n" + a.projectRules
 	}
 
 	messages := make([]llm.Message, 0, len(a.history)+1)
@@ -438,6 +443,12 @@ func (a *App) buildAgentsForPhase(eb *bus.EventBus, agentRoles ...agent.Role) []
 			ag.SetRepoMap(a.repoMapStore)
 		}
 		ag.SetMaxToolIter(a.cfg.MaxToolIter)
+		if a.projectRules != "" {
+			ag.SetProjectRules(a.projectRules)
+		}
+		if a.codeIndex != nil {
+			ag.SetCodeIndex(a.codeIndex)
+		}
 		if a.historyWindow != nil {
 			ag.SetHistoryWindow(a.historyWindow)
 		}
