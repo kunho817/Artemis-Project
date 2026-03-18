@@ -430,6 +430,21 @@ D:\Artemis_Project\
 | 2026-03-15 | MCP Manager (Phase E-3) | 다중 서버 관리, Connect()로 일괄 연결, DiscoveredTools()로 도구 자동 발견, 개별 서버 실패 non-fatal |
 | 2026-03-15 | MCPTool 래퍼 (Phase E-3) | MCP 도구를 tools.Tool 인터페이스로 래핑, mcp_{serverid}_{toolname} 네이밍, JSON Schema → 파라미터 설명 변환 |
 | 2026-03-15 | MCPConfig (config.json) | enabled/servers(id+command+args+env+enabled), DefaultMCPConfig(enabled=false opt-in) |
+| 2026-03-17 | CLI/Headless 모드 | artemis chat (one-shot), --headless (interactive stdin/stdout), --multi (orchestrated), --race (경쟁 실행) |
+| 2026-03-17 | Enter=Send, Shift+Enter=줄바꿈 | Windows 터미널에서 Ctrl+Enter 미작동 → Enter 전송으로 교체 |
+| 2026-03-17 | HTTP Client 타임아웃 | 5개 프로바이더 전체 newHTTPClient() (180s timeout, Transport keep-alive) |
+| 2026-03-17 | Orchestrator 타임아웃 증가 | 90초 → 5분 (복잡한 코드 생성 지원) |
+| 2026-03-17 | maxToolIter 기본값 | 0(무제한) → 20 (runaway loop 방지) |
+| 2026-03-17 | toolUsageGuidelines | 에이전트 시스템 프롬프트에 도구 사용 규칙 자동 주입 |
+| 2026-03-17 | Engine per-step 타임아웃 | DefaultStepTimeout=3min, SetStepTimeout(), 각 step별 독립 타임아웃 |
+| 2026-03-17 | TASK SIZING RULES | Orchestrator 프롬프트에 1태스크=1파일 원칙 추가 |
+| 2026-03-17 | Force-kill LSP/MCP 프로세스 | Shutdown()에서 Process.Kill() 추가 — 고아 프로세스 방지 |
+| 2026-03-17 | exec.CommandContext 전면 적용 | app.go git diff 호출에 10s 타임아웃 추가 |
+| 2026-03-17 | 성능 최적화 | ToolDescriptions 캐시, SQLite 64MB cache+mmap+busy_timeout, async fact usage |
+| 2026-03-18 | ARTEMIS.md 자동 로딩 | ARTEMIS.md/AGENTS.md/.artemis/RULES.md 검색 → P1 우선순위 프롬프트 주입 |
+| 2026-03-18 | Hooks 시스템 | HookFunc Pre/Post 도구 실행, DangerousCommandHook, FilePathHook, LoggingPostHook |
+| 2026-03-18 | 범용 ParallelWorktreeManager | tools/worktree.go — Create/GetDiff/MergeBack/CleanupAll, CLI --race 모드 |
+| 2026-03-18 | 시맨틱 Context Engine | CodeIndex(코드 청크 분할+임베딩), VectorStore codeChunks 컬렉션, BuildPromptWithContext P3 자동 주입 |
 
 ---
 
@@ -674,6 +689,7 @@ D:\Artemis_Project\
 | #32 | 2026-03-17 | Artemis 시작 가이드(docs/getting-started.md) 작성 (Korean), AGENTS.md 디렉토리 구조 갱신 |
 | #33 | 2026-03-17 | Artemis 아키텍처 개요(docs/architecture.md) 작성 (Korean), AGENTS.md 갱신 |
 | #34 | 2026-03-17 | Artemis 설정 가이드(docs/configuration.md) 작성 (Korean), AGENTS.md 갱신 |
+| #35 | 2026-03-17~18 | **대규모 세션**: Phase F UI 고도화(진행률 바+토큰 추적+테스트 결과+Diff Overlay) + Dogfooding(AD 구현 성공, 8버그 발견·수정) + CLI/Headless 모드(chat/--headless/--multi/--race) + Enter=Send 수정 + HTTP Client 타임아웃(180s 전체 프로바이더) + 안정화(Config View 9서브탭, maxToolIter=20, toolUsageGuidelines, per-step 타임아웃, Force-kill 프로세스, exec.CommandContext 전면 적용) + 문서화(README.md+3개 가이드) + 성능 최적화(ToolDescriptions 캐시, SQLite pragma, async fact) + 경쟁분석(15개 시스템) + **시그니처 기능 4개 구현**: ARTEMIS.md 자동 로딩, Hooks 시스템(Pre/Post+안전 훅 3종), 범용 ParallelWorktreeManager+CLI --race, 시맨틱 Context Engine(CodeIndex 코드 청크+임베딩+P3 자동 주입) |
 ---
 
 ## ⚠ 세션 운영 규칙
