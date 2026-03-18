@@ -273,7 +273,7 @@ func (te *ToolExecutor) Undo(ctx context.Context) (string, error) {
 		setHiddenProcessAttrs(cmd)
 	}
 	if output, err := cmd.CombinedOutput(); err != nil {
-		return "", fmt.Errorf("git reset failed: %s — %s", err, string(output))
+		return "", fmt.Errorf("git reset failed: %w — %s", err, string(output))
 	}
 
 	return hash, nil
