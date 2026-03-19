@@ -105,32 +105,37 @@ D:\Artemis_Project\
 │   │   ├── fixengine.go           # FixEngine 인터페이스 + AgentFixEngine (Orchestrator 기반 자동 수정)
 │   │   └── worktree.go            # WorktreeManager — git worktree 생성/정리, mutex 보호
 │   └── tui/
-│       ├── app.go                 # 메인 모델 + Update 디스패치 + View + 레이아웃 (Hybrid Single/Split) + 오버레이 라우팅 + Recovery 큐 + Resume 큐
+│       ├── app.go                 # 메인 모델 (App + CostState/SessionState/HistoryState 서브구조체) + Update 디스패치 + View + layoutState + computeLayout + shutdown()
+│       ├── keybindings.go         # handleKeyMsg + handleMouseMsg + handleInputUpdate — Update()에서 추출
 │       ├── overlay.go             # PlaceOverlay 합성 + Overlay 인터페이스 + OverlayKind/OverlayResult + 스타일 헬퍼 + OverlayRecovery/OverlayResume
+│       ├── overlay_actions.go     # handleOverlay* 메서드 9개 — handleOverlayResult()에서 추출
 │       ├── cmdpalette.go          # Command Palette (Ctrl+K) — 퍼지 검색, 8개 커맨드
 │       ├── agentselector.go       # Agent Selector (Ctrl+A) — 에이전트 토글/티어/역할 매핑
 │       ├── filepicker.go          # File Picker (Ctrl+O) — 디렉토리 탐색 + 파일 선택
 │       ├── commands.go            # 슬래시 커맨드 핸들러 (/sessions, /load, /issues, /fix, /help)
-│       ├── pipeline.go            # Orchestrator 라우팅 + 동적/레거시 파이프라인 실행 + Checkpoint/Replanner 와이어링 + executeResume
-│       ├── streaming.go           # 단일 모드 LLM 스트리밍 핸들러 + ContextBudget 기반 히스토리 관리
+│       ├── pipeline.go            # Orchestrator 라우팅 + 동적/레거시 파이프라인 실행 + Checkpoint/Replanner 와이어링 + executeResume + pipelineWg
+│       ├── streaming.go           # 단일 모드 LLM 스트리밍 핸들러 + ContextBudget 기반 히스토리 관리 + 스트림 채널 drain
 │       ├── events.go              # 에이전트 이벤트 핸들러 + 파이프라인 완료 처리 + 에이전트별 스트리밍 추적 + Warn/Recovery/ReviewLoop 이벤트
 │       ├── recoverybridge.go      # RecoveryBridge (RecoveryPrompter 구현) + RecoveryRequest + RecoveryRequestMsg + waitForRecoveryRequest
 │       ├── recoveryoverlay.go     # RecoveryOverlay (Overlay 구현) + RecoveryDecisionMsg + R/S/A 핫키 + 진단 표시
 │       ├── resumeoverlay.go       # ResumeOverlay (Overlay 구현) + ResumeDecisionMsg + R/D/Esc 핫키 — 미완료 파이프라인 재개/폐기 선택
 │       ├── replanner.go           # OrchestratorReplanner (Replanner 구현) — LLM 기반 조건부 재계획
-│       ├── memory_init.go         # 메모리 시스템 초기화/종료/메시지 저장 (GitHub init 분리 후 경량화) + CheckpointStore 와이어링
+│       ├── memory_init.go         # 메모리 시스템 초기화/종료/메시지 저장 (CodeIndex 5분 timeout) + CheckpointStore 와이어링
 │       ├── github_init.go         # GitHub 이슈 트래커 초기화 (FixEngine/TriageLLM 와이어링)
 │       ├── chat.go                # 대화 패널 (glamour 마크다운 렌더링, 메시지별 스트리밍 캐시)
-│       ├── activity.go            # Activity 패널 (컨텍스트 정보 + 경과 시간 + 파일 변경)
-│       ├── configview.go          # Config 뷰 (7-tab: Claude|Gemini|GPT|GLM|VLLM|Agents|System) + System 9개 하위 탭(Memory/Tools/Vector/RepoMap/GitHub/Appearance/LSP/Skills/MCP)
-│       ├── statusbar.go           # 하단 상태바 (모델, 티어, 토큰, 비용, 세션 경과시간)
-│       ├── styles.go              # lipgloss 스타일 정의 (RefreshStyles → theme.S 위임)
+│       ├── activity.go            # Activity 패널 (컨텍스트 정보 + 경과 시간 + 파일 변경) — 테마 색상 통합
+│       ├── configview.go          # Config 뷰 코어 (7-tab 구조, Update, View, renderTabs, renderAgentsContent)
+│       ├── configview_providers.go # Config 뷰 프로바이더 탭 (5 providers: Claude/Gemini/GPT/GLM/VLLM)
+│       ├── configview_system.go   # Config 뷰 System 탭 (9 하위 탭: Memory/Tools/Vector/RepoMap/GitHub/Appearance/LSP/Skills/MCP)
+│       ├── statusbar.go           # 하단 상태바 (모델, 티어, 토큰, 비용, 경과시간) + 동적 KeyHints (Default/Pipeline/Overlay/Config)
+│       ├── styles.go              # lipgloss 스타일 정의 (RefreshStyles → theme.S 위임) + Diff 스타일 8종
+│       ├── diffoverlay.go         # Diff Viewer (Ctrl+D) — 테마 기반 색상
 │       └── theme/
-│           ├── theme.go           # Theme 구조체, BuildStyles(), Load(), AvailableThemes(), go:embed 프리셋
+│           ├── theme.go           # Theme 구조체, BuildStyles(), Load(), AvailableThemes(), mergeDefaults() + Diff 6색상 + go:embed 프리셋
 │           └── presets/
-│               ├── default.json   # 기본 테마
-│               ├── dracula.json   # Dracula 테마
-│               └── tokyonight.json # Tokyo Night 테마
+│               ├── default.json   # 기본 테마 (Tailwind 팔레트 + diff 색상)
+│               ├── dracula.json   # Dracula 테마 + diff 색상
+│               └── tokyonight.json # Tokyo Night 테마 + diff 색상
 ├── training/                      # 코드 생성 LLM 학습 파이프라인 (Python, 보류)
 ├── go.mod
 ├── go.sum
@@ -171,6 +176,7 @@ D:\Artemis_Project\
 | **문서화** | README.md (EN) + 3개 가이드 (KR) | #32-34 |
 | **성능 최적화** | ToolDescriptions 캐시, SQLite pragma, async fact usage | #35 |
 | **시그니처 기능** | ARTEMIS.md 로딩, Hooks, 병렬 Worktree+Race, 시맨틱 Context Engine, Flow Awareness | #35 |
+| **TUI 대개편** | 5-Phase TUI Overhaul: 고루틴 안정화 5건, 테마 통합 13색상, 컴포넌트 분해 (1134→465줄), 레이아웃 통합, App 분해 | #36 |
 
 ### 미구현 / 보류
 
@@ -191,7 +197,9 @@ D:\Artemis_Project\
 | **LSP** | 자체 JSON-RPC 클라이언트 | 외부 의존성 zero, 다국어 인프라 |
 | **MCP** | stdio 전송, 다중 서버 | 도구 무한 확장 가능 |
 | **도구** | 22개 + Hooks(Pre/Post) + FlowTracker | 안전 훅 기본 등록, 작업 흐름 추적 |
-| **TUI** | Hybrid Single/Split + 6 Overlay | 파이프라인 시 자동 Split, 완료 시 Single 복귀 |
+| **TUI** | Hybrid Single/Split + 6 Overlay + 동적 KeyHints | 파이프라인 시 자동 Split, 완료 시 Single 복귀, 상태별 키 힌트 |
+| **TUI 구조** | App 3-sub-struct + 컴포넌트 분해 6파일 | CostState/SessionState/HistoryState + configview 3분할 + overlay_actions/keybindings 추출 |
+| **스트리밍** | 단일/다중 이중 경로 (의도적 분리) | 단일=채널 직접, 다중=EventBus — 통합 비용 불필요 |
 | **CLI** | chat/headless/multi/race | TUI 없이 프로그래밍적 사용 가능 |
 | **컨텍스트** | ContextBudget P0-P6 + CodeIndex + FlowTracker | 토큰 오버플로 방지 + 시맨틱 코드 자동 주입 + 작업 흐름 추적 |
 | **실패 복구** | 3-Stage (Retry → Consultant → User) + Replan | 자동 복구 시도 → 사용자 개입 최소화 |
@@ -216,6 +224,7 @@ D:\Artemis_Project\
 | #31 | 2026-03-15 | Phase E 전체 (커스텀 스킬, 자율 루프, MCP) + 심화 통합 테스트 11/11 |
 | #32-#34 | 2026-03-17 | 문서화 (README.md + 3 가이드) |
 | #35 | 2026-03-17~18 | Phase F (UI 고도화) + Dogfooding (AD 구현) + CLI/Headless + 안정화 + 성능 최적화 + 시그니처 기능 5개 (ARTEMIS.md, Hooks, Worktree Race, Context Engine, Flow Awareness) |
+| #36 | 2026-03-19 | TUI 대개편 5-Phase: P1 고루틴 안정화 (5 leak fix), P2 스타일 통합 (13 hardcoded→theme), P3 컴포넌트 분해 (configview 1134→465, app 911→685, +4 new files), P4 레이아웃 현대화 (computeLayout, 동적 key hints, min 80×24), P5 App 분해 (3 sub-structs, shutdown 통합, 스트리밍 문서화) |
 
 ---
 
