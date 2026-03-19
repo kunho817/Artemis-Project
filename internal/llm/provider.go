@@ -12,7 +12,7 @@ import (
 // Prevents the default zero-timeout http.Client that causes "context deadline exceeded" errors.
 func newHTTPClient() *http.Client {
 	return &http.Client{
-		Timeout: 180 * time.Second, // 3 min hard limit per request
+		Timeout: 0, // no timeout — AI responses can take arbitrarily long
 		Transport: &http.Transport{
 			MaxIdleConns:        100,
 			MaxIdleConnsPerHost: 10,

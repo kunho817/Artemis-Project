@@ -55,8 +55,7 @@ func (a App) handleOrchestratedSubmit(text string) (tea.Model, tea.Cmd) {
 	history = append(history, llm.Message{Role: "system", Content: roles.BuildOrchestratorPrompt(a.skillRegistry)})
 	history = append(history, a.history...)
 	cmd := func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-		defer cancel()
+		ctx := context.Background() // no timeout — AI tasks take as long as needed
 		resp, err := orchProvider.Send(ctx, history)
 		if err != nil {
 			return OrchestratorPlanMsg{UserText: userText, Error: err}
@@ -153,9 +152,8 @@ func (a App) handleOrchestratorPlan(msg OrchestratorPlanMsg) (tea.Model, tea.Cmd
 func (a App) executePlan(plan *orchestrator.ExecutionPlan, userText string) (tea.Model, tea.Cmd) {
 	eb := bus.NewEventBus(eventBusBuffer)
 	a.eventBus = eb
-	// pipelineRunning already set in handleOrchestratedSubmit
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	ctx, cancel := context.WithCancel(context.Background()) // no timeout — pipelines run to completion
 	a.cancelPipeline = cancel
 
 	// Phase 5: Generate pipeline run ID and persist
@@ -335,8 +333,7 @@ func (a App) executeTrivial(agentRole, _ string, category string, skills []strin
 	// Start streaming (reuses single-mode streaming path)
 	a.chat.AddMessage(ChatMessage{Role: RoleAssistant, Content: ""})
 	cmd := func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
-		defer cancel()
+		ctx := context.Background() // no timeout
 		ch, err := provider.Stream(ctx, messages)
 		if err != nil {
 			return LLMResponseMsg{Error: err}
@@ -384,7 +381,7 @@ func (a App) executeLegacyPipeline(text string) (tea.Model, tea.Cmd) {
 	a.activity.SetSessionInfo(a.sessionID, a.statusBar.model)
 	a.activity.SetAgentCount(len(analysisAgents) + len(planningAgents) + len(archAgents) + len(implAgents) + len(verifyAgents))
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	ctx, cancel := context.WithCancel(context.Background()) // no timeout
 	a.cancelPipeline = cancel
 
 	ss := state.NewSessionStateWithID(runID, a.sessionID, "")
@@ -623,7 +620,7 @@ func (a App) executeResume(run state.IncompleteRun) (tea.Model, tea.Cmd) {
 	eb := bus.NewEventBus(eventBusBuffer)
 	a.eventBus = eb
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	ctx, cancel := context.WithCancel(context.Background()) // no timeout
 	a.cancelPipeline = cancel
 
 	// Restore session state from checkpoints

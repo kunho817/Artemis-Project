@@ -2,7 +2,6 @@ package tui
 
 import (
 	"context"
-	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -89,8 +88,7 @@ func (a App) handleSingleSubmit(_ string) (tea.Model, tea.Cmd) {
 	}
 	a.chat.AddMessage(ChatMessage{Role: RoleAssistant, Content: ""})
 	cmd := func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
-		defer cancel()
+		ctx := context.Background() // no timeout
 		ch, err := provider.Stream(ctx, history)
 		if err != nil {
 			return LLMResponseMsg{Error: err}

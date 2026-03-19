@@ -7,7 +7,6 @@ import (
 	"os"
 	"os/exec"
 	"strings"
-	"time"
 
 	"github.com/artemis-project/artemis/internal/agent"
 	"github.com/artemis-project/artemis/internal/agent/roles"
@@ -241,8 +240,7 @@ func (rt *headlessRuntime) runSingle(message, agentRole string) {
 	ss := state.NewSessionState()
 	ss.SetPhase("headless")
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-	defer cancel()
+	ctx := context.Background() // no timeout
 
 	err := ag.Run(ctx, ss)
 	eb.Close()
@@ -277,8 +275,7 @@ func (rt *headlessRuntime) runOrchestrated(message string) {
 	messages = append(messages, rt.history...)
 	messages = append(messages, llm.Message{Role: "user", Content: message})
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-	defer cancel()
+	ctx := context.Background() // no timeout
 
 	resp, err := rt.provider.Send(ctx, messages)
 	if err != nil {
@@ -443,8 +440,7 @@ func (rt *headlessRuntime) runRace(message, agentRole string) {
 			ss := state.NewSessionState()
 			ss.SetPhase("race")
 
-			raceCtx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-			defer cancel()
+			raceCtx := context.Background() // no timeout
 
 			err = ag.Run(raceCtx, ss)
 			eb.Close()

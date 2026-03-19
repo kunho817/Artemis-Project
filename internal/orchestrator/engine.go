@@ -515,10 +515,8 @@ func (e *Engine) RunPlan(ctx context.Context, plan *ExecutionPlan, ss *state.Ses
 			Agents: agents,
 		}
 
-		// Per-step timeout prevents one slow step from consuming the entire pipeline
-		stepCtx, stepCancel := context.WithTimeout(ctx, e.getStepTimeout())
-		phaseResult := e.runPhase(stepCtx, phase, ss)
-		stepCancel()
+		// No per-step timeout — AI tasks run to completion
+		phaseResult := e.runPhase(ctx, phase, ss)
 		result.PhaseResults = append(result.PhaseResults, phaseResult)
 
 		e.emitStepComplete(stepIdx+1, len(phaseResult.Errors))
