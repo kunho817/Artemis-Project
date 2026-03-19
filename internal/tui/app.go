@@ -4,9 +4,8 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"os/exec"
-	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"golang.org/x/text/cases"
@@ -91,6 +90,7 @@ type App struct {
 	eventBus        *bus.EventBus
 	cancelPipeline  context.CancelFunc
 	pipelineRunning bool
+	pipelineWg      *sync.WaitGroup // shared pointer — survives model copies; signals pipeline goroutine exit
 
 	// Tool executor
 	toolExecutor  *tools.ToolExecutor
@@ -281,108 +281,12 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, cmd
 	}
 
-	var cmds []tea.Cmd
-
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
-		// Close overlay on Esc if active (highest priority)
-		if msg.String() == "esc" && a.overlayKind != OverlayNone {
-			a.overlayKind = OverlayNone
-			a.overlay = nil
-			return a, nil
-		}
-
-		switch msg.String() {
-		case "ctrl+k":
-			if a.overlayKind == OverlayNone {
-				cp := NewCommandPalette(a.width, a.height)
-				a.overlayKind = OverlayCommandPalette
-				a.overlay = cp
-				return a, cp.Init()
-			}
-			return a, nil
-		case "ctrl+a":
-			if a.overlayKind == OverlayNone {
-				as := NewAgentSelector(a.cfg, a.width, a.height)
-				a.overlayKind = OverlayAgentSelector
-				a.overlay = as
-			}
-			return a, nil
-		case "ctrl+o":
-			if a.overlayKind == OverlayNone {
-				cwd, _ := os.Getwd()
-				fp := NewFilePicker(cwd, a.width, a.height)
-				a.overlayKind = OverlayFilePicker
-				a.overlay = fp
-			}
-			return a, nil
-		case "ctrl+d":
-			if a.overlayKind == OverlayNone {
-				cwd, _ := os.Getwd()
-				diffCtx, diffCancel := context.WithTimeout(context.Background(), 10*time.Second)
-				cmd := exec.CommandContext(diffCtx, "git", "diff")
-				cmd.Dir = cwd
-				out, _ := cmd.CombinedOutput()
-				diffCancel()
-				if len(out) > 0 {
-					return a, func() tea.Msg {
-						return DiffViewMsg{FileName: "Working Directory", Diff: string(out)}
-					}
-				} else {
-					a.chat.AddMessage(ChatMessage{Role: RoleSystem, Content: "No uncommitted changes found."})
-				}
-			}
-			return a, nil
-		case "ctrl+c":
-			if a.cancelPipeline != nil {
-				a.cancelPipeline()
-			}
-			a.shutdownMemory()
-			return a, tea.Quit
-		case "ctrl+s":
-			a.viewMode = ViewConfig
-			a.configView = NewConfigView(a.cfg)
-			a.configView.SetSize(a.width, a.height)
-			return a, nil
-		case "ctrl+l":
-			a.clearChatState()
-			a.overlayKind = OverlayNone
-			a.overlay = nil
-			return a, nil
-		case "tab":
-			if a.layoutMode == LayoutSingle {
-				return a, nil
-			}
-			a.cycleFocus()
-			return a, nil
-		case "enter":
-			// Enter = send message (Shift+Enter for newline is handled by textarea)
-			if strings.TrimSpace(a.input.Value()) != "" {
-				return a.handleSubmit()
-			}
-			return a, nil // Empty input: do nothing
-		case "ctrl+enter":
-			// Legacy keybinding — also sends
-			if strings.TrimSpace(a.input.Value()) != "" {
-				return a.handleSubmit()
-			}
-			return a, nil
-		case "up", "down", "pgup", "pgdown":
-			// Forward scroll keys to chat viewport
-			scrollCmd := a.chat.Update(msg)
-			if scrollCmd != nil {
-				cmds = append(cmds, scrollCmd)
-			}
-			return a, tea.Batch(cmds...)
-		}
+		return a.handleKeyMsg(msg)
 
 	case tea.MouseMsg:
-		// Forward all mouse events to chat viewport (scroll wheel)
-		scrollCmd := a.chat.Update(msg)
-		if scrollCmd != nil {
-			cmds = append(cmds, scrollCmd)
-		}
-		return a, tea.Batch(cmds...)
+		return a.handleMouseMsg(msg)
 
 	case LLMResponseMsg:
 		return a.handleLLMResponse(msg)
@@ -496,25 +400,7 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, nil
 	}
 
-	// Forward to textarea input
-	var cmd tea.Cmd
-	a.input, cmd = a.input.Update(msg)
-	if cmd != nil {
-		cmds = append(cmds, cmd)
-	}
-
-	// Auto-expand textarea height (1 to 8 lines)
-	lineCount := a.input.LineCount()
-	if lineCount < 1 {
-		lineCount = 1
-	}
-	if lineCount > 8 {
-		lineCount = 8
-	}
-	a.input.SetHeight(lineCount)
-	a.recalcLayout()
-
-	return a, tea.Batch(cmds...)
+	return a.handleInputUpdate(msg)
 }
 
 // updateConfigView handles updates while in config view.
@@ -740,6 +626,7 @@ func (a *App) clearChatState() {
 		a.cancelPipeline = nil
 		a.pipelineRunning = false
 	}
+	a.pipelineWg = nil
 	a.chat = NewChatPanel()
 	a.activity.ClearActivities()
 	a.history = nil
@@ -773,139 +660,26 @@ func (a *App) addUsage(usage *llm.TokenUsage, model string) {
 func (a *App) handleOverlayResult(result OverlayResult) {
 	switch result.Action {
 	case "command":
-		if strings.TrimSpace(result.Value) == "" {
-			return
-		}
-		m, cmd := a.handleCommand(result.Value)
-		if next, ok := m.(App); ok {
-			*a = next
-		}
-		if cmd != nil {
-			// No async command currently used by slash commands; intentionally ignored here.
-		}
-
+		a.handleOverlayCommand(result)
 	case "clear":
 		a.clearChatState()
-
 	case "settings":
-		a.viewMode = ViewConfig
-		a.configView = NewConfigView(a.cfg)
-		a.configView.SetSize(a.width, a.height)
-
+		a.handleOverlaySettings()
 	case "toggle_agents":
-		a.cfg.Agents.Enabled = !a.cfg.Agents.Enabled
-		if err := config.Save(a.cfg); err != nil {
-			a.chat.AddMessage(ChatMessage{Role: RoleSystem, Content: fmt.Sprintf("Failed to save config: %v", err)})
-			return
-		}
-		a.initProvider()
-
+		a.handleOverlayToggleAgents()
 	case "switch_tier":
-		if a.cfg.Agents.Tier == "premium" {
-			a.cfg.Agents.Tier = "budget"
-		} else {
-			a.cfg.Agents.Tier = "premium"
-		}
-		if err := config.Save(a.cfg); err != nil {
-			a.chat.AddMessage(ChatMessage{Role: RoleSystem, Content: fmt.Sprintf("Failed to save config: %v", err)})
-			return
-		}
-		a.initProvider()
-
+		a.handleOverlaySwitchTier()
 	case "switch_theme":
-		themes := theme.AvailableThemes()
-		if len(themes) == 0 {
-			return
-		}
-		current := a.cfg.Theme
-		if current == "" {
-			current = "default"
-		}
-		idx := 0
-		for i, t := range themes {
-			if t == current {
-				idx = i
-				break
-			}
-		}
-		a.cfg.Theme = themes[(idx+1)%len(themes)]
-		if err := config.Save(a.cfg); err != nil {
-			a.chat.AddMessage(ChatMessage{Role: RoleSystem, Content: fmt.Sprintf("Failed to save config: %v", err)})
-			return
-		}
-		_ = theme.Load(a.cfg.Theme)
-		RefreshStyles()
-		a.chat.AddMessage(ChatMessage{Role: RoleSystem, Content: fmt.Sprintf("Theme switched to %s.", a.cfg.Theme)})
-
+		a.handleOverlaySwitchTheme()
 	case "export_theme":
-		currentName := a.cfg.Theme
-		if currentName == "" {
-			currentName = "default"
-		}
-		path, err := theme.ExportTheme(currentName)
-		if err != nil {
-			a.chat.AddMessage(ChatMessage{Role: RoleSystem, Content: fmt.Sprintf("Failed to export theme: %v", err)})
-			return
-		}
-		a.chat.AddMessage(ChatMessage{Role: RoleSystem, Content: fmt.Sprintf("Theme exported to %s — edit and restart to apply.", path)})
-
+		a.handleOverlayExportTheme()
 	case "agents_changed":
-		if sel, ok := a.overlay.(*AgentSelector); ok {
-			a.cfg = sel.Config()
-		}
-		if err := config.Save(a.cfg); err != nil {
-			a.chat.AddMessage(ChatMessage{Role: RoleSystem, Content: fmt.Sprintf("Failed to save config: %v", err)})
-			return
-		}
-		a.initProvider()
-
+		a.handleOverlayAgentsChanged()
 	case "diff":
 		// Just close the overlay
-
 	case "view_diff":
-		cwd, _ := os.Getwd()
-		diffCtx, diffCancel := context.WithTimeout(context.Background(), 10*time.Second)
-		cmd := exec.CommandContext(diffCtx, "git", "diff")
-		cmd.Dir = cwd
-		out, _ := cmd.CombinedOutput()
-		diffCancel()
-		if len(out) > 0 {
-			overlay := NewDiffOverlay("Working Directory", string(out), a.width, a.height)
-			a.overlay = overlay
-			a.overlayKind = OverlayDiff
-		} else {
-			a.chat.AddMessage(ChatMessage{Role: RoleSystem, Content: "No uncommitted changes found."})
-		}
-
+		a.handleOverlayViewDiff()
 	case "select_file":
-		path := strings.TrimSpace(result.Value)
-		if path == "" {
-			return
-		}
-		b, err := os.ReadFile(path)
-		if err != nil {
-			a.chat.AddMessage(ChatMessage{Role: RoleSystem, Content: fmt.Sprintf("Failed to read file: %v", err)})
-			return
-		}
-		content := string(b)
-		if len(content) > 8000 {
-			content = content[:8000] + "\n... (truncated)"
-		}
-		ctx := fmt.Sprintf("[File Context: %s]\n```\n%s\n```", filepath.ToSlash(path), content)
-		existing := strings.TrimSpace(a.input.Value())
-		if existing != "" {
-			a.input.SetValue(ctx + "\n\n" + existing)
-		} else {
-			a.input.SetValue(ctx)
-		}
-		lineCount := a.input.LineCount()
-		if lineCount < 1 {
-			lineCount = 1
-		}
-		if lineCount > 8 {
-			lineCount = 8
-		}
-		a.input.SetHeight(lineCount)
-		a.recalcLayout()
+		a.handleOverlaySelectFile(result)
 	}
 }

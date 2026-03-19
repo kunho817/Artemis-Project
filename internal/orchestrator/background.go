@@ -180,6 +180,23 @@ func (m *BackgroundTaskManager) WaitAll() {
 	m.wg.Wait()
 }
 
+// WaitAllWithTimeout blocks until all tasks complete or timeout expires.
+// Returns true if all completed, false if timed out (and cancels remaining).
+func (m *BackgroundTaskManager) WaitAllWithTimeout(d time.Duration) bool {
+	done := make(chan struct{})
+	go func() {
+		m.wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+		return true
+	case <-time.After(d):
+		m.CancelAll()
+		return false
+	}
+}
+
 // GetTask returns a snapshot of a background task by ID.
 func (m *BackgroundTaskManager) GetTask(id string) *BackgroundTask {
 	m.mu.RLock()

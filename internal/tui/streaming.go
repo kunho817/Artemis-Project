@@ -136,6 +136,14 @@ func (a App) handleStreamStart(msg streamStartMsg) (tea.Model, tea.Cmd) {
 func (a App) handleStreamChunk(msg StreamChunkMsg) (tea.Model, tea.Cmd) {
 	if msg.Error != nil {
 		fe := llm.ClassifyError(msg.Error, a.cfg.ActiveProvider)
+		// Drain remaining chunks to unblock provider goroutine
+		if a.streamCh != nil {
+			ch := a.streamCh
+			go func() {
+				for range ch {
+				}
+			}()
+		}
 		a.streamCh = nil
 		a.streamingContent = ""
 		a.activity.UpdateLastActivity(StatusError)

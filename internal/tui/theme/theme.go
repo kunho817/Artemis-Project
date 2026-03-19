@@ -43,6 +43,14 @@ type ThemeColors struct {
 	AgentPlan     string `json:"agent_plan"`     // Planner
 	AgentCode     string `json:"agent_code"`     // Coder/Designer/Engineer/Architect
 	AgentVerify   string `json:"agent_verify"`   // QA/Tester
+
+	// Diff viewer colors
+	DiffAdd     string `json:"diff_add"`
+	DiffRemove  string `json:"diff_remove"`
+	DiffHeader  string `json:"diff_header"`
+	DiffHunk    string `json:"diff_hunk"`
+	DiffContext string `json:"diff_context"`
+	DiffBorder  string `json:"diff_border"`
 }
 
 // Theme is a named collection of colors for the TUI.
@@ -70,6 +78,14 @@ func (c *ThemeColors) BackgroundColor() lipgloss.Color { return Color(c.Backgrou
 func (c *ThemeColors) PanelColor() lipgloss.Color      { return Color(c.Panel) }
 func (c *ThemeColors) SurfaceColor() lipgloss.Color    { return Color(c.Surface) }
 func (c *ThemeColors) BorderColor() lipgloss.Color     { return Color(c.Border) }
+func (c *ThemeColors) DiffAddColor() lipgloss.Color    { return Color(c.DiffAdd) }
+func (c *ThemeColors) DiffRemoveColor() lipgloss.Color { return Color(c.DiffRemove) }
+func (c *ThemeColors) DiffHeaderColor() lipgloss.Color { return Color(c.DiffHeader) }
+func (c *ThemeColors) DiffHunkColor() lipgloss.Color   { return Color(c.DiffHunk) }
+func (c *ThemeColors) DiffContextColor() lipgloss.Color {
+	return Color(c.DiffContext)
+}
+func (c *ThemeColors) DiffBorderColor() lipgloss.Color { return Color(c.DiffBorder) }
 
 // Styles holds all computed lipgloss styles derived from a Theme.
 // Rebuilt whenever the theme changes.
@@ -125,6 +141,16 @@ type Styles struct {
 	AgentCode     lipgloss.Style
 	AgentVerify   lipgloss.Style
 	AgentDivider  lipgloss.Style
+
+	// Diff overlay
+	DiffAdd     lipgloss.Style
+	DiffRemove  lipgloss.Style
+	DiffHeader  lipgloss.Style
+	DiffHunk    lipgloss.Style
+	DiffContext lipgloss.Style
+	DiffBorder  lipgloss.Style
+	DiffTitle   lipgloss.Style
+	DiffHint    lipgloss.Style
 }
 
 // BuildStyles creates a Styles struct from a Theme.
@@ -241,6 +267,28 @@ func BuildStyles(t *Theme) Styles {
 			Foreground(Color(c.AgentVerify)),
 		AgentDivider: lipgloss.NewStyle().
 			Foreground(c.BorderColor()),
+
+		// Diff overlay
+		DiffAdd: lipgloss.NewStyle().
+			Foreground(c.DiffAddColor()),
+		DiffRemove: lipgloss.NewStyle().
+			Foreground(c.DiffRemoveColor()),
+		DiffHeader: lipgloss.NewStyle().
+			Foreground(c.DiffHeaderColor()).Bold(true),
+		DiffHunk: lipgloss.NewStyle().
+			Foreground(c.DiffHunkColor()),
+		DiffContext: lipgloss.NewStyle().
+			Foreground(c.DiffContextColor()),
+		DiffBorder: lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(c.DiffBorderColor()),
+		DiffTitle: lipgloss.NewStyle().
+			Bold(true).
+			Foreground(c.TextColor()).
+			Background(c.SurfaceColor()).
+			Padding(0, 1),
+		DiffHint: lipgloss.NewStyle().
+			Foreground(c.DimTextColor()),
 	}
 }
 
@@ -363,6 +411,13 @@ func DefaultTheme() Theme {
 			AgentPlan:     "#34D399",
 			AgentCode:     "#F472B6",
 			AgentVerify:   "#FBBF24",
+
+			DiffAdd:     "#22C55E",
+			DiffRemove:  "#EF4444",
+			DiffHeader:  "#22D3EE",
+			DiffHunk:    "#7C3AED",
+			DiffContext: "#E5E7EB",
+			DiffBorder:  "#4B5563",
 		},
 	}
 }
@@ -484,5 +539,23 @@ func mergeDefaults(target, defaults *ThemeColors) {
 	}
 	if target.AgentVerify == "" {
 		target.AgentVerify = defaults.AgentVerify
+	}
+	if target.DiffAdd == "" {
+		target.DiffAdd = defaults.DiffAdd
+	}
+	if target.DiffRemove == "" {
+		target.DiffRemove = defaults.DiffRemove
+	}
+	if target.DiffHeader == "" {
+		target.DiffHeader = defaults.DiffHeader
+	}
+	if target.DiffHunk == "" {
+		target.DiffHunk = defaults.DiffHunk
+	}
+	if target.DiffContext == "" {
+		target.DiffContext = defaults.DiffContext
+	}
+	if target.DiffBorder == "" {
+		target.DiffBorder = defaults.DiffBorder
 	}
 }

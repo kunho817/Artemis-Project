@@ -92,6 +92,18 @@ var (
 	AgentDividerStyle  lipgloss.Style
 )
 
+// Diff overlay styles
+var (
+	DiffAddStyle     lipgloss.Style
+	DiffRemoveStyle  lipgloss.Style
+	DiffHeaderStyle  lipgloss.Style
+	DiffHunkStyle    lipgloss.Style
+	DiffContextStyle lipgloss.Style
+	DiffBorderStyle  lipgloss.Style
+	DiffTitleStyle   lipgloss.Style
+	DiffHintStyle    lipgloss.Style
+)
+
 func init() {
 	RefreshStyles()
 }
@@ -167,4 +179,14 @@ func RefreshStyles() {
 	AgentCodeStyle = s.AgentCode
 	AgentVerifyStyle = s.AgentVerify
 	AgentDividerStyle = s.AgentDivider
+
+	// Diff overlay
+	DiffAddStyle = s.DiffAdd
+	DiffRemoveStyle = s.DiffRemove
+	DiffHeaderStyle = s.DiffHeader
+	DiffHunkStyle = s.DiffHunk
+	DiffContextStyle = s.DiffContext
+	DiffBorderStyle = s.DiffBorder
+	DiffTitleStyle = s.DiffTitle
+	DiffHintStyle = s.DiffHint
 }

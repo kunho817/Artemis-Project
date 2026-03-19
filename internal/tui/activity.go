@@ -333,10 +333,10 @@ func (a *ActivityPanel) View() string {
 		// Color: green if all pass, red if any fail, yellow if skip only
 		if r.Failed > 0 {
 			// red styling
-			sb.WriteString(fmt.Sprintf("  %s\n", lipgloss.NewStyle().Foreground(lipgloss.Color("#ff5555")).Render(summary)))
+			sb.WriteString(fmt.Sprintf("  %s\n", lipgloss.NewStyle().Foreground(ColorError).Render(summary)))
 		} else {
 			// green styling
-			sb.WriteString(fmt.Sprintf("  %s\n", lipgloss.NewStyle().Foreground(lipgloss.Color("#50fa7b")).Render(summary)))
+			sb.WriteString(fmt.Sprintf("  %s\n", lipgloss.NewStyle().Foreground(ColorSuccess).Render(summary)))
 		}
 
 		// Show failure details (up to 3 failures, 2 lines each)
@@ -347,14 +347,14 @@ func (a *ActivityPanel) View() string {
 			}
 			for i := 0; i < maxShow; i++ {
 				f := r.Failures[i]
-				sb.WriteString(fmt.Sprintf("    ✗ %s\n", lipgloss.NewStyle().Foreground(lipgloss.Color("#ff5555")).Bold(true).Render(f.Name)))
+				sb.WriteString(fmt.Sprintf("    ✗ %s\n", lipgloss.NewStyle().Foreground(ColorError).Bold(true).Render(f.Name)))
 				// Truncate output to first 2 lines
 				lines := strings.SplitN(strings.TrimSpace(f.Output), "\n", 3)
 				for j, l := range lines {
 					if j >= 2 {
 						break
 					}
-					sb.WriteString(fmt.Sprintf("      %s\n", lipgloss.NewStyle().Foreground(lipgloss.Color("#999999")).Render(l)))
+					sb.WriteString(fmt.Sprintf("      %s\n", lipgloss.NewStyle().Foreground(ColorDimText).Render(l)))
 				}
 			}
 			if len(r.Failures) > 3 {

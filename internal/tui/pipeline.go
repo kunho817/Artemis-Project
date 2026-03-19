@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"sync"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -248,7 +249,12 @@ func (a App) executePlan(plan *orchestrator.ExecutionPlan, userText string) (tea
 
 	memStore := a.memStore
 	capturedRunID := runID
+	wg := &sync.WaitGroup{}
+	wg.Add(1)
+	a.pipelineWg = wg
 	go func() {
+		defer wg.Done()
+		defer close(bridge.requestCh) // unblock waitForRecoveryRequest on exit
 		result := engine.RunPlan(ctx, plan, ss, buildAgent)
 		if !result.Completed && result.HaltError != nil {
 			eb.Emit(bus.NewEvent(bus.EventAgentFail, "engine", "plan", result.HaltError.Error()))
@@ -276,8 +282,8 @@ func (a App) executePlan(plan *orchestrator.ExecutionPlan, userText string) (tea
 			_ = memStore.UpdatePipelineRun(context.Background(), capturedRunID, status)
 		}
 
-		// Wait for all background tasks before closing EventBus
-		bgMgr.WaitAll()
+		// Wait for all background tasks before closing EventBus (2-min timeout)
+		bgMgr.WaitAllWithTimeout(2 * time.Minute)
 		eb.Close()
 	}()
 
@@ -400,7 +406,12 @@ func (a App) executeLegacyPipeline(text string) (tea.Model, tea.Cmd) {
 
 	memStore := a.memStore
 	capturedRunID := runID
+	legacyWg := &sync.WaitGroup{}
+	legacyWg.Add(1)
+	a.pipelineWg = legacyWg
 	go func() {
+		defer legacyWg.Done()
+		defer close(legacyBridge.requestCh) // unblock waitForRecoveryRequest on exit
 		result := engine.Run(ctx, ss)
 		if !result.Completed && result.HaltError != nil {
 			eb.Emit(bus.NewEvent(bus.EventAgentFail, "engine", "pipeline", result.HaltError.Error()))
@@ -692,7 +703,12 @@ func (a App) executeResume(run state.IncompleteRun) (tea.Model, tea.Cmd) {
 
 	memStore := a.memStore
 	capturedRunID := run.RunID
+	resumeWg := &sync.WaitGroup{}
+	resumeWg.Add(1)
+	a.pipelineWg = resumeWg
 	go func() {
+		defer resumeWg.Done()
+		defer close(bridge.requestCh) // unblock waitForRecoveryRequest on exit
 		result := engine.RunPlanFromStep(ctx, plan, ss, buildAgent, startStep)
 		if !result.Completed && result.HaltError != nil {
 			eb.Emit(bus.NewEvent(bus.EventAgentFail, "engine", "resume", result.HaltError.Error()))

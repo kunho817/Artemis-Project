@@ -65,17 +65,10 @@ func (d *DiffOverlay) Update(msg tea.Msg) (bool, OverlayResult, tea.Cmd) {
 
 func (d *DiffOverlay) View() string {
 	// Title bar
-	title := lipgloss.NewStyle().
-		Bold(true).
-		Foreground(lipgloss.Color("#f8f8f2")).
-		Background(lipgloss.Color("#44475a")).
-		Padding(0, 1).
-		Render(fmt.Sprintf(" Diff: %s ", d.fileName))
+	title := DiffTitleStyle.Render(fmt.Sprintf(" Diff: %s ", d.fileName))
 
 	// Help bar
-	help := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#6272a4")).
-		Render("↑↓/PgUp/PgDn scroll · q/Esc close")
+	help := DiffHintStyle.Render("↑↓/PgUp/PgDn scroll · q/Esc close")
 
 	// Scroll indicator
 	scrollInfo := fmt.Sprintf("%d%%", int(d.viewport.ScrollPercent()*100))
@@ -86,9 +79,7 @@ func (d *DiffOverlay) View() string {
 		lipgloss.JoinHorizontal(lipgloss.Top, help, "  ", scrollInfo),
 	)
 
-	return lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("#6272a4")).
+	return DiffBorderStyle.
 		Padding(0, 1).
 		Render(content)
 }
@@ -112,11 +103,11 @@ func (d *DiffOverlay) SetSize(w, h int) {
 func renderDiff(diff string, width int) string {
 	var sb strings.Builder
 
-	addStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#50fa7b"))               // green
-	removeStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#ff5555"))            // red
-	headerStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#8be9fd")).Bold(true) // cyan
-	hunkStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#bd93f9"))              // purple
-	contextStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#f8f8f2"))           // normal
+	addStyle := DiffAddStyle
+	removeStyle := DiffRemoveStyle
+	headerStyle := DiffHeaderStyle
+	hunkStyle := DiffHunkStyle
+	contextStyle := DiffContextStyle
 
 	for _, line := range strings.Split(diff, "\n") {
 		// Truncate long lines

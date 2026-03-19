@@ -17,6 +17,12 @@
     "agent_analysis": "#818CF8",
     "agent_plan": "#34D399",
     "agent_code": "#F472B6",
-    "agent_verify": "#FBBF24"
+    "agent_verify": "#FBBF24",
+    "diff_add": "#22C55E",
+    "diff_remove": "#EF4444",
+    "diff_header": "#22D3EE",
+    "diff_hunk": "#7C3AED",
+    "diff_context": "#E5E7EB",
+    "diff_border": "#4B5563"
   }
 }

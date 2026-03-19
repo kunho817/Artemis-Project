@@ -255,6 +255,7 @@ func (a App) handlePipelineComplete(msg PipelineCompleteMsg) (tea.Model, tea.Cmd
 	a.layoutMode = LayoutSingle
 	a.focused = FocusChat
 	a.cancelPipeline = nil
+	a.pipelineWg = nil
 	a.eventBus = nil
 	a.recoveryBridge = nil
 	a.recoveryQueue = nil

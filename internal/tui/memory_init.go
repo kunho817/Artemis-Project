@@ -93,9 +93,11 @@ func (a *App) initMemory() {
 	if vs, ok := a.vectorStore.(*memory.VectorStore); ok && a.cfg.Vector.Enabled {
 		cwd, _ := os.Getwd()
 		a.codeIndex = memory.NewCodeIndex(vs, cwd, a.cfg.RepoMap.ExcludePatterns)
-		// Index in background
+		// Index in background (5-minute timeout to prevent indefinite goroutine)
 		go func() {
-			n, err := a.codeIndex.IndexDirectory(context.Background(), cwd)
+			idxCtx, idxCancel := context.WithTimeout(context.Background(), 5*time.Minute)
+			defer idxCancel()
+			n, err := a.codeIndex.IndexDirectory(idxCtx, cwd)
 			if err == nil && n > 0 {
 				a.chat.AddMessage(ChatMessage{
 					Role:    RoleSystem,
