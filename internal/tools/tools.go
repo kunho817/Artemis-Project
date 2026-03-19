@@ -249,6 +249,11 @@ func (te *ToolExecutor) SetMCPManager(manager *mcp.Manager) {
 	}
 }
 
+// ToolCount returns the number of registered tools.
+func (te *ToolExecutor) ToolCount() int {
+	return len(te.tools)
+}
+
 // SetAstGrep configures ast-grep path and registers AST-aware tools.
 func (te *ToolExecutor) SetAstGrep(sgPath string) {
 	te.astGrepPath = sgPath
@@ -414,8 +419,16 @@ func ParseToolInvocations(response string) ([]ToolInvocation, string) {
 		jsonStr := strings.TrimSpace(cleaned[startIdx+len(startTag) : endIdx])
 
 		var inv ToolInvocation
-		if err := json.Unmarshal([]byte(jsonStr), &inv); err == nil && inv.Tool != "" {
+		err := json.Unmarshal([]byte(jsonStr), &inv)
+		if err == nil && inv.Tool != "" {
 			invocations = append(invocations, inv)
+		} else if err != nil {
+			invocations = append(invocations, ToolInvocation{
+				Tool: "_parse_error",
+				Params: map[string]interface{}{
+					"error": fmt.Sprintf("failed to parse tool_use JSON: %v", err),
+				},
+			})
 		}
 
 		// Remove the tool_use block from cleaned text
