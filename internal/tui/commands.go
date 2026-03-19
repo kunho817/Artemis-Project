@@ -246,7 +246,7 @@ func (a App) cmdLoadSession(sessionID string) (tea.Model, tea.Cmd) {
 	}
 
 	// Don't allow loading while we have an active conversation with history
-	if len(a.history) > 0 {
+	if len(a.hist.Messages) > 0 {
 		a.chat.AddMessage(ChatMessage{
 			Role:    RoleSystem,
 			Content: "Clear the current conversation first (Ctrl+L), then load a session.",
@@ -275,18 +275,18 @@ func (a App) cmdLoadSession(sessionID string) (tea.Model, tea.Cmd) {
 	}
 
 	// Phase 5: Link as child session
-	a.parentSessionID = sessionID
-	a.sessionID = fmt.Sprintf("ses_%d", time.Now().UnixNano())
-	a.history = nil
-	if a.historyWindow != nil {
-		a.historyWindow.Clear()
+	a.session.ParentID = sessionID
+	a.session.ID = fmt.Sprintf("ses_%d", time.Now().UnixNano())
+	a.hist.Messages = nil
+	if a.hist.Window != nil {
+		a.hist.Window.Clear()
 	}
 	a.chat = NewChatPanel()
 	a.recalcLayout()
 
 	a.chat.AddMessage(ChatMessage{
 		Role:    RoleSystem,
-		Content: fmt.Sprintf("Loaded session %s (%d messages) → new child session %s", sessionID, len(messages), a.sessionID),
+		Content: fmt.Sprintf("Loaded session %s (%d messages) → new child session %s", sessionID, len(messages), a.session.ID),
 	})
 
 	// Replay messages into chat panel and history
@@ -329,7 +329,6 @@ func (a App) cmdLoadSession(sessionID string) (tea.Model, tea.Cmd) {
 	return a, nil
 }
 
-
 // SessionSummary is an alias for use in commands.go tree formatting.
 type SessionSummary = memory.SessionSummary
 
@@ -344,7 +343,7 @@ func (a *App) formatSessionEntry(sb *strings.Builder, s SessionSummary, idx int,
 	}
 	// Mark current session
 	marker := indent + "  "
-	if s.SessionID == a.sessionID {
+	if s.SessionID == a.session.ID {
 		marker = indent + "▸ "
 	}
 	sb.WriteString(fmt.Sprintf("%s%d. [%s] %s (%d msgs)\n%s   ID: %s\n",

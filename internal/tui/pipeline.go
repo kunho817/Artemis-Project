@@ -45,16 +45,16 @@ func (a App) handleOrchestratedSubmit(text string) (tea.Model, tea.Cmd) {
 		Status: StatusRunning,
 		Text:   "Orchestrator: classifying intent...",
 	})
-	a.activity.SetSessionInfo(a.sessionID, a.statusBar.model)
+	a.activity.SetSessionInfo(a.session.ID, a.statusBar.model)
 	a.activity.SetAgentCount(1)
 	a.pipelineRunning = true
 	// Layout stays single — handleOrchestratorPlan decides based on intent
 
 	// Fire async Orchestrator LLM call
 	userText := text
-	history := make([]llm.Message, 0, len(a.history)+1)
+	history := make([]llm.Message, 0, len(a.hist.Messages)+1)
 	history = append(history, llm.Message{Role: "system", Content: roles.BuildOrchestratorPrompt(a.skillRegistry)})
-	history = append(history, a.history...)
+	history = append(history, a.hist.Messages...)
 	cmd := func() tea.Msg {
 		ctx := context.Background() // no timeout — AI tasks take as long as needed
 		resp, err := orchProvider.Send(ctx, history)
@@ -117,7 +117,7 @@ func (a App) handleOrchestratorPlan(msg OrchestratorPlanMsg) (tea.Model, tea.Cmd
 		}
 		a.layoutMode = LayoutSplit
 		a.recalcLayout()
-		a.activity.SetSessionInfo(a.sessionID, a.statusBar.model)
+		a.activity.SetSessionInfo(a.session.ID, a.statusBar.model)
 		a.activity.SetAgentCount(plan.TotalTasks())
 		if resp.Reasoning != "" {
 			a.chat.AddMessage(ChatMessage{Role: RoleSystem, Content: resp.Reasoning})
@@ -134,7 +134,7 @@ func (a App) handleOrchestratorPlan(msg OrchestratorPlanMsg) (tea.Model, tea.Cmd
 		}
 		a.layoutMode = LayoutSplit
 		a.recalcLayout()
-		a.activity.SetSessionInfo(a.sessionID, a.statusBar.model)
+		a.activity.SetSessionInfo(a.session.ID, a.statusBar.model)
 		a.activity.SetAgentCount(plan.TotalTasks())
 		if resp.Reasoning != "" {
 			a.chat.AddMessage(ChatMessage{Role: RoleSystem, Content: resp.Reasoning})
@@ -151,6 +151,7 @@ func (a App) handleOrchestratorPlan(msg OrchestratorPlanMsg) (tea.Model, tea.Cmd
 
 // executePlan runs a dynamic ExecutionPlan from the Orchestrator.
 func (a App) executePlan(plan *orchestrator.ExecutionPlan, userText string) (tea.Model, tea.Cmd) {
+	a.statusBar.SetKeyHints(PipelineKeyHints())
 	eb := bus.NewEventBus(eventBusBuffer)
 	a.eventBus = eb
 
@@ -159,11 +160,11 @@ func (a App) executePlan(plan *orchestrator.ExecutionPlan, userText string) (tea
 
 	// Phase 5: Generate pipeline run ID and persist
 	runID := fmt.Sprintf("run_%d", time.Now().UnixNano())
-	a.activePipelineRunID = runID
+	a.session.PipelineRunID = runID
 	a.savePipelineRunWithPlan(runID, plan, "complex")
 
 	// Prepare session state with user request + conversation history
-	ss := state.NewSessionStateWithID(runID, a.sessionID, "")
+	ss := state.NewSessionStateWithID(runID, a.session.ID, "")
 	ss.SetHistory(a.buildHistorySummary())
 	ss.AddArtifact(state.Artifact{
 		Type:    state.ArtifactUserRequest,
@@ -209,8 +210,8 @@ func (a App) executePlan(plan *orchestrator.ExecutionPlan, userText string) (tea
 		if len(task.Skills) > 0 && a.skillRegistry != nil {
 			ag.SetSkills(a.skillRegistry.Resolve(task.Skills))
 		}
-		if a.historyWindow != nil {
-			ag.SetHistoryWindow(a.historyWindow)
+		if a.hist.Window != nil {
+			ag.SetHistoryWindow(a.hist.Window)
 		}
 		// Phase E-2: Autonomous mode
 		if task.Autonomous {
@@ -330,11 +331,11 @@ func (a App) executeTrivial(agentRole, _ string, category string, skills []strin
 		systemPrompt += "\n\n## Project Rules\n" + a.projectRules
 	}
 
-	messages := make([]llm.Message, 0, len(a.history)+1)
+	messages := make([]llm.Message, 0, len(a.hist.Messages)+1)
 	if systemPrompt != "" {
 		messages = append(messages, llm.Message{Role: "system", Content: systemPrompt})
 	}
-	messages = append(messages, a.history...)
+	messages = append(messages, a.hist.Messages...)
 
 	// Start streaming (reuses single-mode streaming path)
 	a.chat.AddMessage(ChatMessage{Role: RoleAssistant, Content: ""})
@@ -355,12 +356,13 @@ func (a App) executeLegacyPipeline(text string) (tea.Model, tea.Cmd) {
 	eb := bus.NewEventBus(eventBusBuffer)
 	a.eventBus = eb
 	a.pipelineRunning = true
+	a.statusBar.SetKeyHints(PipelineKeyHints())
 	a.layoutMode = LayoutSplit
 	a.recalcLayout()
 
 	// Phase 5: Generate pipeline run ID
 	runID := fmt.Sprintf("run_%d", time.Now().UnixNano())
-	a.activePipelineRunID = runID
+	a.session.PipelineRunID = runID
 	a.savePipelineRun(runID, "", "complex")
 
 	pipeline := orchestrator.DefaultPipeline()
@@ -384,13 +386,13 @@ func (a App) executeLegacyPipeline(text string) (tea.Model, tea.Cmd) {
 		Status: StatusRunning,
 		Text:   "Fallback: legacy pipeline (5 phases)...",
 	})
-	a.activity.SetSessionInfo(a.sessionID, a.statusBar.model)
+	a.activity.SetSessionInfo(a.session.ID, a.statusBar.model)
 	a.activity.SetAgentCount(len(analysisAgents) + len(planningAgents) + len(archAgents) + len(implAgents) + len(verifyAgents))
 
 	ctx, cancel := context.WithCancel(context.Background()) // no timeout
 	a.cancelPipeline = cancel
 
-	ss := state.NewSessionStateWithID(runID, a.sessionID, "")
+	ss := state.NewSessionStateWithID(runID, a.session.ID, "")
 	ss.SetHistory(a.buildHistorySummary())
 	ss.AddArtifact(state.Artifact{
 		Type:    state.ArtifactUserRequest,
@@ -457,8 +459,8 @@ func (a *App) buildAgentsForPhase(eb *bus.EventBus, agentRoles ...agent.Role) []
 		if a.codeIndex != nil {
 			ag.SetCodeIndex(a.codeIndex)
 		}
-		if a.historyWindow != nil {
-			ag.SetHistoryWindow(a.historyWindow)
+		if a.hist.Window != nil {
+			ag.SetHistoryWindow(a.hist.Window)
 		}
 		agents = append(agents, ag)
 	}
@@ -544,11 +546,11 @@ func (a *App) hasAPIKey(providerName string) bool {
 // "role: content" strings for injection into agent session state.
 // Excludes the current (last) user message since it's already in the artifact.
 func (a *App) buildHistorySummary() []string {
-	if len(a.history) <= 1 {
+	if len(a.hist.Messages) <= 1 {
 		return nil // no prior turns to share
 	}
 	// Exclude the last message (current user request — already an artifact)
-	prior := a.history[:len(a.history)-1]
+	prior := a.hist.Messages[:len(a.hist.Messages)-1]
 	lines := make([]string, 0, len(prior))
 	for _, m := range prior {
 		lines = append(lines, fmt.Sprintf("%s: %s", m.Role, m.Content))
@@ -563,7 +565,7 @@ func (a *App) savePipelineRun(runID, planJSON, intent string) {
 	}
 	run := &memory.PipelineRun{
 		ID:          runID,
-		SessionID:   a.sessionID,
+		SessionID:   a.session.ID,
 		ParentRunID: "",
 		Intent:      intent,
 		PlanJSON:    planJSON,
@@ -621,7 +623,8 @@ func (a App) executeResume(run state.IncompleteRun) (tea.Model, tea.Cmd) {
 	a.layoutMode = LayoutSplit
 	a.recalcLayout()
 	a.pipelineRunning = true
-	a.activePipelineRunID = run.RunID
+	a.statusBar.SetKeyHints(PipelineKeyHints())
+	a.session.PipelineRunID = run.RunID
 
 	a.chat.AddMessage(ChatMessage{
 		Role:    RoleSystem,
@@ -674,8 +677,8 @@ func (a App) executeResume(run state.IncompleteRun) (tea.Model, tea.Cmd) {
 		if len(task.Skills) > 0 && a.skillRegistry != nil {
 			ag.SetSkills(a.skillRegistry.Resolve(task.Skills))
 		}
-		if a.historyWindow != nil {
-			ag.SetHistoryWindow(a.historyWindow)
+		if a.hist.Window != nil {
+			ag.SetHistoryWindow(a.hist.Window)
 		}
 		// Phase E-2: Autonomous mode
 		if task.Autonomous {
@@ -698,7 +701,7 @@ func (a App) executeResume(run state.IncompleteRun) (tea.Model, tea.Cmd) {
 		Status: StatusRunning,
 		Text:   fmt.Sprintf("Resuming from step %d/%d...", startStep+1, len(plan.Steps)),
 	})
-	a.activity.SetSessionInfo(a.sessionID, a.statusBar.model)
+	a.activity.SetSessionInfo(a.session.ID, a.statusBar.model)
 	a.activity.SetAgentCount(plan.TotalTasks())
 
 	memStore := a.memStore

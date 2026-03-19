@@ -8,6 +8,20 @@ import (
 	"github.com/artemis-project/artemis/internal/llm"
 )
 
+// Streaming Architecture Note:
+//
+// Single-provider mode (this file):
+//   User message → provider.Stream() → streamCh channel → handleStreamChunk loop
+//   State: hist.StreamingContent accumulator, App.streamCh channel
+//
+// Multi-agent mode (events.go):
+//   Orchestrator → Engine → agents emit events → EventBus → handleAgentEvent
+//   State: agentStreams map (per-agent streaming state)
+//
+// These are intentionally separate patterns serving different communication needs.
+// Single mode is a direct channel; multi mode is event-driven through the bus.
+// DO NOT unify — the abstraction cost is not justified.
+
 // LLMResponseMsg carries an LLM response back to the Update loop.
 type LLMResponseMsg struct {
 	Content string
@@ -62,8 +76,8 @@ func (a App) handleSingleSubmit(_ string) (tea.Model, tea.Cmd) {
 
 	// Fire async LLM streaming request
 	provider := a.provider
-	history := make([]llm.Message, len(a.history))
-	copy(history, a.history)
+	history := make([]llm.Message, len(a.hist.Messages))
+	copy(history, a.hist.Messages)
 	systemPrompt := ""
 	if len(history) > 0 && history[0].Role == "system" {
 		systemPrompt = history[0].Content
@@ -145,7 +159,7 @@ func (a App) handleStreamChunk(msg StreamChunkMsg) (tea.Model, tea.Cmd) {
 			}()
 		}
 		a.streamCh = nil
-		a.streamingContent = ""
+		a.hist.StreamingContent = ""
 		a.activity.UpdateLastActivity(StatusError)
 		a.chat.AddMessage(ChatMessage{
 			Role:    RoleSystem,
@@ -159,16 +173,16 @@ func (a App) handleStreamChunk(msg StreamChunkMsg) (tea.Model, tea.Cmd) {
 		a.chat.FinishStreaming()
 		a.activity.UpdateLastActivity(StatusDone)
 		a.addUsage(msg.Usage, a.cfg.GetActiveModel())
-		if a.streamingContent != "" {
-			a.addToHistory(llm.Message{Role: "assistant", Content: a.streamingContent})
-			a.saveMessageToDB("assistant", a.streamingContent, "")
-			a.streamingContent = ""
+		if a.hist.StreamingContent != "" {
+			a.addToHistory(llm.Message{Role: "assistant", Content: a.hist.StreamingContent})
+			a.saveMessageToDB("assistant", a.hist.StreamingContent, "")
+			a.hist.StreamingContent = ""
 		}
 		return a, nil
 	}
 
 	// Append chunk to chat display and accumulate for history
-	a.streamingContent += msg.Content
+	a.hist.StreamingContent += msg.Content
 	a.chat.AppendToLast(msg.Content)
 	return a, a.nextStreamChunk()
 }

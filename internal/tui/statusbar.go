@@ -37,6 +37,32 @@ func DefaultKeyHints() []KeyHint {
 	}
 }
 
+func PipelineKeyHints() []KeyHint {
+	return []KeyHint{
+		{Key: "^C", Desc: "Cancel"},
+		{Key: "Tab", Desc: "Focus"},
+		{Key: "^S", Desc: "Settings"},
+		{Key: "^D", Desc: "Diff"},
+	}
+}
+
+func OverlayKeyHints() []KeyHint {
+	return []KeyHint{
+		{Key: "Esc", Desc: "Close"},
+		{Key: "↑↓", Desc: "Navigate"},
+		{Key: "↵", Desc: "Select"},
+	}
+}
+
+func ConfigKeyHints() []KeyHint {
+	return []KeyHint{
+		{Key: "^S", Desc: "Save"},
+		{Key: "Esc", Desc: "Back"},
+		{Key: "^←→", Desc: "Tab"},
+		{Key: "↑↓", Desc: "Field"},
+	}
+}
+
 // NewStatusBar creates a new status bar.
 func NewStatusBar() StatusBar {
 	return StatusBar{

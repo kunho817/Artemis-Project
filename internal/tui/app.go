@@ -33,6 +33,8 @@ const (
 	chatWidthRatio   = 0.65
 	minChatWidth     = 40
 	minActivityWidth = 20
+	minTermWidth     = 80
+	minTermHeight    = 24
 	statusBarHeight  = 1
 	borderOverhead   = 2 // top + bottom borders
 	titleBarHeight   = 1
@@ -63,12 +65,41 @@ const (
 	LayoutSplit
 )
 
+type layoutState struct {
+	innerWidth    int
+	innerHeight   int
+	chatWidth     int
+	activityWidth int
+	inputHeight   int
+}
+
 // agentStreamInfo tracks streaming state for a single agent.
 type agentStreamInfo struct {
 	name     string
 	role     string
 	content  string
 	msgIndex int // index in chat.messages
+}
+
+// CostState tracks token and cost totals (value-safe, copied each Update).
+type CostState struct {
+	TotalTokens int
+	TotalCost   float64
+}
+
+// SessionState tracks session identity (value-safe).
+type SessionState struct {
+	ID            string
+	ParentID      string
+	PipelineRunID string
+}
+
+// HistoryState tracks conversation history (value-safe — slices are reference types).
+type HistoryState struct {
+	Messages         []llm.Message
+	Window           *agent.HistoryWindow // pointer, safe
+	StreamingContent string
+	PipelineOutputs  []string
 }
 
 // App is the main application model.
@@ -97,39 +128,32 @@ type App struct {
 	skillRegistry *agent.SkillRegistry // Phase 4: skill resolution
 
 	// Persistent memory
-	memStore            memory.MemoryStore
-	vectorStore         memory.VectorSearcher // Phase 2: vector search
-	consolidator        *memory.Consolidator
-	repoMapStore        *memory.RepoMapStore // Phase 3: repo-map
-	projectRules        string               // ARTEMIS.md project rules
-	codeIndex           *memory.CodeIndex    // Semantic code search
-	lspManager          *lsp.Manager         // Phase D: LSP Control Plane
-	mcpManager          *mcp.Manager
-	ghSyncer            *ghub.Syncer
-	ghProcessor         *ghub.Processor
-	checkpointStore     state.CheckpointStore // Phase C-5: step checkpoint persistence
-	pendingResumeRun    *state.IncompleteRun  // Phase C-5: deferred resume overlay (shown after Init)
-	sessionID           string                // unique ID for current session
-	parentSessionID     string                // Phase 5: parent session (set when /load creates child)
-	activePipelineRunID string                // Phase 5: current pipeline run ID (for message linking)
-	focused             FocusedPanel
+	memStore         memory.MemoryStore
+	vectorStore      memory.VectorSearcher // Phase 2: vector search
+	consolidator     *memory.Consolidator
+	repoMapStore     *memory.RepoMapStore // Phase 3: repo-map
+	projectRules     string               // ARTEMIS.md project rules
+	codeIndex        *memory.CodeIndex    // Semantic code search
+	lspManager       *lsp.Manager         // Phase D: LSP Control Plane
+	mcpManager       *mcp.Manager
+	ghSyncer         *ghub.Syncer
+	ghProcessor      *ghub.Processor
+	checkpointStore  state.CheckpointStore // Phase C-5: step checkpoint persistence
+	pendingResumeRun *state.IncompleteRun  // Phase C-5: deferred resume overlay (shown after Init)
+	session          SessionState
+	focused          FocusedPanel
 
 	layoutMode LayoutMode
+	layout     layoutState
 	width      int
 	height     int
 	ready      bool
 
-	// Conversation history
-	history          []llm.Message               // multi-turn conversation (user + assistant)
-	historyWindow    *agent.HistoryWindow        // Phase C: token-aware history management
-	streamingContent string                      // accumulates streaming response for history (single mode)
-	pipelineOutputs  []string                    // accumulates agent output during pipeline run
-	streamCh         <-chan llm.StreamChunk      // active stream channel (single mode)
-	agentStreams     map[string]*agentStreamInfo // per-agent streaming state (multi-agent mode)
-
-	// Cost tracking
-	totalTokens int
-	totalCost   float64
+	// Conversation history and cost tracking
+	hist         HistoryState                // multi-turn conversation state + streaming accumulators
+	streamCh     <-chan llm.StreamChunk      // active stream channel (single mode)
+	agentStreams map[string]*agentStreamInfo // per-agent streaming state (multi-agent mode)
+	cost         CostState
 
 	overlayKind OverlayKind
 	overlay     Overlay
@@ -137,6 +161,34 @@ type App struct {
 	// Recovery system (Phase 6)
 	recoveryBridge *RecoveryBridge   // shared pointer — survives model copies
 	recoveryQueue  []RecoveryRequest // queued recovery requests from concurrent agent failures
+}
+
+func computeLayout(width, height, inputHeight int, mode LayoutMode) layoutState {
+	innerWidth := width - borderOverhead
+	currentInputHeight := inputHeight + 1
+	innerHeight := height - borderOverhead - statusBarHeight - currentInputHeight - titleBarHeight
+
+	chatWidth := innerWidth
+	activityWidth := 0
+	if mode == LayoutSplit {
+		chatWidth = int(float64(innerWidth) * chatWidthRatio)
+		if chatWidth < minChatWidth {
+			chatWidth = minChatWidth
+		}
+		activityWidth = innerWidth - chatWidth - 1
+		if activityWidth < minActivityWidth {
+			activityWidth = minActivityWidth
+			chatWidth = innerWidth - activityWidth - 1
+		}
+	}
+
+	return layoutState{
+		innerWidth:    innerWidth,
+		innerHeight:   innerHeight,
+		chatWidth:     chatWidth,
+		activityWidth: activityWidth,
+		inputHeight:   currentInputHeight,
+	}
 }
 
 // NewApp creates a new application model.
@@ -190,22 +242,14 @@ func NewApp() App {
 		cfg:           cfg,
 		toolExecutor:  te,
 		skillRegistry: skillReg,
-		sessionID:     fmt.Sprintf("ses_%d", time.Now().UnixNano()),
-		totalTokens:   0,
-		totalCost:     0,
+		session: SessionState{
+			ID: fmt.Sprintf("ses_%d", time.Now().UnixNano()),
+		},
 	}
 	// Initialize token-aware history window
 	tc, _ := llm.GetTokenCounter()
-	app.historyWindow = agent.NewHistoryWindow(10, tc) // keep last 10 messages in full
-	app.statusBar.SetKeyHints([]KeyHint{
-		{Key: "^↵", Desc: "Send"},
-		{Key: "^K", Desc: "Palette"},
-		{Key: "^A", Desc: "Agents"},
-		{Key: "^O", Desc: "Files"},
-		{Key: "^S", Desc: "Settings"},
-		{Key: "^L", Desc: "Clear"},
-		{Key: "^C", Desc: "Quit"},
-	})
+	app.hist.Window = agent.NewHistoryWindow(10, tc) // keep last 10 messages in full
+	app.statusBar.SetKeyHints(DefaultKeyHints())
 
 	// Initialize LLM provider (single-provider fallback)
 	app.initProvider()
@@ -250,7 +294,7 @@ func (a *App) initProvider() {
 		a.statusBar.SetMode("single")
 	}
 	a.statusBar.SetTier(a.cfg.Agents.Tier)
-	a.activity.SetSessionInfo(a.sessionID, a.statusBar.model)
+	a.activity.SetSessionInfo(a.session.ID, a.statusBar.model)
 	if a.cfg.Agents.Enabled {
 		a.activity.SetAgentCount(1)
 	} else {
@@ -277,6 +321,7 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.handleOverlayResult(result)
 			a.overlayKind = OverlayNone
 			a.overlay = nil
+			a.syncKeyHints()
 		}
 		return a, cmd
 	}
@@ -311,6 +356,7 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			overlay := NewRecoveryOverlay(msg.Request, a.width, a.height)
 			a.overlayKind = OverlayRecovery
 			a.overlay = overlay
+			a.syncKeyHints()
 		}
 		// Re-subscribe ONLY to recovery requests.
 		// waitForEvent is still running from pipeline.go's initial tea.Batch;
@@ -333,9 +379,11 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			overlay := NewRecoveryOverlay(a.recoveryQueue[0], a.width, a.height)
 			a.overlayKind = OverlayRecovery
 			a.overlay = overlay
+			a.syncKeyHints()
 		} else {
 			a.overlayKind = OverlayNone
 			a.overlay = nil
+			a.syncKeyHints()
 		}
 		return a, nil
 
@@ -343,6 +391,7 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Phase C-5: Handle user's decision on incomplete pipeline run
 		a.overlayKind = OverlayNone
 		a.overlay = nil
+		a.syncKeyHints()
 		switch msg.Action {
 		case "resume":
 			return a.executeResume(msg.Run)
@@ -375,6 +424,7 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		overlay := NewDiffOverlay(msg.FileName, msg.Diff, a.width, a.height)
 		a.overlay = overlay
 		a.overlayKind = OverlayDiff
+		a.syncKeyHints()
 		return a, nil
 
 	case OrchestratorPlanMsg:
@@ -396,6 +446,7 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			overlay := NewResumeOverlay(*run, a.width, a.height)
 			a.overlayKind = OverlayResume
 			a.overlay = overlay
+			a.syncKeyHints()
 		}
 		return a, nil
 	}
@@ -423,6 +474,7 @@ func (a App) updateConfigView(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Return to chat view with updated config
 		a.cfg = a.configView.GetConfig()
 		a.viewMode = ViewChat
+		a.syncKeyHints()
 		a.initProvider()
 		theme.Load(a.cfg.Theme)
 		RefreshStyles()
@@ -488,9 +540,9 @@ func (a App) handleSubmit() (tea.Model, tea.Cmd) {
 
 // addToHistory appends a message to both legacy history and HistoryWindow.
 func (a *App) addToHistory(msg llm.Message) {
-	a.history = append(a.history, msg)
-	if a.historyWindow != nil {
-		a.historyWindow.Add(msg)
+	a.hist.Messages = append(a.hist.Messages, msg)
+	if a.hist.Window != nil {
+		a.hist.Window.Add(msg)
 	}
 }
 
@@ -513,36 +565,25 @@ func (a *App) recalcLayout() {
 		return
 	}
 
-	// Available space inside outer border
-	innerWidth := a.width - borderOverhead
-	currentInputHeight := a.input.Height() + 1 // +1 for input line padding/border
-	innerHeight := a.height - borderOverhead - statusBarHeight - currentInputHeight - titleBarHeight
-
-	chatWidth := innerWidth
-	activityWidth := 0
-	if a.layoutMode == LayoutSplit {
-		// Split horizontally
-		chatWidth = int(float64(innerWidth) * chatWidthRatio)
-		if chatWidth < minChatWidth {
-			chatWidth = minChatWidth
-		}
-		activityWidth = innerWidth - chatWidth - 1 // -1 for vertical divider
-		if activityWidth < minActivityWidth {
-			activityWidth = minActivityWidth
-			chatWidth = innerWidth - activityWidth - 1
-		}
-	}
-
-	a.chat.SetSize(chatWidth, innerHeight)
-	a.activity.SetSize(activityWidth, innerHeight)
+	a.layout = computeLayout(a.width, a.height, a.input.Height(), a.layoutMode)
+	a.chat.SetSize(a.layout.chatWidth, a.layout.innerHeight)
+	a.activity.SetSize(a.layout.activityWidth, a.layout.innerHeight)
 	a.statusBar.SetSize(a.width)
-	a.input.SetWidth(chatWidth - 4) // account for prompt and padding
+	a.input.SetWidth(a.layout.chatWidth - 4) // account for prompt and padding
 }
 
 // View implements tea.Model.
 func (a App) View() string {
 	if !a.ready {
 		return "Initializing Artemis..."
+	}
+
+	if a.width < minTermWidth || a.height < minTermHeight {
+		return lipgloss.NewStyle().
+			Foreground(ColorWarning).
+			Render(fmt.Sprintf(
+				"Terminal too small (%d×%d). Minimum: %d×%d.\nResize your terminal to continue.",
+				a.width, a.height, minTermWidth, minTermHeight))
 	}
 
 	// Config view takes over the entire screen
@@ -554,8 +595,7 @@ func (a App) View() string {
 	titleLeft := TitleStyle.Render("Artemis v0.1.0")
 	titleRight := ActiveTitleStyle.Render(a.statusBar.model)
 
-	innerWidth := a.width - borderOverhead
-	titleGap := innerWidth - lipgloss.Width(titleLeft) - lipgloss.Width(titleRight)
+	titleGap := a.layout.innerWidth - lipgloss.Width(titleLeft) - lipgloss.Width(titleRight)
 	if titleGap < 0 {
 		titleGap = 0
 	}
@@ -570,29 +610,16 @@ func (a App) View() string {
 		chatBorder = ActiveBorderStyle
 	}
 
-	// Calculate inner heights
-	currentInputHeight := a.input.Height() + 1 // +1 for input line padding/border
-	innerHeight := a.height - borderOverhead - statusBarHeight - currentInputHeight - titleBarHeight
-
-	chatWidth := innerWidth
-	if a.layoutMode == LayoutSplit {
-		chatWidth = int(float64(innerWidth) * chatWidthRatio)
-		if chatWidth < minChatWidth {
-			chatWidth = minChatWidth
-		}
-	}
-
 	chatView := chatBorder.
-		Width(chatWidth).
-		Height(innerHeight).
+		Width(a.layout.chatWidth).
+		Height(a.layout.innerHeight).
 		Render(a.chat.View())
 
 	panels := chatView
 	if a.layoutMode == LayoutSplit {
-		actWidth := innerWidth - lipgloss.Width(chatView)
 		actView := actBorder.
-			Width(actWidth).
-			Height(innerHeight).
+			Width(a.layout.activityWidth).
+			Height(a.layout.innerHeight).
 			Render(a.activity.View())
 		panels = lipgloss.JoinHorizontal(lipgloss.Top, chatView, actView)
 	}
@@ -629,16 +656,17 @@ func (a *App) clearChatState() {
 	a.pipelineWg = nil
 	a.chat = NewChatPanel()
 	a.activity.ClearActivities()
-	a.history = nil
-	if a.historyWindow != nil {
-		a.historyWindow.Clear()
+	a.hist.Messages = nil
+	if a.hist.Window != nil {
+		a.hist.Window.Clear()
 	}
-	a.pipelineOutputs = nil
+	a.hist.StreamingContent = ""
+	a.hist.PipelineOutputs = nil
 	a.agentStreams = nil
 	a.recoveryBridge = nil
 	a.recoveryQueue = nil
-	a.totalTokens = 0
-	a.totalCost = 0
+	a.cost.TotalTokens = 0
+	a.cost.TotalCost = 0
 	a.statusBar.SetTokens(0)
 	a.statusBar.SetCost(0)
 	a.focused = FocusChat
@@ -650,11 +678,53 @@ func (a *App) addUsage(usage *llm.TokenUsage, model string) {
 	if usage == nil {
 		return
 	}
-	a.totalTokens += usage.TotalTokens
+	a.cost.TotalTokens += usage.TotalTokens
 	pricing := llm.GetPricing(model)
-	a.totalCost += llm.CalculateCost(usage, pricing)
-	a.statusBar.SetTokens(a.totalTokens)
-	a.statusBar.SetCost(a.totalCost)
+	a.cost.TotalCost += llm.CalculateCost(usage, pricing)
+	a.statusBar.SetTokens(a.cost.TotalTokens)
+	a.statusBar.SetCost(a.cost.TotalCost)
+}
+
+func (a *App) shutdown() {
+	// 1. Cancel pipeline
+	if a.cancelPipeline != nil {
+		a.cancelPipeline()
+	}
+	// 2. Wait for pipeline goroutine
+	if a.pipelineWg != nil {
+		done := make(chan struct{})
+		go func() { a.pipelineWg.Wait(); close(done) }()
+		select {
+		case <-done:
+		case <-time.After(3 * time.Second):
+		}
+	}
+	// 3. Shutdown LSP
+	if a.lspManager != nil {
+		a.lspManager.Shutdown()
+	}
+	// 4. Shutdown MCP
+	if a.mcpManager != nil {
+		a.mcpManager.Shutdown()
+	}
+	// 5. Shutdown memory (consolidate + close)
+	a.shutdownMemory()
+}
+
+func (a *App) syncKeyHints() {
+	if a.viewMode == ViewConfig {
+		a.statusBar.SetKeyHints(ConfigKeyHints())
+		return
+	}
+	if a.overlayKind != OverlayNone {
+		a.statusBar.SetKeyHints(OverlayKeyHints())
+		return
+	}
+	if a.pipelineRunning {
+		a.statusBar.SetKeyHints(PipelineKeyHints())
+		return
+	}
+	a.statusBar.SetKeyHints(DefaultKeyHints())
 }
 
 func (a *App) handleOverlayResult(result OverlayResult) {

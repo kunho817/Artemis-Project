@@ -162,29 +162,29 @@ func (a *App) shutdownMemory() {
 
 	// COLD tier: archive raw messages before consolidation (preserves full conversation)
 	var archiver *memory.Archiver
-	if a.cfg.Memory.ArchiveEnabled && len(a.history) > 0 {
+	if a.cfg.Memory.ArchiveEnabled && len(a.hist.Messages) > 0 {
 		arc, err := memory.NewArchiver(a.cfg.ArchivePath())
 		if err == nil {
 			archiver = arc
-			_ = archiver.ArchiveMessages(a.sessionID, a.history)
+			_ = archiver.ArchiveMessages(a.session.ID, a.hist.Messages)
 		}
 	}
 
 	// Run consolidation if enabled and we have conversation history
-	if a.consolidator != nil && a.cfg.Memory.ConsolidateOnExit && len(a.history) > 2 {
+	if a.consolidator != nil && a.cfg.Memory.ConsolidateOnExit && len(a.hist.Messages) > 2 {
 		// Collect files touched during this session from activity panel
 		filesTouched := a.activity.GetChangedFiles()
 
 		ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 		defer cancel()
 
-		result, err := a.consolidator.Consolidate(ctx, a.sessionID, a.history, filesTouched)
+		result, err := a.consolidator.Consolidate(ctx, a.session.ID, a.hist.Messages, filesTouched)
 		if err == nil && result != nil {
 			// Phase 5: Link parent session if this was loaded from another session
-			if a.parentSessionID != "" {
-				summary, _ := a.memStore.GetSession(ctx, a.sessionID)
+			if a.session.ParentID != "" {
+				summary, _ := a.memStore.GetSession(ctx, a.session.ID)
 				if summary != nil && summary.ParentSessionID == "" {
-					summary.ParentSessionID = a.parentSessionID
+					summary.ParentSessionID = a.session.ParentID
 					_ = a.memStore.SaveSession(ctx, summary)
 				}
 			}
@@ -210,15 +210,6 @@ func (a *App) shutdownMemory() {
 		a.vectorStore.Close()
 	}
 
-	// Phase D: Shutdown LSP servers
-	if a.mcpManager != nil {
-		a.mcpManager.Shutdown()
-	}
-
-	if a.lspManager != nil {
-		a.lspManager.Shutdown()
-	}
-
 	if a.ghSyncer != nil {
 		a.ghSyncer.Stop()
 	}
@@ -233,11 +224,11 @@ func (a *App) saveMessageToDB(role, content, agentRole string) {
 		return
 	}
 	msg := &memory.SessionMessage{
-		SessionID:     a.sessionID,
+		SessionID:     a.session.ID,
 		Role:          role,
 		Content:       content,
 		AgentRole:     agentRole,
-		PipelineRunID: a.activePipelineRunID,
+		PipelineRunID: a.session.PipelineRunID,
 	}
 	// Fire and forget — message save failure is non-fatal
 	go func() {

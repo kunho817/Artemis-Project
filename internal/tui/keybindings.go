@@ -17,6 +17,7 @@ func (a App) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if msg.String() == "esc" && a.overlayKind != OverlayNone {
 		a.overlayKind = OverlayNone
 		a.overlay = nil
+		a.syncKeyHints()
 		return a, nil
 	}
 
@@ -26,6 +27,7 @@ func (a App) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			cp := NewCommandPalette(a.width, a.height)
 			a.overlayKind = OverlayCommandPalette
 			a.overlay = cp
+			a.statusBar.SetKeyHints(OverlayKeyHints())
 			return a, cp.Init()
 		}
 		return a, nil
@@ -34,6 +36,7 @@ func (a App) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			as := NewAgentSelector(a.cfg, a.width, a.height)
 			a.overlayKind = OverlayAgentSelector
 			a.overlay = as
+			a.statusBar.SetKeyHints(OverlayKeyHints())
 		}
 		return a, nil
 	case "ctrl+o":
@@ -42,6 +45,7 @@ func (a App) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			fp := NewFilePicker(cwd, a.width, a.height)
 			a.overlayKind = OverlayFilePicker
 			a.overlay = fp
+			a.statusBar.SetKeyHints(OverlayKeyHints())
 		}
 		return a, nil
 	case "ctrl+d":
@@ -61,24 +65,13 @@ func (a App) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return a, nil
 	case "ctrl+c":
-		if a.cancelPipeline != nil {
-			a.cancelPipeline()
-		}
-		// Wait briefly for pipeline goroutine to finish (max 3s)
-		if a.pipelineWg != nil {
-			done := make(chan struct{})
-			go func() { a.pipelineWg.Wait(); close(done) }()
-			select {
-			case <-done:
-			case <-time.After(3 * time.Second):
-			}
-		}
-		a.shutdownMemory()
+		a.shutdown()
 		return a, tea.Quit
 	case "ctrl+s":
 		a.viewMode = ViewConfig
 		a.configView = NewConfigView(a.cfg)
 		a.configView.SetSize(a.width, a.height)
+		a.syncKeyHints()
 		return a, nil
 	case "ctrl+l":
 		a.clearChatState()

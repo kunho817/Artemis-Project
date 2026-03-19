@@ -80,7 +80,7 @@ func (a App) handleAgentEvent(msg AgentEventMsg) (tea.Model, tea.Cmd) {
 			AgentRole: event.AgentName, // role string used for styling
 		})
 		// Accumulate for conversation history
-		a.pipelineOutputs = append(a.pipelineOutputs,
+		a.hist.PipelineOutputs = append(a.hist.PipelineOutputs,
 			fmt.Sprintf("[%s]\n%s", displayName, event.Message))
 
 	case bus.EventFileChanged:
@@ -178,7 +178,7 @@ func (a App) handleAgentEvent(msg AgentEventMsg) (tea.Model, tea.Cmd) {
 		if info != nil {
 			a.chat.FinishStreamingAt(info.msgIndex)
 			if info.content != "" {
-				a.pipelineOutputs = append(a.pipelineOutputs,
+				a.hist.PipelineOutputs = append(a.hist.PipelineOutputs,
 					fmt.Sprintf("[%s]\n%s", info.name, info.content))
 			}
 			delete(a.agentStreams, event.AgentName)
@@ -250,6 +250,7 @@ func (a App) handleAgentEvent(msg AgentEventMsg) (tea.Model, tea.Cmd) {
 // The EventPipelineDone event already handles activity panel notification.
 func (a App) handlePipelineComplete(msg PipelineCompleteMsg) (tea.Model, tea.Cmd) {
 	a.pipelineRunning = false
+	a.statusBar.SetKeyHints(DefaultKeyHints())
 	a.activity.ClearPipelineProgress()
 	a.statusBar.SetPipelineProgress(0, 0)
 	a.layoutMode = LayoutSingle
@@ -262,14 +263,14 @@ func (a App) handlePipelineComplete(msg PipelineCompleteMsg) (tea.Model, tea.Cmd
 	a.recalcLayout()
 
 	// Save accumulated pipeline output to conversation history
-	agentCount := len(a.pipelineOutputs)
+	agentCount := len(a.hist.PipelineOutputs)
 	if agentCount > 0 {
-		combined := strings.Join(a.pipelineOutputs, "\n\n")
+		combined := strings.Join(a.hist.PipelineOutputs, "\n\n")
 		a.addToHistory(llm.Message{
 			Role:    "assistant",
 			Content: combined,
 		})
-		a.pipelineOutputs = nil
+		a.hist.PipelineOutputs = nil
 		a.saveMessageToDB("assistant", combined, "pipeline")
 	}
 
