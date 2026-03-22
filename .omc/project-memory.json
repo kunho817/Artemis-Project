@@ -117,6 +117,18 @@
       "type": "file"
     },
     {
+      "path": "C:\\Users\\kunho\\.config\\opencode\\oh-my-opencode.json",
+      "accessCount": 10,
+      "lastAccessed": 1774194352372,
+      "type": "file"
+    },
+    {
+      "path": "C:\\Users\\kunho\\.config\\opencode\\opencode.json",
+      "accessCount": 8,
+      "lastAccessed": 1774191177864,
+      "type": "file"
+    },
+    {
       "path": "tests\\integration\\e2e\\context.go",
       "accessCount": 5,
       "lastAccessed": 1774170611380,
@@ -126,6 +138,18 @@
       "path": "internal\\orchestrator\\engine.go",
       "accessCount": 3,
       "lastAccessed": 1774170645426,
+      "type": "file"
+    },
+    {
+      "path": "internal\\vision",
+      "accessCount": 3,
+      "lastAccessed": 1774178192604,
+      "type": "directory"
+    },
+    {
+      "path": "C:\\Users\\kunho\\.local\\share\\opencode\\auth.json",
+      "accessCount": 3,
+      "lastAccessed": 1774192088226,
       "type": "file"
     },
     {
@@ -153,15 +177,15 @@
       "type": "directory"
     },
     {
-      "path": "internal\\vision",
-      "accessCount": 2,
-      "lastAccessed": 1774171219386,
-      "type": "directory"
-    },
-    {
       "path": "internal\\vision\\config.go",
       "accessCount": 2,
       "lastAccessed": 1774171228162,
+      "type": "file"
+    },
+    {
+      "path": "tests\\integration\\visual\\vision_test.go",
+      "accessCount": 2,
+      "lastAccessed": 1774178203782,
       "type": "file"
     },
     {
@@ -277,6 +301,18 @@
       "accessCount": 1,
       "lastAccessed": 1774170801679,
       "type": "file"
+    },
+    {
+      "path": "internal\\vision\\rate_limiter.go",
+      "accessCount": 1,
+      "lastAccessed": 1774178192132,
+      "type": "file"
+    },
+    {
+      "path": "C:\\Users\\kunho\\AppData\\Local\\Temp\\claude\\D--Artemis-Project\\tasks\\b637264.output",
+      "accessCount": 1,
+      "lastAccessed": 1774192416238,
+      "type": "file"
     }
   ],
   "userDirectives": [],
@@ -308,6 +344,14 @@
     {
       "category": "test-status",
       "content": "Integration tests: Agent (7/7 PASS), Memory (13/13 PASS), Shell (6/8 PASS, 2 env failures), E2E (mixed after deadlock fix)."
+    },
+    {
+      "category": "commit",
+      "content": "Commit cff7225: Phase B visual testing framework + integration test improvements. 73 files, 17967 lines added."
+    },
+    {
+      "category": "verification",
+      "content": "Binary builds and runs successfully. Help command works. Ready for functional testing."
     }
   ],
   "directives": [
@@ -317,6 +361,7 @@
     "Phase B visual testing: Fix grid_based.go fmt.Sprintf errors, create scenarios/ directory, add test functions",
     "Phase B visual testing framework ~95% complete. EventCollector deadlock fixed, scenarios/ created with 3 files, all builds passing",
     "Use Gemini Flash as primary vision provider ($3/1K). Fallback: gemini → gpt → claude. Budget: $50. CI/CD workflows created but optional.",
-    "Phase B visual testing framework 100% complete. grid_based.go fmt.Sprintf errors fixed. All builds passing. Gemini Flash ($3/1K) configured as primary vision provider."
+    "Phase B visual testing framework 100% complete. grid_based.go fmt.Sprintf errors fixed. All builds passing. Gemini Flash ($3/1K) configured as primary vision provider.",
+    "Phase B visual testing framework 100% complete. EventCollector deadlock fixed. All builds passing. Ready for production testing."
   ]
 }

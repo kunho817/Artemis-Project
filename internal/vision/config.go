@@ -2,6 +2,7 @@
 package vision
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -10,13 +11,13 @@ import (
 
 // VisionConfig holds configuration for vision providers.
 type VisionConfig struct {
-	Providers map[string]ProviderConfig `json:"providers"`
-	Active    string                    `json:"active"`
-	Fallback  []string                  `json:"fallback"`
-	RateLimits map[string]int           `json:"rate_limits"`
-	CostLimits map[string]float64       `json:"cost_limits"`
-	Budget    float64                   `json:"budget"`
-	Debug     bool                      `json:"debug"`
+	Providers  map[string]ProviderConfig `json:"providers"`
+	Active     string                    `json:"active"`
+	Fallback   []string                  `json:"fallback"`
+	RateLimits map[string]int            `json:"rate_limits"`
+	CostLimits map[string]float64        `json:"cost_limits"`
+	Budget     float64                   `json:"budget"`
+	Debug      bool                      `json:"debug"`
 
 	mu sync.RWMutex
 }
@@ -111,14 +112,56 @@ func LoadConfigFromEnv() (*VisionConfig, error) {
 
 // LoadConfigFromFile loads configuration from a JSON file.
 func LoadConfigFromFile(path string) (*VisionConfig, error) {
-	// TODO: Implement JSON file loading
-	return nil, fmt.Errorf("not yet implemented")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read config file: %w", err)
+	}
+
+	var cfg VisionConfig
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return nil, fmt.Errorf("failed to parse config file: %w", err)
+	}
+
+	// Initialize maps if nil
+	if cfg.Providers == nil {
+		cfg.Providers = make(map[string]ProviderConfig)
+	}
+	if cfg.RateLimits == nil {
+		cfg.RateLimits = make(map[string]int)
+	}
+	if cfg.CostLimits == nil {
+		cfg.CostLimits = make(map[string]float64)
+	}
+	if cfg.Fallback == nil {
+		cfg.Fallback = []string{"gemini", "gpt", "claude"}
+	}
+
+	return &cfg, nil
 }
 
 // SaveConfigToFile saves configuration to a JSON file.
 func (vc *VisionConfig) SaveConfigToFile(path string) error {
-	// TODO: Implement JSON file saving
-	return fmt.Errorf("not yet implemented")
+	vc.mu.RLock()
+	defer vc.mu.RUnlock()
+
+	// Ensure directory exists
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return fmt.Errorf("failed to create config directory: %w", err)
+	}
+
+	// Marshal to JSON with indentation
+	data, err := json.MarshalIndent(vc, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal config: %w", err)
+	}
+
+	// Write to file
+	if err := os.WriteFile(path, data, 0644); err != nil {
+		return fmt.Errorf("failed to write config file: %w", err)
+	}
+
+	return nil
 }
 
 // GetProvider returns the configuration for a specific provider.

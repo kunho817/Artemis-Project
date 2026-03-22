@@ -2,8 +2,10 @@
 package visual
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -139,11 +141,11 @@ type VisionConfig struct {
 // DefaultVisionConfig returns default vision configuration.
 func DefaultVisionConfig() *VisionConfig {
 	return &VisionConfig{
-		Strategy:    RouteByQuality,
-		Fallback:    []string{"claude", "gpt", "gemini"},
-		Timeout:     30 * time.Second,
-		MaxRetries:  3,
-		BudgetLimit: 10.0, // $10 per session
+		Strategy:     RouteByQuality,
+		Fallback:     []string{"claude", "gpt", "gemini"},
+		Timeout:      30 * time.Second,
+		MaxRetries:   3,
+		BudgetLimit:  10.0, // $10 per session
 		CurrentSpend: 0.0,
 	}
 }
@@ -236,7 +238,7 @@ func (vc *VisionClient) BatchAnalysis(ctx context.Context, requests []AnalysisRe
 
 	// Create channels
 	type resultPair struct {
-		index int
+		index  int
 		result *AnalysisResult
 	}
 	resultChan := make(chan resultPair, len(requests))
@@ -322,9 +324,47 @@ func NewHTTPClient(apiKey, baseURL string) *HTTPClient {
 
 // PostJSON sends a JSON POST request.
 func (h *HTTPClient) PostJSON(ctx context.Context, endpoint string, body interface{}) ([]byte, error) {
-	// This is a placeholder - actual implementation would use json.Marshal
-	// and set proper headers (Content-Type, Authorization, etc.)
-	return nil, fmt.Errorf("HTTPClient.PostJSON not implemented")
+	// Marshal body to JSON
+	jsonData, err := json.Marshal(body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request body: %w", err)
+	}
+
+	// Build full URL
+	fullURL := h.baseURL + endpoint
+
+	// Create request with context
+	req, err := http.NewRequestWithContext(ctx, "POST", fullURL, bytes.NewReader(jsonData))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	// Set headers
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("User-Agent", h.userAgent)
+	if h.apiKey != "" {
+		req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", h.apiKey))
+	}
+
+	// Send request
+	resp, err := h.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	// Read response body
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response: %w", err)
+	}
+
+	// Check status code
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("API error (status %d): %s", resp.StatusCode, string(respBody))
+	}
+
+	return respBody, nil
 }
 
 // DownloadImage downloads an image from a URL.
