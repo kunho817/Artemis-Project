@@ -1,0 +1,7 @@
+{
+  "tool_name": "Bash",
+  "tool_input_preview": "{\"command\":\"cd /d/Artemis_Project && go test -v ./tests/integration/visual/prompts/... -timeout 30s\",\"timeout\":60000,\"description\":\"Test prompts after final fix\"}",
+  "error": "Exit code 1\n# github.com/artemis-project/artemis/tests/integration/visual/prompts\ntests\\integration\\visual\\prompts\\grid_based.go:230:32: fmt.Sprintf format %d reads arg #17, but call has 16 args\nFAIL\tgithub.com/artemis-project/artemis/tests/integration/visual/prompts [build failed]\nFAIL\n\n# github.com/artemis-project/artemis/tests/integration/visual/prompts\ntests\\integration\\visual\\prompts\\grid_based.go:230:32: fmt.Sprintf format %d reads arg #17, but call has 16 args\nFAIL\tgithub.com/artemis-proj...",
+  "timestamp": "2026-03-22T09:55:58.100Z",
+  "retry_count": 5
+}

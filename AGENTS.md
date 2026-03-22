@@ -225,6 +225,9 @@ D:\Artemis_Project\
 | #32-#34 | 2026-03-17 | 문서화 (README.md + 3 가이드) |
 | #35 | 2026-03-17~18 | Phase F (UI 고도화) + Dogfooding (AD 구현) + CLI/Headless + 안정화 + 성능 최적화 + 시그니처 기능 5개 (ARTEMIS.md, Hooks, Worktree Race, Context Engine, Flow Awareness) |
 | #36 | 2026-03-19 | TUI 대개편 5-Phase: P1 고루틴 안정화 (5 leak fix), P2 스타일 통합 (13 hardcoded→theme), P3 컴포넌트 분해 (configview 1134→465, app 911→685, +4 new files), P4 레이아웃 현대화 (computeLayout, 동적 key hints, min 80×24), P5 App 분해 (3 sub-structs, shutdown 통합, 스트리밍 문서화) |
+| #37 | 2026-03-21 | Plan Mode 진입, 시스템 구조 분석 (TUI→Orchestrator→Agent→LLM 데이터 흐름), 화면 인식 테스트 구현 계획 수립 (Phase A: 시스템 통합, Phase B: 화면 인식 테스트 프레임워크, Phase C: CI/CD 통합), "배치 무시 환각" 해결 방안 (YOLOv9 + VLM 조합, Grid-based 프롬프트, 90%+ 정확도 목표) |
+| #38 | 2026-03-22 | Phase A 시스템 통합 테스트 구현 완료: E2E (tui_test.go 11개, pipeline_test.go 8개), Tools (shell_execution_test.go 8개, lsp_test.go 10개, mcp_test.go 6개, file_operations_test.go 7개), Memory (sqlite_test.go 11개, checkpoint_test.go 8개, vector_test.go 4개, consolidation_test.go 8개) — 총 81개 통합 테스트 작성, 모든 테스트 통과 (PASS), 커버리지 20%→70%+ 목표 진행 중 |
+| #39 | 2026-03-22 | Phase B 화면 인식 테스트 프레임워크 구현 시작: B.1 Visual capture 인프라 (capture.go, vision.go, vision_router.go, validators.go) 완료, B.2 Vision Provider 구현 (claude_vision.go, gpt_vision.go, gemini_vision.go) 완료 — ModelViewCapturer (CI 친화적), PlatformCapturer (Windows/macOS/Linux), VisionRouter (비용/품질/속도 전략), ValidationSuite (Content/Layout/Semantic/Composite validators) 구현 |
 
 ---
 

@@ -16,6 +16,10 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
+
+	"github.com/artemis-project/artemis/internal/process"
+	"github.com/artemis-project/artemis/internal/recovery"
 )
 
 // --- JSON-RPC 2.0 types (shared with LSP) ---
@@ -139,10 +143,12 @@ func NewClient(ctx context.Context, id, command string, args []string, env map[s
 		pending:  make(map[int64]chan *jsonRPCResponse),
 	}
 
-	// Start response reader
-	go c.readLoop()
-	// Drain stderr
-	go io.Copy(io.Discard, stderr)
+	// Start response reader with panic recovery
+	go recovery.SafeGoroutine(c.readLoop)
+	// Drain stderr with panic recovery
+	go recovery.SafeGoroutine(func() {
+		io.Copy(io.Discard, stderr)
+	})
 
 	return c, nil
 }
@@ -196,16 +202,39 @@ func (c *Client) Initialize(ctx context.Context) error {
 }
 
 // Shutdown gracefully shuts down the MCP server.
+// Implements SIGTERM → SIGKILL pattern with 10-second timeout.
 func (c *Client) Shutdown() {
 	if atomic.LoadInt32(&c.closed) == 1 {
 		return
 	}
 	atomic.StoreInt32(&c.closed, 1)
 	c.stdin.Close()
-	_ = c.cmd.Wait()
-	// Force kill if still running (prevents orphaned processes)
-	if c.cmd.Process != nil {
-		_ = c.cmd.Process.Kill()
+
+	// Create context with timeout for shutdown
+	ctx, cancel := context.WithTimeout(context.Background(), process.DefaultKillTimeout)
+	defer cancel()
+
+	// Wait briefly for graceful exit (1 second)
+	waitDone := make(chan error, 1)
+	go func() {
+		waitDone <- c.cmd.Wait()
+	}()
+
+	select {
+	case <-waitDone:
+		// Process exited gracefully
+		return
+	case <-time.After(1 * time.Second):
+		// Timeout - use ProcessKiller for force termination
+		if c.cmd.Process != nil {
+			killer := process.NewProcessKiller(process.DefaultKillTimeout)
+			_ = killer.Kill(ctx, c.cmd)
+		}
+	case <-ctx.Done():
+		// Context cancelled - force kill
+		if c.cmd.Process != nil {
+			_ = c.cmd.Process.Kill()
+		}
 	}
 }
 

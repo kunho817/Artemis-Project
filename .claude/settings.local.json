@@ -1,0 +1,19 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(go version:*)",
+      "Bash(wc:*)",
+      "Bash(go test:*)",
+      "Bash(golangci-lint:*)",
+      "Bash(go build:*)",
+      "Bash(go list:*)",
+      "Bash(git checkout:*)",
+      "Bash(node:*)",
+      "mcp__plugin_oh-my-claudecode_t__project_memory_write",
+      "mcp__plugin_oh-my-claudecode_t__state_write",
+      "Bash(set CGO_ENABLED=1:*)",
+      "mcp__plugin_oh-my-claudecode_t__state_clear",
+      "Bash(git add:*)"
+    ]
+  }
+}

@@ -23,6 +23,7 @@ import (
 	"github.com/artemis-project/artemis/internal/lsp"
 	"github.com/artemis-project/artemis/internal/mcp"
 	"github.com/artemis-project/artemis/internal/memory"
+	"github.com/artemis-project/artemis/internal/recovery"
 	"github.com/artemis-project/artemis/internal/state"
 	"github.com/artemis-project/artemis/internal/tools"
 	"github.com/artemis-project/artemis/internal/tui/theme"
@@ -397,7 +398,7 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return a.executeResume(msg.Run)
 		case "discard":
 			run := msg.Run
-			go func() {
+			go recovery.SafeGoroutine(func() {
 				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 				defer cancel()
 				if a.checkpointStore != nil {
@@ -406,7 +407,7 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if a.memStore != nil {
 					_ = a.memStore.UpdatePipelineRun(ctx, run.RunID, "failed")
 				}
-			}()
+			})
 			a.chat.AddMessage(ChatMessage{Role: RoleSystem, Content: "Incomplete pipeline run discarded."})
 		case "cancel":
 			// Do nothing — ignore for now
@@ -693,7 +694,7 @@ func (a *App) shutdown() {
 	// 2. Wait for pipeline goroutine
 	if a.pipelineWg != nil {
 		done := make(chan struct{})
-		go func() { a.pipelineWg.Wait(); close(done) }()
+		go recovery.SafeGoroutine(func() { a.pipelineWg.Wait(); close(done) })
 		select {
 		case <-done:
 		case <-time.After(3 * time.Second):

@@ -2,6 +2,7 @@ package llm
 
 import (
 	"context"
+	"net"
 	"net/http"
 	"time"
 
@@ -9,14 +10,20 @@ import (
 )
 
 // newHTTPClient creates a properly configured HTTP client for LLM API calls.
-// Prevents the default zero-timeout http.Client that causes "context deadline exceeded" errors.
+// Uses standardized timeouts from timeout.go to prevent infinite waits.
 func newHTTPClient() *http.Client {
 	return &http.Client{
-		Timeout: 0, // no timeout — AI responses can take arbitrarily long
+		Timeout: HTTPClientTimeout,
 		Transport: &http.Transport{
 			MaxIdleConns:        100,
 			MaxIdleConnsPerHost: 10,
 			IdleConnTimeout:     90 * time.Second,
+			// Connection timeouts to prevent hanging on dead connections
+			DialContext:           (&net.Dialer{Timeout: DialTimeout}).DialContext,
+			TLSHandshakeTimeout:   TLSHandshakeTimeout,
+			ResponseHeaderTimeout: ResponseHeaderTimeout,
+			// Force HTTP/2 for better performance
+			ForceAttemptHTTP2:     true,
 		},
 	}
 }

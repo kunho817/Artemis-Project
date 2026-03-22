@@ -11,6 +11,7 @@ import (
 
 	"github.com/artemis-project/artemis/internal/agent"
 	"github.com/artemis-project/artemis/internal/bus"
+	"github.com/artemis-project/artemis/internal/recovery"
 	"github.com/artemis-project/artemis/internal/state"
 )
 
@@ -199,6 +200,9 @@ func (e *Engine) runPhase(ctx context.Context, phase *Phase, ss *state.SessionSt
 		a := a // capture loop variable
 
 		g.Go(func() error {
+			// Recover from panics to prevent crashing entire errgroup
+			defer recovery.HandlePanic()
+
 			// Check if a critical sibling already failed
 			criticalMu.Lock()
 			failed := criticalFailed
@@ -732,10 +736,10 @@ func (e *Engine) saveStepCheckpoint(ctx context.Context, ss *state.SessionState,
 	}
 
 	// Best-effort save — don't block pipeline on checkpoint failure
-	go func() {
+	go recovery.SafeGoroutine(func() {
 		bgCtx := context.Background()
 		_ = e.checkpointStore.SaveCheckpoint(bgCtx, cp)
-	}()
+	})
 }
 
 // RunPlanFromStep resumes a plan execution from a specific step index.

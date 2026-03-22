@@ -1,0 +1,133 @@
+{
+  "updatedAt": "2026-03-22T09:57:28.607Z",
+  "missions": [
+    {
+      "id": "session:d5a52451-aa6c-4569-987d-7fef1964fc27:none",
+      "source": "session",
+      "name": "none",
+      "objective": "Session mission",
+      "createdAt": "2026-03-22T03:05:51.085Z",
+      "updatedAt": "2026-03-22T03:17:29.015Z",
+      "status": "done",
+      "workerCount": 1,
+      "taskCounts": {
+        "total": 1,
+        "pending": 0,
+        "blocked": 0,
+        "inProgress": 0,
+        "completed": 1,
+        "failed": 0
+      },
+      "agents": [
+        {
+          "name": "planner:a20a887",
+          "role": "planner",
+          "ownership": "a20a887",
+          "status": "done",
+          "currentStep": null,
+          "latestUpdate": "completed",
+          "completedSummary": null,
+          "updatedAt": "2026-03-22T03:17:29.015Z"
+        }
+      ],
+      "timeline": [
+        {
+          "id": "session-start:a20a887:2026-03-22T03:05:51.085Z",
+          "at": "2026-03-22T03:05:51.085Z",
+          "kind": "update",
+          "agent": "planner:a20a887",
+          "detail": "started planner:a20a887",
+          "sourceKey": "session-start:a20a887"
+        },
+        {
+          "id": "session-stop:a20a887:2026-03-22T03:17:29.015Z",
+          "at": "2026-03-22T03:17:29.015Z",
+          "kind": "completion",
+          "agent": "planner:a20a887",
+          "detail": "completed",
+          "sourceKey": "session-stop:a20a887"
+        }
+      ]
+    },
+    {
+      "id": "session:d5a52451-aa6c-4569-987d-7fef1964fc27:team",
+      "source": "session",
+      "name": "team",
+      "objective": "Session mission",
+      "createdAt": "2026-03-22T08:21:35.329Z",
+      "updatedAt": "2026-03-22T09:57:28.607Z",
+      "status": "done",
+      "workerCount": 1,
+      "taskCounts": {
+        "total": 1,
+        "pending": 0,
+        "blocked": 0,
+        "inProgress": 0,
+        "completed": 1,
+        "failed": 0
+      },
+      "agents": [
+        {
+          "name": "executor:a9d6b5e",
+          "role": "executor",
+          "ownership": "a9d6b5e",
+          "status": "done",
+          "currentStep": null,
+          "latestUpdate": "completed",
+          "completedSummary": null,
+          "updatedAt": "2026-03-22T09:57:28.607Z"
+        }
+      ],
+      "timeline": [
+        {
+          "id": "session-start:a9d6b5e:2026-03-22T08:21:35.329Z",
+          "at": "2026-03-22T08:21:35.329Z",
+          "kind": "update",
+          "agent": "executor:a9d6b5e",
+          "detail": "started executor:a9d6b5e",
+          "sourceKey": "session-start:a9d6b5e"
+        },
+        {
+          "id": "session-stop:a9d6b5e:2026-03-22T08:51:16.476Z",
+          "at": "2026-03-22T08:51:16.476Z",
+          "kind": "completion",
+          "agent": "executor:a9d6b5e",
+          "detail": "completed",
+          "sourceKey": "session-stop:a9d6b5e"
+        },
+        {
+          "id": "session-stop:a15695e:2026-03-22T08:51:42.076Z",
+          "at": "2026-03-22T08:51:42.076Z",
+          "kind": "completion",
+          "agent": "executor:a9d6b5e",
+          "detail": "completed",
+          "sourceKey": "session-stop:a15695e"
+        },
+        {
+          "id": "session-stop:a75c23c:2026-03-22T09:14:07.602Z",
+          "at": "2026-03-22T09:14:07.602Z",
+          "kind": "completion",
+          "agent": "executor:a9d6b5e",
+          "detail": "completed",
+          "sourceKey": "session-stop:a75c23c"
+        },
+        {
+          "id": "session-stop:a607cfb:2026-03-22T09:32:01.758Z",
+          "at": "2026-03-22T09:32:01.758Z",
+          "kind": "completion",
+          "agent": "executor:a9d6b5e",
+          "detail": "completed",
+          "sourceKey": "session-stop:a607cfb"
+        },
+        {
+          "id": "session-stop:a521804:2026-03-22T09:57:28.607Z",
+          "at": "2026-03-22T09:57:28.607Z",
+          "kind": "completion",
+          "agent": "executor:a9d6b5e",
+          "detail": "completed",
+          "sourceKey": "session-stop:a521804"
+        }
+      ]
+    }
+  ]
+}

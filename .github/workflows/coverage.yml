@@ -1,0 +1,202 @@
+name: Coverage
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+jobs:
+  coverage:
+    name: Code Coverage
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gopls
+
+      - name: Download Go modules
+        run: go mod download
+
+      - name: Run tests with coverage
+        env:
+          ARTEMIS_CLAUDE_API_KEY: ${{ secrets.ARTEMIS_CLAUDE_API_KEY }}
+          ARTEMIS_GEMINI_API_KEY: ${{ secrets.ARTEMIS_GEMINI_API_KEY }}
+          ARTEMIS_GPT_API_KEY: ${{ secrets.ARTEMIS_GPT_API_KEY }}
+        run: |
+          go test -v -race -coverprofile=coverage.out -covermode=atomic ./...
+
+      - name: Generate coverage report
+        run: |
+          go tool cover -html=coverage.out -o coverage.html
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          files: ./coverage.out
+          flags: unittests
+          name: codecov-umbrella
+          fail_ci_if_error: false
+
+      - name: Upload coverage artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: |
+            coverage.out
+            coverage.html
+
+      - name: Display coverage summary
+        run: |
+          echo "=== Coverage Summary ==="
+          go tool cover -func=coverage.out | tail -1
+
+  coverage-by-package:
+    name: Coverage by Package
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+
+      - name: Download Go modules
+        run: go mod download
+
+      - name: Run coverage for each package
+        env:
+          ARTEMIS_CLAUDE_API_KEY: ${{ secrets.ARTEMIS_CLAUDE_API_KEY }}
+        run: |
+          # Test each package separately
+          for pkg in $(go list ./...); do
+            echo "Testing $pkg"
+            go test -race -coverprofile=$(echo $pkg | tr '/' '_')_coverage.out -covermode=atomic $pkg || true
+          done
+
+      - name: Generate coverage report
+        run: |
+          # Merge coverage files
+          go tool cover -func=coverage.out
+
+      - name: Upload coverage artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-by-package
+          path: |
+            *_coverage.out
+
+  integration-coverage:
+    name: Integration Test Coverage
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: artemis_test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+
+      - name: Download Go modules
+        run: go mod download
+
+      - name: Run integration tests with coverage
+        env:
+          TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/artemis_test?sslmode=disable
+          ARTEMIS_CLAUDE_API_KEY: ${{ secrets.ARTEMIS_CLAUDE_API_KEY }}
+        run: |
+          go test -v -race -coverprofile=integration_coverage.out -covermode=atomic ./tests/integration/...
+
+      - name: Generate integration coverage report
+        run: |
+          go tool cover -html=integration_coverage.out -o integration_coverage.html
+
+      - name: Upload integration coverage artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: integration-coverage-report
+          path: |
+            integration_coverage.out
+            integration_coverage.html
+
+      - name: Display integration coverage summary
+        run: |
+          echo "=== Integration Test Coverage Summary ==="
+          go tool cover -func=integration_coverage.out | tail -1
+
+  visual-coverage:
+    name: Visual Test Coverage
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Python dependencies
+        run: |
+          pip install ultralytics
+
+      - name: Download Go modules
+        run: go mod download
+
+      - name: Run visual tests with coverage
+        env:
+          ARTEMIS_CLAUDE_API_KEY: ${{ secrets.ARTEMIS_CLAUDE_API_KEY }}
+        run: |
+          go test -v -race -coverprofile=visual_coverage.out -covermode=atomic ./tests/integration/visual/... ./internal/vision/...
+
+      - name: Generate visual coverage report
+        run: |
+          go tool cover -html=visual_coverage.out -o visual_coverage.html
+
+      - name: Upload visual coverage artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: visual-coverage-report
+          path: |
+            visual_coverage.out
+            visual_coverage.html
+
+      - name: Display visual coverage summary
+        run: |
+          echo "=== Visual Test Coverage Summary ==="
+          go tool cover -func=visual_coverage.out | tail -1

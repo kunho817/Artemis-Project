@@ -14,6 +14,10 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
+
+	"github.com/artemis-project/artemis/internal/process"
+	"github.com/artemis-project/artemis/internal/recovery"
 )
 
 // --- JSON-RPC 2.0 types ---
@@ -197,10 +201,12 @@ func NewClient(ctx context.Context, lang, command string, args []string, rootDir
 		diagnostics: make(map[string][]Diagnostic),
 	}
 
-	// Start response reader goroutine
-	go c.readLoop()
-	// Drain stderr to prevent blocking
-	go io.Copy(io.Discard, stderr)
+	// Start response reader goroutine with panic recovery
+	go recovery.SafeGoroutine(c.readLoop)
+	// Drain stderr to prevent blocking with panic recovery
+	go recovery.SafeGoroutine(func() {
+		io.Copy(io.Discard, stderr)
+	})
 
 	return c, nil
 }
@@ -251,25 +257,44 @@ func (c *Client) Initialize(ctx context.Context) error {
 }
 
 // Shutdown gracefully shuts down the LSP server.
+// Implements SIGTERM → SIGKILL pattern with 10-second timeout.
 func (c *Client) Shutdown(ctx context.Context) error {
 	if atomic.LoadInt32(&c.closed) == 1 {
 		return nil
 	}
 	atomic.StoreInt32(&c.closed, 1)
 
-	// Try graceful shutdown first
+	// Try graceful shutdown first (LSP shutdown handshake)
 	var result json.RawMessage
 	_ = c.call(ctx, "shutdown", nil, &result)
 	_ = c.notify(ctx, "exit", nil)
 
 	c.stdin.Close()
-	err := c.cmd.Wait()
 
-	// Force kill if still running (prevents orphaned processes)
-	if c.cmd.Process != nil {
-		_ = c.cmd.Process.Kill()
+	// Wait briefly for graceful exit (1 second)
+	waitDone := make(chan error, 1)
+	go func() {
+		waitDone <- c.cmd.Wait()
+	}()
+
+	select {
+	case err := <-waitDone:
+		// Process exited gracefully
+		return err
+	case <-time.After(1 * time.Second):
+		// Timeout - use ProcessKiller for force termination
+		if c.cmd.Process != nil {
+			killer := process.NewProcessKiller(process.DefaultKillTimeout)
+			return killer.Kill(ctx, c.cmd)
+		}
+		return nil
+	case <-ctx.Done():
+		// Context cancelled - force kill
+		if c.cmd.Process != nil {
+			_ = c.cmd.Process.Kill()
+		}
+		return ctx.Err()
 	}
-	return err
 }
 
 // Language returns the language this client handles.
