@@ -106,6 +106,7 @@ Each mapping can be overridden with `ARTEMIS_GLM_MODEL_<ROLE>`.
 - [x] Read-only tool layer created.
 - [x] GLM model profile and role routing created.
 - [x] MVP 1 contract tests created.
+- [x] Verification gaps addressed: real LangGraph path when installed, HTTP Agent Backend client boundary, artifact events, and safe git status.
 
 ### Pending
 
@@ -121,7 +122,7 @@ Each mapping can be overridden with `ARTEMIS_GLM_MODEL_<ROLE>`.
 |---------|------|------|
 | #40 | 2026-05-08 | New Artemis redesign direction confirmed. MVP 1 design document created. |
 | #41 | 2026-05-08 | `legacy/go-tui` branch pushed, old Go TUI removed from main, MVP 1 Python backend foundation started with GLM Coding Plan routing. |
-| #42 | 2026-05-08 | MVP 1 implementation verification run. Contract tests and compile checks passed; real LangGraph execution, live LangSmith tracing, and live GLM structured generation remain follow-up gaps. |
+| #42 | 2026-05-08 | MVP 1 verification run recorded. Follow-up patch added real LangGraph execution path, optional live LangSmith trace context, HTTP Agent Backend boundary, artifact events, and safe git status handling. |
 
 ## Session Rules
 

@@ -1,8 +1,9 @@
-"""MVP 1 LangGraph-style root workflow."""
+"""MVP 1 LangGraph root workflow."""
 
 from __future__ import annotations
 
 import re
+from typing import Any, TypedDict
 
 from .config import model_for_role
 from .observability import LangSmithTracer
@@ -19,23 +20,32 @@ from .schemas import (
 from .tools import ReadOnlyToolRouter
 
 
-def build_langgraph() -> object | None:
-    """Return a LangGraph skeleton when langgraph is installed.
+class ArtemisGraphState(TypedDict, total=False):
+    request: AgentBackendRequest
+    trace_id: str
+    trace_enabled: bool
+    events: list[AgentBackendEvent]
+    intent_result: IntentResult
+    context_summary: ContextSummary
+    work_package: WorkPackageDraft
+    validation_errors: list[str]
+    status: str
 
-    Contract tests do not require the dependency, so this stays optional.
-    """
+
+def build_langgraph(runner: "MVP1GraphRunner") -> object | None:
+    """Build the actual LangGraph workflow when the dependency is installed."""
 
     try:
-        from langgraph.graph import END, StateGraph
+        from langgraph.graph import END, START, StateGraph
     except ImportError:
         return None
 
-    graph = StateGraph(dict)
-    graph.add_node("classify_intent", lambda state: state)
-    graph.add_node("collect_context", lambda state: state)
-    graph.add_node("create_work_package", lambda state: state)
-    graph.add_node("validate_work_package", lambda state: state)
-    graph.set_entry_point("classify_intent")
+    graph = StateGraph(ArtemisGraphState)
+    graph.add_node("classify_intent", runner._node_classify_intent)
+    graph.add_node("collect_context", runner._node_collect_context)
+    graph.add_node("create_work_package", runner._node_create_work_package)
+    graph.add_node("validate_work_package", runner._node_validate_work_package)
+    graph.add_edge(START, "classify_intent")
     graph.add_edge("classify_intent", "collect_context")
     graph.add_edge("collect_context", "create_work_package")
     graph.add_edge("create_work_package", "validate_work_package")
@@ -53,57 +63,151 @@ class MVP1GraphRunner:
             session_id=request.session_id,
             agent_run_id=request.agent_run_id,
         )
-        events: list[AgentBackendEvent] = [
-            AgentBackendEvent("trace.langsmith_linked", {"trace_id": trace.trace_id})
+        state: ArtemisGraphState = {
+            "request": request,
+            "trace_id": trace.trace_id,
+            "trace_enabled": trace.enabled,
+            "events": [
+                AgentBackendEvent(
+                    "trace.langsmith_linked",
+                    {
+                        "trace_id": trace.trace_id,
+                        "run_id": trace.run_id,
+                        "live": trace.enabled and trace.live_tracing_available,
+                        "requested": trace.requested,
+                        "api_key_available": trace.api_key_available,
+                    },
+                )
+            ],
+        }
+        inputs = {
+            "project_id": request.project_id,
+            "session_id": request.session_id,
+            "agent_run_id": request.agent_run_id,
+            "user_request": request.user_request,
+        }
+        metadata = {
+            "project_id": request.project_id,
+            "session_id": request.session_id,
+            "agent_run_id": request.agent_run_id,
+        }
+
+        with self.tracer.trace_run(
+            trace,
+            name="artemis_mvp1_root_graph",
+            inputs=inputs,
+            metadata=metadata,
+        ) as run:
+            final_state = self._execute_workflow(state)
+            self.tracer.end_trace(
+                run,
+                outputs={
+                    "status": final_state.get("status", "failed"),
+                    "intent": final_state.get("intent_result").intent
+                    if final_state.get("intent_result")
+                    else None,
+                },
+            )
+
+        return self._result_from_state(final_state)
+
+    def _execute_workflow(self, state: ArtemisGraphState) -> ArtemisGraphState:
+        graph = build_langgraph(self)
+        if graph is not None:
+            state["events"] = [
+                *state.get("events", []),
+                AgentBackendEvent("agent_run.graph_runtime", {"runtime": "langgraph"}),
+            ]
+            return graph.invoke(state)
+
+        state["events"] = [
+            *state.get("events", []),
+            AgentBackendEvent("agent_run.graph_runtime", {"runtime": "sequential_fallback"}),
         ]
+        for node in (
+            self._node_classify_intent,
+            self._node_collect_context,
+            self._node_create_work_package,
+            self._node_validate_work_package,
+        ):
+            updates = node(state)
+            state = {**state, **updates}
+        return state
 
-        events.append(AgentBackendEvent("agent_run.phase_changed", {"phase": "classify_intent"}))
-        intent = self.classify_intent(request.user_request)
+    def _node_classify_intent(self, state: ArtemisGraphState) -> ArtemisGraphState:
+        request = state["request"]
+        return {
+            "events": [
+                *state.get("events", []),
+                AgentBackendEvent("agent_run.phase_changed", {"phase": "classify_intent"}),
+            ],
+            "intent_result": self.classify_intent(request.user_request),
+        }
 
-        events.append(AgentBackendEvent("agent_run.phase_changed", {"phase": "collect_context"}))
-        events.append(AgentBackendEvent("context.collection_started", {}))
+    def _node_collect_context(self, state: ArtemisGraphState) -> ArtemisGraphState:
+        request = state["request"]
+        intent = state["intent_result"]
         context = self.collect_context(request, intent.intent)
-        events.append(
-            AgentBackendEvent(
-                "context.collection_completed",
-                {"files_considered": len(context.files_considered)},
-            )
-        )
+        return {
+            "events": [
+                *state.get("events", []),
+                AgentBackendEvent("agent_run.phase_changed", {"phase": "collect_context"}),
+                AgentBackendEvent("context.collection_started", {}),
+                AgentBackendEvent(
+                    "context.collection_completed",
+                    {"files_considered": len(context.files_considered)},
+                ),
+            ],
+            "context_summary": context,
+        }
 
-        events.append(AgentBackendEvent("agent_run.phase_changed", {"phase": "create_work_package"}))
+    def _node_create_work_package(self, state: ArtemisGraphState) -> ArtemisGraphState:
+        request = state["request"]
+        intent = state["intent_result"]
+        context = state["context_summary"]
         work_package = self.create_work_package(request, intent, context)
-        events.append(
-            AgentBackendEvent(
-                "work_package.draft_created",
-                {"title": work_package.title, "risk_level": work_package.risks[0].level},
-            )
-        )
+        return {
+            "events": [
+                *state.get("events", []),
+                AgentBackendEvent("agent_run.phase_changed", {"phase": "create_work_package"}),
+                AgentBackendEvent(
+                    "work_package.draft_created",
+                    {"title": work_package.title, "risk_level": work_package.risks[0].level},
+                ),
+            ],
+            "work_package": work_package,
+        }
 
-        events.append(AgentBackendEvent("agent_run.phase_changed", {"phase": "validate_work_package"}))
+    def _node_validate_work_package(self, state: ArtemisGraphState) -> ArtemisGraphState:
+        work_package = state["work_package"]
         errors = work_package.validate()
+        events = [
+            *state.get("events", []),
+            AgentBackendEvent("agent_run.phase_changed", {"phase": "validate_work_package"}),
+        ]
         if errors:
             events.append(AgentBackendEvent("work_package.validation_failed", {"errors": errors}))
-            return FinalAgentRunResult(
-                status="failed",
-                intent_result=intent,
-                context_summary=context,
-                work_package=work_package,
-                risk_hints=work_package.risks,
-                langsmith_trace_id=trace.trace_id,
-                events=events,
-                errors=errors,
-            )
+            return {"events": events, "validation_errors": errors, "status": "failed"}
 
         events.append(AgentBackendEvent("work_package.validation_passed", {}))
         events.append(AgentBackendEvent("agent_run.completed", {}))
+        return {"events": events, "validation_errors": [], "status": "completed"}
+
+    def _result_from_state(self, state: ArtemisGraphState) -> FinalAgentRunResult:
+        intent = state["intent_result"]
+        context = state["context_summary"]
+        work_package = state.get("work_package")
+        errors = state.get("validation_errors", [])
+        status = "failed" if errors else "completed"
         return FinalAgentRunResult(
-            status="completed",
+            status=status,
             intent_result=intent,
             context_summary=context,
             work_package=work_package,
-            risk_hints=work_package.risks,
-            langsmith_trace_id=trace.trace_id,
-            events=events,
+            risk_hints=work_package.risks if work_package else [],
+            langsmith_trace_id=state["trace_id"],
+            events=state.get("events", []),
+            errors=errors,
         )
 
     def classify_intent(self, user_request: str) -> IntentResult:

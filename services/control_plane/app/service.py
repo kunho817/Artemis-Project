@@ -5,9 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from services.agent_backend.app.schemas import AgentBackendRequest
-from services.agent_backend.app.service import AgentBackendService
-
+from .agent_client import AgentBackendClient, HTTPAgentBackendClient
 from .storage import SQLiteStore
 
 
@@ -15,10 +13,10 @@ class ControlPlaneService:
     def __init__(
         self,
         store: SQLiteStore,
-        agent_backend: AgentBackendService | None = None,
+        agent_backend: AgentBackendClient | None = None,
     ) -> None:
         self.store = store
-        self.agent_backend = agent_backend or AgentBackendService()
+        self.agent_backend = agent_backend or HTTPAgentBackendClient()
 
     def open_project(self, *, name: str, root_path: str) -> dict[str, Any]:
         project = self.store.create_project(name=name, root_path=str(Path(root_path).resolve()))
@@ -53,58 +51,58 @@ class ControlPlaneService:
         )
 
         backend_result = self.agent_backend.run_agent(
-            AgentBackendRequest(
-                project_id=project["id"],
-                session_id=session["id"],
-                agent_run_id=run.id,
-                user_request=user_request,
-                project_root=project["root_path"],
-            )
+            {
+                "project_id": project["id"],
+                "session_id": session["id"],
+                "agent_run_id": run.id,
+                "user_request": user_request,
+                "project_root": project["root_path"],
+            }
         )
-        for event in backend_result.events:
+        for event in backend_result["events"]:
             self.store.append_event(
                 project_id=project["id"],
                 session_id=session["id"],
                 agent_run_id=run.id,
-                event_type=event.type,
-                payload=event.payload,
+                event_type=event["type"],
+                payload=event["payload"],
             )
 
         self.store.update_agent_run(
             run.id,
-            status=backend_result.status,
-            intent=backend_result.intent_result.intent,
-            current_phase="completed" if backend_result.status == "completed" else "failed",
-            langsmith_trace_id=backend_result.langsmith_trace_id,
+            status=backend_result["status"],
+            intent=backend_result["intent_result"]["intent"],
+            current_phase="completed" if backend_result["status"] == "completed" else "failed",
+            langsmith_trace_id=backend_result["langsmith_trace_id"],
         )
 
-        self.store.create_artifact(
+        self._create_artifact_and_event(
             project_id=project["id"],
             session_id=session["id"],
             source_agent_run_id=run.id,
             artifact_type="intent_result",
             title="Intent Result",
-            payload=backend_result.intent_result.to_dict(),
+            payload=backend_result["intent_result"],
         )
-        self.store.create_artifact(
+        self._create_artifact_and_event(
             project_id=project["id"],
             session_id=session["id"],
             source_agent_run_id=run.id,
             artifact_type="context_summary",
             title="Context Summary",
-            payload=backend_result.context_summary.to_dict(),
+            payload=backend_result["context_summary"],
         )
 
-        if backend_result.status != "completed" or backend_result.work_package is None:
+        if backend_result["status"] != "completed" or backend_result["work_package"] is None:
             return {
                 "agent_run_id": run.id,
-                "status": backend_result.status,
-                "errors": backend_result.errors,
-                "langsmith_trace_id": backend_result.langsmith_trace_id,
+                "status": backend_result["status"],
+                "errors": backend_result["errors"],
+                "langsmith_trace_id": backend_result["langsmith_trace_id"],
             }
 
-        draft = backend_result.work_package.to_dict()
-        self.store.create_artifact(
+        draft = backend_result["work_package"]
+        self._create_artifact_and_event(
             project_id=project["id"],
             session_id=session["id"],
             source_agent_run_id=run.id,
@@ -160,7 +158,7 @@ class ControlPlaneService:
             "work_package_id": package.id,
             "approval_id": approval.id,
             "status": "pending_approval",
-            "langsmith_trace_id": backend_result.langsmith_trace_id,
+            "langsmith_trace_id": backend_result["langsmith_trace_id"],
         }
 
     def resolve_approval(self, *, approval_id: str, status: str) -> dict[str, Any]:
@@ -178,3 +176,34 @@ class ControlPlaneService:
             },
         )
         return approval
+
+    def _create_artifact_and_event(
+        self,
+        *,
+        project_id: str,
+        session_id: str,
+        source_agent_run_id: str,
+        artifact_type: str,
+        title: str,
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        artifact = self.store.create_artifact(
+            project_id=project_id,
+            session_id=session_id,
+            source_agent_run_id=source_agent_run_id,
+            artifact_type=artifact_type,
+            title=title,
+            payload=payload,
+        )
+        self.store.append_event(
+            project_id=project_id,
+            session_id=session_id,
+            agent_run_id=source_agent_run_id,
+            event_type="artifact.created",
+            payload={
+                "artifact_id": artifact.id,
+                "type": artifact.type,
+                "title": artifact.title,
+            },
+        )
+        return artifact.to_dict()

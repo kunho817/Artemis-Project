@@ -20,6 +20,7 @@ The old Go TUI implementation is preserved on the `legacy/go-tui` branch.
 
 - Control Plane owns product state, approvals, events, and artifacts.
 - Agent Backend owns intent classification, read-only context collection, Work Package draft creation, and validation.
+- LangGraph is used for the root workflow when installed; a sequential fallback keeps local contract tests dependency-light.
 - Tool access is read-only: `read_file`, `list_files`, `grep`, `git_status`.
 - Z.AI GLM Coding Plan is the model provider for LangChain-backed calls.
 - Deterministic fallback behavior is available when no API key is configured.

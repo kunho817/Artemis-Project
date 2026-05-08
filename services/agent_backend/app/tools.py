@@ -99,7 +99,15 @@ class ReadOnlyToolRouter:
         self.assert_allowed("git_status")
         try:
             completed = subprocess.run(
-                ["git", "-C", str(self.repository_root), "status", "--short"],
+                [
+                    "git",
+                    "-c",
+                    f"safe.directory={self.repository_root.as_posix()}",
+                    "-C",
+                    str(self.repository_root),
+                    "status",
+                    "--short",
+                ],
                 check=False,
                 capture_output=True,
                 text=True,

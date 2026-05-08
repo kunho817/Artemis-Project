@@ -5,8 +5,10 @@ import tempfile
 import unittest
 
 from services.agent_backend.app.config import model_for_role
+from services.agent_backend.app.graph import MVP1GraphRunner, build_langgraph
 from services.agent_backend.app.schemas import RiskHint, WorkPackageDraft
 from services.agent_backend.app.tools import ReadOnlyToolRouter, ToolPermissionError
+from services.control_plane.app.agent_client import InProcessAgentBackendClient
 from services.control_plane.app.service import ControlPlaneService
 from services.control_plane.app.storage import SQLiteStore
 
@@ -52,6 +54,22 @@ class MVP1ContractTests(unittest.TestCase):
             with self.assertRaises(ToolPermissionError):
                 tools.read_file("../outside.txt")
 
+    def test_git_status_allows_current_repository_safe_directory(self) -> None:
+        root = Path.cwd()
+        if not (root / ".git").exists():
+            self.skipTest("repository root is not available")
+
+        result = ReadOnlyToolRouter(root).git_status()
+        self.assertTrue(result.ok, result.metadata)
+
+    def test_langgraph_builder_is_real_when_dependency_exists(self) -> None:
+        runner = MVP1GraphRunner()
+        graph = build_langgraph(runner)
+        if graph is None:
+            self.skipTest("langgraph is not installed")
+
+        self.assertTrue(hasattr(graph, "invoke"))
+
     def test_control_plane_agent_backend_contract(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -66,7 +84,7 @@ class MVP1ContractTests(unittest.TestCase):
             )
 
             store = SQLiteStore(root / "artemis.db", root / "events.jsonl")
-            service = ControlPlaneService(store)
+            service = ControlPlaneService(store, agent_backend=InProcessAgentBackendClient())
             project = service.open_project(name="test", root_path=str(project_root))
             session = service.create_session(project_id=project["id"], title="MVP1 test")
 
@@ -93,6 +111,8 @@ class MVP1ContractTests(unittest.TestCase):
             event_types = {event["type"] for event in events}
             self.assertIn("agent_run.created", event_types)
             self.assertIn("trace.langsmith_linked", event_types)
+            self.assertIn("agent_run.graph_runtime", event_types)
+            self.assertIn("artifact.created", event_types)
             self.assertIn("work_package.pending_approval", event_types)
             self.assertIn("approval.requested", event_types)
 
