@@ -33,6 +33,12 @@ package-lock.json
 # Artemis data
 .artemis/
 
+# Local archive of old Oh My Claude workspace state.
+# Keep raw session/state files on disk, but do not publish them.
+docs/archive/oh-my-claude/**
+!docs/archive/oh-my-claude/
+!docs/archive/oh-my-claude/README.md
+
 # Project knowledge base
 # AGENTS.md
 

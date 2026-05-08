@@ -1,7 +1,0 @@
-{
-  "tool_name": "Bash",
-  "tool_input_preview": "{\"command\":\"opencode providers logout zhipuai-coding-plan 2>&1\",\"description\":\"Z.ai 인증 삭제\"}",
-  "error": "Exit code 1\nopencode providers logout\n\nlog out from a configured provider\n\nOptions:\n  -h, --help        show help                                                              [boolean]\n  -v, --version     show version number                                                    [boolean]\n      --print-logs  print logs to stderr                                                   [boolean]\n      --log-level   log level                   [string] [choices: \"DEBUG\", \"INFO\", \"WARN\", \"ERROR\"]\n\nopencode pr...",
-  "timestamp": "2026-03-22T14:52:10.765Z",
-  "retry_count": 1
-}

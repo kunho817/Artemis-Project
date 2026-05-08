@@ -35,6 +35,8 @@
 D:\Artemis_Project\
 ├── cmd/artemis/main.go            # 엔트리포인트
 ├── docs/
+│   ├── artemis_planning.md        # 새 Artemis 재설계 기반 기획 문서 (Korean)
+│   ├── artemis_mvp1.md            # 새 Artemis MVP 1 설계 문서 (Korean)
 │   ├── getting-started.md         # 시작 가이드 (Korean)
 │   ├── architecture.md            # 아키텍처 개요 (Korean)
 │   └── configuration.md           # 설정 레퍼런스 (Korean)
@@ -204,6 +206,9 @@ D:\Artemis_Project\
 | **컨텍스트** | ContextBudget P0-P6 + CodeIndex + FlowTracker | 토큰 오버플로 방지 + 시맨틱 코드 자동 주입 + 작업 흐름 추적 |
 | **실패 복구** | 3-Stage (Retry → Consultant → User) + Replan | 자동 복구 시도 → 사용자 개입 최소화 |
 | **프로세스** | Force-kill + exec.CommandContext | 고아 프로세스 방지 |
+| **새 Artemis 재설계** | main=새 Artemis, legacy/go-tui=기존 Go TUI 보존 | 기존 구현은 Legacy 자산으로 남기고 GUI 기반 개발 조직 운영 시스템으로 재시작 |
+| **Backend 경계** | Control Plane과 Agent Backend 분리 | Control Plane은 승인/상태/결과물을 관리하고, Agent Backend는 LangGraph 기반 판단/계획을 담당 |
+| **관측성** | LangSmith 기본값 | Agent workflow, tool call, approval, 산출물을 기본 추적 대상으로 설정 |
 
 ---
 
@@ -228,6 +233,7 @@ D:\Artemis_Project\
 | #37 | 2026-03-21 | Plan Mode 진입, 시스템 구조 분석 (TUI→Orchestrator→Agent→LLM 데이터 흐름), 화면 인식 테스트 구현 계획 수립 (Phase A: 시스템 통합, Phase B: 화면 인식 테스트 프레임워크, Phase C: CI/CD 통합), "배치 무시 환각" 해결 방안 (YOLOv9 + VLM 조합, Grid-based 프롬프트, 90%+ 정확도 목표) |
 | #38 | 2026-03-22 | Phase A 시스템 통합 테스트 구현 완료: E2E (tui_test.go 11개, pipeline_test.go 8개), Tools (shell_execution_test.go 8개, lsp_test.go 10개, mcp_test.go 6개, file_operations_test.go 7개), Memory (sqlite_test.go 11개, checkpoint_test.go 8개, vector_test.go 4개, consolidation_test.go 8개) — 총 81개 통합 테스트 작성, 모든 테스트 통과 (PASS), 커버리지 20%→70%+ 목표 진행 중 |
 | #39 | 2026-03-22 | Phase B 화면 인식 테스트 프레임워크 구현 시작: B.1 Visual capture 인프라 (capture.go, vision.go, vision_router.go, validators.go) 완료, B.2 Vision Provider 구현 (claude_vision.go, gpt_vision.go, gemini_vision.go) 완료 — ModelViewCapturer (CI 친화적), PlatformCapturer (Windows/macOS/Linux), VisionRouter (비용/품질/속도 전략), ValidationSuite (Content/Layout/Semantic/Composite validators) 구현 |
+| #40 | 2026-05-08 | 새 Artemis 재설계 방향 확정: main=새 Artemis, legacy/go-tui=기존 구현 보존, Control Plane/Agent Backend 분리 원칙 확정, LangSmith 기본 관측 계층 채택, MVP 1 설계 문서 작성 (`docs/artemis_mvp1.md`) |
 
 ---
 
