@@ -172,7 +172,12 @@ class MVP1GraphRunner:
                 AgentBackendEvent("agent_run.phase_changed", {"phase": "create_work_package"}),
                 AgentBackendEvent(
                     "work_package.draft_created",
-                    {"title": work_package.title, "risk_level": work_package.risks[0].level},
+                    {
+                        "title": work_package.title,
+                        "risk_level": work_package.risks[0].level
+                        if work_package.risks
+                        else "unknown",
+                    },
                 ),
             ],
             "work_package": work_package,

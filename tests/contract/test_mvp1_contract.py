@@ -6,7 +6,7 @@ import unittest
 
 from services.agent_backend.app.config import model_for_role
 from services.agent_backend.app.graph import MVP1GraphRunner, build_langgraph
-from services.agent_backend.app.schemas import RiskHint, WorkPackageDraft
+from services.agent_backend.app.schemas import AgentBackendRequest, RiskHint, WorkPackageDraft
 from services.agent_backend.app.tools import ReadOnlyToolRouter, ToolPermissionError
 from services.control_plane.app.agent_client import InProcessAgentBackendClient
 from services.control_plane.app.service import ControlPlaneService
@@ -72,6 +72,38 @@ class MVP1ContractTests(unittest.TestCase):
             self.skipTest("langgraph is not installed")
 
         self.assertTrue(hasattr(graph, "invoke"))
+
+    def test_langgraph_validation_failure_path(self) -> None:
+        class InvalidDraftRunner(MVP1GraphRunner):
+            def create_work_package(self, request, intent, context) -> WorkPackageDraft:
+                return WorkPackageDraft(
+                    title="",
+                    goal="",
+                    background="",
+                    scope=[],
+                    out_of_scope=[],
+                    related_files=[],
+                    required_agents=[],
+                    implementation_steps=[],
+                    verification=[],
+                    risks=[],
+                    approval_required=True,
+                    completion_criteria=[],
+                )
+
+        result = InvalidDraftRunner().run(
+            request=AgentBackendRequest(
+                project_id="project",
+                session_id="session",
+                agent_run_id="run",
+                user_request="Create an invalid draft for validation testing",
+                project_root=str(Path.cwd()),
+            )
+        )
+
+        self.assertEqual(result.status, "failed")
+        self.assertTrue(result.errors)
+        self.assertIn("work_package.validation_failed", {event.type for event in result.events})
 
     def test_control_plane_agent_backend_contract(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

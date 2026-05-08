@@ -114,6 +114,7 @@ Each mapping can be overridden with `ARTEMIS_GLM_MODEL_<ROLE>`.
 - [x] FastAPI HTTP boundary smoke passes with real uvicorn Agent Backend and Control Plane servers.
 - [x] Live GLM Coding Plan call verified through LangChain using the configured API key.
 - [x] Live LangSmith trace path verified when `LANGSMITH_TRACING=true` is present in the process environment.
+- [x] LangGraph validation failure path is covered by contract tests.
 
 ### Pending
 
@@ -132,6 +133,7 @@ Each mapping can be overridden with `ARTEMIS_GLM_MODEL_<ROLE>`.
 | #43 | 2026-05-08 | MVP 1 re-verification run. Contract tests, compile checks, LangGraph runtime event, and safe git status passed; FastAPI API smoke blocked by missing `annotated_doc` in the current Python environment. |
 | #44 | 2026-05-08 | `.env` loading wired into service imports, GLM role-routing precedence corrected, HTTP API smoke runner added. Contract tests and compile checks pass, with the LangGraph test skipped because `langchain_core.messages` is missing in the current runtime. FastAPI smoke is still blocked because the global Python runtime imports `annotated_doc`/`anyio` as broken namespace packages and clean `.venv` install is network-blocked in sandbox. |
 | #45 | 2026-05-08 | Clean `.venv` dependency install completed. Contract tests, compile checks, FastAPI HTTP smoke, live GLM LangChain call, and live LangSmith trace path all passed under `.venv`; global Python remains unsuitable for API verification. |
+| #46 | 2026-05-08 | MVP 1 re-verification found and fixed a validation failure path bug where empty risk hints crashed before schema validation. Added contract coverage; tests, compile checks, HTTP smoke, live GLM call, and live LangSmith trace path passed under `.venv`. |
 
 ## Session Rules
 
