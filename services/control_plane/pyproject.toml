@@ -1,0 +1,12 @@
+[project]
+name = "artemis-control-plane"
+version = "0.1.0"
+description = "Artemis MVP 1 Control Plane"
+requires-python = ">=3.11"
+dependencies = [
+  "fastapi>=0.115",
+  "uvicorn>=0.32",
+]
+
+[tool.uvicorn]
+factory = true

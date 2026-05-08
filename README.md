@@ -1,144 +1,67 @@
 # Artemis
 
-**TUI-based multi-agent coding system** powered by multiple LLM providers.
+Artemis is being rebuilt as a backend foundation for a personal AI development organization.
 
-Artemis orchestrates specialized AI agents (Coder, Analyzer, Architect, Tester, etc.) through an intelligent pipeline to handle complex software engineering tasks — from code generation to refactoring to bug fixing.
+MVP 1 focuses on one vertical slice:
 
-## Features
-
-- **Multi-Agent Orchestration** — 13 specialized agents with dynamic task planning
-- **5 LLM Providers** — Claude, Gemini, GPT, GLM, vLLM (local)
-- **22+ Tools** — File I/O, grep, git, LSP, test runner, dependency analysis, AST search/replace
-- **LSP Integration** — Real-time diagnostics, go-to-definition, find-references, safe rename
-- **MCP Support** — Connect external MCP servers for unlimited tool expansion
-- **Persistent Memory** — SQLite + FTS5 + vector search, session history, fact tracking
-- **TUI Interface** — Single/Split panel, glamour markdown, overlays, dark themes
-- **Autonomous Mode** — Verify-gated execution loops (build/test verification)
-- **Failure Recovery** — 3-stage recovery: retry → consultant diagnosis → user decision
-- **Checkpoint/Resume** — Pipeline execution survives interruptions
-- **Custom Skills** — Project-specific or global skills via markdown + YAML frontmatter
-
-## Quick Start
-
-```bash
-# Build
-go build -o artemis ./cmd/artemis/
-
-# Run
-./artemis
+```text
+user request
+-> Control Plane AgentRun
+-> Agent Backend LangGraph-style workflow
+-> WorkPackageDraft
+-> pending approval state
+-> event log
+-> LangSmith trace correlation id
 ```
 
-On first launch, press `Ctrl+S` to open Settings and configure at least one LLM provider API key.
+The old Go TUI implementation is preserved on the `legacy/go-tui` branch.
 
-## Requirements
+## MVP 1 Scope
 
-- **Go 1.21+**
-- **One or more LLM API keys**: Gemini, Claude, GPT, or GLM
-- **Optional**: gopls (Go LSP), ast-grep (AST tools), Universal Ctags (repo-map)
+- Control Plane owns product state, approvals, events, and artifacts.
+- Agent Backend owns intent classification, read-only context collection, Work Package draft creation, and validation.
+- Tool access is read-only: `read_file`, `list_files`, `grep`, `git_status`.
+- Z.AI GLM Coding Plan is the model provider for LangChain-backed calls.
+- Deterministic fallback behavior is available when no API key is configured.
 
-## Configuration
+## Layout
 
-Config is stored at `~/.artemis/config.json`. Edit via TUI (`Ctrl+S`) or directly.
-
-```json
-{
-  "gemini": {
-    "api_key": "your-key",
-    "model": "gemini-3.1-pro-preview",
-    "enabled": true
-  },
-  "agents": {
-    "enabled": true,
-    "tier": "budget"
-  }
-}
+```text
+services/
+  agent_backend/       # Intelligence plane
+  control_plane/       # Product state and API plane
+tests/
+  contract/            # MVP 1 contract tests
+docs/                  # Planning and design documents
 ```
 
-See [Configuration Guide](docs/configuration.md) for all options.
+## Run Contract Tests
 
-## Keyboard Shortcuts
-
-| Key | Action |
-|-----|--------|
-| `Ctrl+Enter` | Send message |
-| `Ctrl+S` | Settings |
-| `Ctrl+K` | Command Palette |
-| `Ctrl+A` | Agent Selector |
-| `Ctrl+O` | File Picker |
-| `Ctrl+D` | Git Diff Viewer |
-| `Ctrl+L` | Clear screen |
-| `Ctrl+C` | Quit |
-
-## Architecture
-
-Artemis uses a phased pipeline architecture:
-
-```
-User Input → Orchestrator (intent classification)
-  → trivial:  Direct agent response
-  → complex:  ExecutionPlan → Multi-agent pipeline
-                ├── Step 1: [Analyzer] parallel with [Scout]
-                ├── Step 2: [Coder] with tools + autonomous verify
-                └── Step 3: [QA] review → feedback loop
+```powershell
+python -m unittest discover -s tests
 ```
 
-See [Architecture Guide](docs/architecture.md) for details.
+## GLM Model Routing
 
-## Project Structure
+Default Coding Plan endpoint:
 
-```
-cmd/artemis/          Entry point
-internal/
-  agent/              Agent system (13 roles, skills, categories)
-  bus/                Event bus (agent → TUI communication)
-  config/             Configuration management
-  github/             GitHub issue tracker integration
-  llm/                LLM providers (Claude, Gemini, GPT, GLM, vLLM)
-  lsp/                Language Server Protocol client
-  mcp/                Model Context Protocol client
-  memory/             Persistent memory (SQLite, vector search, repo-map)
-  orchestrator/       Pipeline engine, execution plans, recovery
-  state/              Session state, checkpoints
-  tools/              22+ agent tools
-  tui/                Terminal UI (bubbletea)
-training/             Code generation model training pipeline
+```text
+https://api.z.ai/api/coding/paas/v4
 ```
 
-## Slash Commands
+Supported MVP profiles:
 
-| Command | Description |
-|---------|-------------|
-| `/sessions` | List previous sessions |
-| `/load <id>` | Load a previous session |
-| `/fix #<n>` | Auto-fix a GitHub issue |
-| `/issues` | Show GitHub issues |
-| `/undo` | Undo last auto-commit |
-| `/help` | Show available commands |
+- `glm-5.1`
+- `glm-5`
+- `glm-4.7`
+- `glm-4.6`
+- `glm-4.5`
+- `glm-4.5-air`
+- `glm-4.5-flash`
 
-## Themes
+Role-level environment overrides use `ARTEMIS_GLM_MODEL_<ROLE>`, for example:
 
-Built-in: `default`, `dracula`, `tokyonight`
-
-Custom themes: Export via Command Palette → edit JSON → place in `~/.artemis/themes/`
-
-## Custom Skills
-
-Create `.md` files with YAML frontmatter:
-
-```markdown
----
-description: "React component conventions"
-globs: ["*.tsx", "src/components/**"]
----
-# React Rules
-- Use functional components with hooks
-- Props interface above component
+```powershell
+$env:ARTEMIS_GLM_MODEL_ARCHITECT="glm-5.1"
+$env:ARTEMIS_GLM_MODEL_CONTEXT_COLLECTOR="glm-4.7"
 ```
-
-Place in:
-- `~/.artemis/skills/` — Global (all projects)
-- `.artemis/skills/` — Project-specific (higher priority)
-
-## License
-
-MIT

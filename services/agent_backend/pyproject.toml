@@ -1,0 +1,17 @@
+[project]
+name = "artemis-agent-backend"
+version = "0.1.0"
+description = "Artemis MVP 1 Agent Backend"
+requires-python = ">=3.11"
+dependencies = [
+  "fastapi>=0.115",
+  "uvicorn>=0.32",
+  "langchain>=0.3",
+  "langchain-openai>=0.2",
+  "langgraph>=0.2",
+  "langsmith>=0.1",
+  "pydantic>=2.8",
+]
+
+[tool.uvicorn]
+factory = true

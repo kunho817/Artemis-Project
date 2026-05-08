@@ -1,0 +1,1 @@
+"""Artemis Control Plane application."""

@@ -1,47 +1,38 @@
-# Binaries
-*.exe
-*.exe~
-*.dll
-*.so
-*.dylib
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
 
-# Test binary
-*.test
+# Local runtime data
+.artemis/
+.claude/
+.omc/
+.sisyphus/
+data/
+*.db
+*.db-*
+*.jsonl
 
-# Output
-*.out
+# Environment and secrets
+.env
+.env.*
+!.env.example
 
-# Go workspace
-go.work
-go.work.sum
+# Local archive of old Oh My Claude workspace state.
+# Keep raw session/state files on disk, but do not publish them.
+docs/archive/oh-my-claude/**
+!docs/archive/oh-my-claude/
+!docs/archive/oh-my-claude/README.md
 
-# IDE
+# OS / editor
+.DS_Store
+Thumbs.db
 .vscode/
 .idea/
 *.swp
 *.swo
-
-# OS
-.DS_Store
-Thumbs.db
 nul
-
-# Dependencies
-node_modules/
-package-lock.json
-
-# Artemis data
-.artemis/
-
-# Project knowledge base
-# AGENTS.md
-
-# Backup files from Artemis tools
-*.artemis-backup
-*.bak
-
-# Temporary/test directories
-temp_omo/
-ad-source
-dogfood/
-AD_Test/
