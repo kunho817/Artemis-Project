@@ -592,4 +592,5 @@ Session #48 started the MVP 2 foundation slice:
 - local trace summary tables
 - neutral trace_id / external_trace_id naming
 - MVP 2 backend startup script
+- Playwright GUI e2e smoke runner
 ```

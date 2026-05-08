@@ -94,6 +94,12 @@ npm run build
 npm audit --omit=dev
 ```
 
+Run the full MVP 2 browser smoke with isolated backend and GUI ports:
+
+```powershell
+.\.venv\Scripts\python.exe scripts\smoke_mvp2_gui.py
+```
+
 To verify an explicitly enabled LangSmith endpoint without changing `.env`, run:
 
 ```powershell

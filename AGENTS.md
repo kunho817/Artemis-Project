@@ -125,6 +125,7 @@ Each mapping can be overridden with `ARTEMIS_GLM_MODEL_<ROLE>`.
 - [x] MVP 2 React/Vite/TypeScript GUI skeleton created at `apps/gui`.
 - [x] Persistent MVP 2 backend startup script added at `scripts/start_mvp2_services.py`.
 - [x] MVP 2 contract coverage added for async API result, event polling fallback, trace summary, and artifacts.
+- [x] MVP 2 Playwright GUI e2e smoke added and verified at `scripts/smoke_mvp2_gui.py`.
 
 ### Pending
 
@@ -144,6 +145,7 @@ Each mapping can be overridden with `ARTEMIS_GLM_MODEL_<ROLE>`.
 | #46 | 2026-05-08 | MVP 1 re-verification found and fixed a validation failure path bug where empty risk hints crashed before schema validation. Added contract coverage; tests, compile checks, HTTP smoke, live GLM call, and live LangSmith trace path passed under `.venv`. |
 | #47 | 2026-05-08 | Planning session updated observability direction: LangSmith Cloud is no longer a default because of cost; Artemis local trace store is the default, with self-hosted/Cloud LangSmith only as explicit opt-in. MVP 2 design document created. |
 | #48 | 2026-05-08 | MVP 2 foundation slice started. Added Control Plane async Work Package request API, event polling/SSE, result/artifact/trace endpoints, local trace summary storage, neutral trace naming, React/Vite GUI skeleton, backend startup script, and MVP 2 contract coverage. Contract tests, compile checks, FastAPI smoke, GUI build, and npm audit passed. |
+| #49 | 2026-05-08 | MVP 2 verification session added Playwright GUI e2e smoke covering project open, session creation, Work Package request, event timeline, trace/artifact tabs, and approval. Full contract, compile, FastAPI smoke, GUI build, npm audit, and GUI e2e smoke passed. |
 
 ## Session Rules
 
