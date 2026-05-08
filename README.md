@@ -11,7 +11,7 @@ user request
 -> WorkPackageDraft
 -> pending approval state
 -> event log
--> LangSmith trace correlation id
+-> local trace correlation id
 ```
 
 The old Go TUI implementation is preserved on the `legacy/go-tui` branch.
@@ -24,6 +24,8 @@ The old Go TUI implementation is preserved on the `legacy/go-tui` branch.
 - Tool access is read-only: `read_file`, `list_files`, `grep`, `git_status`.
 - Z.AI GLM Coding Plan is the model provider for LangChain-backed calls.
 - Deterministic fallback behavior is available when no API key is configured.
+- Observability is default, but the default backend should be local trace storage.
+- LangSmith Cloud is not a default dependency; self-hosted/Cloud endpoints are explicit opt-in integrations.
 
 ## Layout
 
@@ -52,7 +54,7 @@ python -m venv .venv
 .\.venv\Scripts\python.exe scripts\smoke_api.py
 ```
 
-To verify the live LangSmith path without changing `.env`, run:
+To verify an explicitly enabled LangSmith endpoint without changing `.env`, run:
 
 ```powershell
 $env:LANGSMITH_TRACING="true"; .\.venv\Scripts\python.exe scripts\smoke_api.py

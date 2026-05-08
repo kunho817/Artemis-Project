@@ -49,7 +49,7 @@ Artemis의 핵심 방향은 다음과 같다.
 
 1. GUI는 단순 채팅창이 아니라 개발 지휘실이어야 한다.
 2. GUI Backend와 Python Agent Backend를 분리한다.
-3. Python Agent Backend는 LangChain, LangGraph, LangSmith를 활용한다.
+3. Python Agent Backend는 LangChain, LangGraph, local observability를 활용한다.
 4. 모든 작업은 Work Package로 구조화한다.
 5. Brainstorming Room으로 팀 회의의 부재를 보완한다.
 6. Architecture Review Board로 설계 편향을 줄인다.
@@ -83,7 +83,7 @@ Artemis의 핵심 방향은 다음과 같다.
 │        Python Agent Backend / Brain           │
 │  LangGraph Orchestrator                       │
 │  LangChain Tools, Models, RAG                 │
-│  LangSmith Observability                      │
+│  Local Trace / Observability                  │
 └──────────────────────┬───────────────────────┘
                        │ Tool Calls
                        ▼
@@ -170,18 +170,18 @@ Python Agent Backend는 Artemis의 두뇌 역할을 한다.
 - 테스트/검증 계획 생성
 - 리뷰 및 리스크 분석
 - 장기 메모리 업데이트
-- LangSmith 기반 추적/디버깅/평가
+- Local trace 기반 추적/디버깅/평가
 
 ---
 
-## 5. LangChain, LangGraph, LangSmith 활용 전략
+## 5. LangChain, LangGraph, Observability 활용 전략
 
 ### 5.1 역할 분리
 
 ```text
 LangChain  = 모델, 도구, RAG, Retriever, Prompt, Output Parser
 LangGraph  = Agent 실행 흐름, 상태, 분기, 승인, 재시도, 장기 작업 제어
-LangSmith  = 실행 추적, 디버깅, 평가, 비용/성능 관찰
+Local Trace = 실행 추적, 디버깅, 평가, 비용/성능 관찰
 ```
 
 ---
@@ -253,9 +253,11 @@ END
 
 ---
 
-### 5.4 LangSmith의 역할
+### 5.4 Observability의 역할
 
-LangSmith는 Artemis의 관제/디버깅/평가 계층이다.
+Artemis는 관제/디버깅/평가 계층을 기본 제공한다.
+
+기본 backend는 LangSmith Cloud가 아니라 Artemis 내부 local trace store이다. LangSmith Cloud는 사용량 비용이 발생할 수 있으므로 기본값으로 사용하지 않는다.
 
 담당 영역:
 
@@ -270,12 +272,13 @@ LangSmith는 Artemis의 관제/디버깅/평가 계층이다.
 - prompt 변경 전후 평가
 - regression evaluation
 
-LangSmith는 개발 초기부터 붙이는 것이 좋다.  
-다만 개인 코드베이스의 프라이버시를 고려해야 하므로 다음 선택지를 둔다.
+Observability는 개발 초기부터 붙이는 것이 좋다.  
+다만 개인 코드베이스의 프라이버시와 비용을 고려해야 하므로 다음 선택지를 둔다.
 
-1. 초기 개발: LangSmith Cloud 사용
-2. 민감 프로젝트: trace redaction 적용
-3. 장기 운영: self-hosted LangSmith 또는 local trace 검토
+1. 기본: Artemis local trace store
+2. 고급 로컬/사내 환경: self-hosted LangSmith endpoint 연동
+3. 명시적 opt-in: LangSmith Cloud 연동
+4. 모든 모드: trace redaction policy 적용
 
 ---
 
@@ -862,7 +865,7 @@ Meeting Result
 - 모델 설정
 - 비용 제한
 - 승인 정책
-- LangSmith 설정
+- Observability / Trace 설정
 - 프로젝트별 규칙
 
 ---
@@ -1245,7 +1248,7 @@ Tool Router의 책임:
 - 실행 전 로그 기록
 - 실행 후 결과 저장
 - GUI 이벤트 발행
-- LangSmith trace 연결
+- Local trace 연결
 
 ---
 
@@ -1361,7 +1364,7 @@ Git
 - FastAPI
 - LangChain
 - LangGraph
-- LangSmith
+- Local trace store / optional self-hosted LangSmith
 - Pydantic
 - SQLite / PostgreSQL
 - Chroma / FAISS / Qdrant
@@ -1398,7 +1401,7 @@ Git
 - Work Package 생성
 - 관련 파일 검색
 - 간단한 계획 생성
-- LangSmith trace 연결
+- Local trace 연결
 
 구성:
 
@@ -1513,7 +1516,7 @@ Codex에서는 다음 순서로 작업을 이어가는 것이 좋다.
 11. GUI Backend 또는 GUI Client skeleton 작성
 12. WebSocket/SSE event stream 연결
 13. Brainstorming graph skeleton 작성
-14. LangSmith trace 설정
+14. Local trace 설정
 15. Diff & Review pipeline 추가
 
 ---
@@ -1753,7 +1756,7 @@ GUI Client
 → Python Agent Backend / Intelligence Plane
 → LangGraph Orchestrator
 → LangChain Tools/RAG/Models
-→ LangSmith Observability
+→ Local Observability
 → Project Runtime
 ```
 

@@ -8,7 +8,7 @@
 - **Current direction**: New Artemis backend foundation
 - **Legacy implementation**: preserved on `legacy/go-tui`
 - **MVP 1 goal**: Convert natural-language user requests into structured Work Packages, with state, events, approval, and trace correlation.
-- **Primary stack**: Python, FastAPI, LangGraph, LangChain, LangSmith
+- **Primary stack**: Python, FastAPI, LangGraph, LangChain, local trace observability
 - **Model provider**: Z.AI GLM Coding Plan
 
 ## Architecture
@@ -18,6 +18,7 @@ D:\Artemis_Project\
 ├── docs/
 │   ├── artemis_planning.md
 │   ├── artemis_mvp1.md
+│   ├── artemis_mvp2.md
 │   ├── architecture.md
 │   ├── configuration.md
 │   ├── getting-started.md
@@ -58,7 +59,8 @@ D:\Artemis_Project\
 - Agent Backend does not own canonical product state.
 - Agent Backend returns structured schema, not raw prose.
 - MVP 1 is read-only against user projects.
-- LangSmith trace correlation is part of the default execution model.
+- Observability and local trace correlation are part of the default execution model.
+- LangSmith Cloud is not a default dependency; self-hosted/Cloud endpoints are explicit opt-in integrations.
 
 ## GLM Provider Policy
 
@@ -115,10 +117,13 @@ Each mapping can be overridden with `ARTEMIS_GLM_MODEL_<ROLE>`.
 - [x] Live GLM Coding Plan call verified through LangChain using the configured API key.
 - [x] Live LangSmith trace path verified when `LANGSMITH_TRACING=true` is present in the process environment.
 - [x] LangGraph validation failure path is covered by contract tests.
+- [x] Observability direction revised to local-first trace storage with LangSmith self-hosted/Cloud as explicit opt-in.
+- [x] MVP 2 GUI + Event Stream design document created at `docs/artemis_mvp2.md`.
 
 ### Pending
 
-- [ ] Decide whether local default `.env` should set `LANGSMITH_TRACING=true`; current `.env` keeps tracing disabled by default.
+- [ ] Replace `langsmith_trace_id` naming with neutral `trace_id` / `external_trace_id` terminology.
+- [ ] Implement a first-class local trace store and viewer path for MVP 2.
 - [ ] Replace deterministic Work Package fallback with LLM-generated structured output where appropriate.
 - [ ] Add persistent service startup scripts.
 - [ ] Add real LangGraph checkpointing after MVP 1 contracts stabilize.
@@ -134,6 +139,7 @@ Each mapping can be overridden with `ARTEMIS_GLM_MODEL_<ROLE>`.
 | #44 | 2026-05-08 | `.env` loading wired into service imports, GLM role-routing precedence corrected, HTTP API smoke runner added. Contract tests and compile checks pass, with the LangGraph test skipped because `langchain_core.messages` is missing in the current runtime. FastAPI smoke is still blocked because the global Python runtime imports `annotated_doc`/`anyio` as broken namespace packages and clean `.venv` install is network-blocked in sandbox. |
 | #45 | 2026-05-08 | Clean `.venv` dependency install completed. Contract tests, compile checks, FastAPI HTTP smoke, live GLM LangChain call, and live LangSmith trace path all passed under `.venv`; global Python remains unsuitable for API verification. |
 | #46 | 2026-05-08 | MVP 1 re-verification found and fixed a validation failure path bug where empty risk hints crashed before schema validation. Added contract coverage; tests, compile checks, HTTP smoke, live GLM call, and live LangSmith trace path passed under `.venv`. |
+| #47 | 2026-05-08 | Planning session updated observability direction: LangSmith Cloud is no longer a default because of cost; Artemis local trace store is the default, with self-hosted/Cloud LangSmith only as explicit opt-in. MVP 2 design document created. |
 
 ## Session Rules
 
