@@ -107,11 +107,17 @@ Each mapping can be overridden with `ARTEMIS_GLM_MODEL_<ROLE>`.
 - [x] GLM model profile and role routing created.
 - [x] MVP 1 contract tests created.
 - [x] Verification gaps addressed: real LangGraph path when installed, HTTP Agent Backend client boundary, artifact events, and safe git status.
+- [x] Project-level `.env` auto-loading added for service imports, with a no-dependency fallback parser.
+- [x] FastAPI HTTP boundary smoke script added at `scripts/smoke_api.py`.
+- [x] GLM role routing precedence corrected so role defaults are preserved unless a role-specific env override is set.
+- [x] Clean `.venv` dependencies installed and verified.
+- [x] FastAPI HTTP boundary smoke passes with real uvicorn Agent Backend and Control Plane servers.
+- [x] Live GLM Coding Plan call verified through LangChain using the configured API key.
+- [x] Live LangSmith trace path verified when `LANGSMITH_TRACING=true` is present in the process environment.
 
 ### Pending
 
-- [ ] Install Python dependencies in a virtual environment.
-- [ ] Run a real GLM Coding Plan call with `ZAI_API_KEY`.
+- [ ] Decide whether local default `.env` should set `LANGSMITH_TRACING=true`; current `.env` keeps tracing disabled by default.
 - [ ] Replace deterministic Work Package fallback with LLM-generated structured output where appropriate.
 - [ ] Add persistent service startup scripts.
 - [ ] Add real LangGraph checkpointing after MVP 1 contracts stabilize.
@@ -124,6 +130,8 @@ Each mapping can be overridden with `ARTEMIS_GLM_MODEL_<ROLE>`.
 | #41 | 2026-05-08 | `legacy/go-tui` branch pushed, old Go TUI removed from main, MVP 1 Python backend foundation started with GLM Coding Plan routing. |
 | #42 | 2026-05-08 | MVP 1 verification run recorded. Follow-up patch added real LangGraph execution path, optional live LangSmith trace context, HTTP Agent Backend boundary, artifact events, and safe git status handling. |
 | #43 | 2026-05-08 | MVP 1 re-verification run. Contract tests, compile checks, LangGraph runtime event, and safe git status passed; FastAPI API smoke blocked by missing `annotated_doc` in the current Python environment. |
+| #44 | 2026-05-08 | `.env` loading wired into service imports, GLM role-routing precedence corrected, HTTP API smoke runner added. Contract tests and compile checks pass, with the LangGraph test skipped because `langchain_core.messages` is missing in the current runtime. FastAPI smoke is still blocked because the global Python runtime imports `annotated_doc`/`anyio` as broken namespace packages and clean `.venv` install is network-blocked in sandbox. |
+| #45 | 2026-05-08 | Clean `.venv` dependency install completed. Contract tests, compile checks, FastAPI HTTP smoke, live GLM LangChain call, and live LangSmith trace path all passed under `.venv`; global Python remains unsuitable for API verification. |
 
 ## Session Rules
 

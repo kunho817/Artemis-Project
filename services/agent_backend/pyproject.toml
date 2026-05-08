@@ -5,12 +5,14 @@ description = "Artemis MVP 1 Agent Backend"
 requires-python = ">=3.11"
 dependencies = [
   "fastapi>=0.115",
+  "annotated-doc>=0.0.4",
   "uvicorn>=0.32",
   "langchain>=0.3",
   "langchain-openai>=0.2",
   "langgraph>=0.2",
   "langsmith>=0.1",
   "pydantic>=2.8",
+  "python-dotenv>=1.0",
 ]
 
 [tool.uvicorn]

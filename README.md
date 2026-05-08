@@ -42,6 +42,22 @@ docs/                  # Planning and design documents
 python -m unittest discover -s tests
 ```
 
+For a clean local runtime, use the project virtual environment:
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install --upgrade pip
+.\.venv\Scripts\python.exe -m pip install fastapi annotated-doc uvicorn langchain langchain-openai langgraph langsmith pydantic python-dotenv httpx
+.\.venv\Scripts\python.exe -m unittest discover -s tests
+.\.venv\Scripts\python.exe scripts\smoke_api.py
+```
+
+To verify the live LangSmith path without changing `.env`, run:
+
+```powershell
+$env:LANGSMITH_TRACING="true"; .\.venv\Scripts\python.exe scripts\smoke_api.py
+```
+
 ## GLM Model Routing
 
 Default Coding Plan endpoint:

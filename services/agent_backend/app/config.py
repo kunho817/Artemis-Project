@@ -101,9 +101,9 @@ def model_for_role(role: str, env: dict[str, str] | None = None) -> ModelSelecti
     role_env_name = f"ARTEMIS_GLM_MODEL_{normalized_role.upper()}"
     model = (
         source.get(role_env_name)
+        or DEFAULT_ROLE_MODELS.get(normalized_role)
         or source.get("ARTEMIS_GLM_DEFAULT_MODEL")
         or source.get("ZAI_MODEL")
-        or DEFAULT_ROLE_MODELS.get(normalized_role)
         or "glm-5.1"
     )
     if model not in GLM_MODEL_PROFILES:

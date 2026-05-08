@@ -37,10 +37,13 @@ class MVP1ContractTests(unittest.TestCase):
             "ZAI_API_KEY": "test-key",
             "ARTEMIS_GLM_MODEL_ARCHITECT": "glm-5.1",
             "ARTEMIS_GLM_MODEL_VALIDATOR": "glm-4.6",
+            "ARTEMIS_GLM_DEFAULT_MODEL": "glm-5.1",
         }
 
         self.assertEqual(model_for_role("architect", env).model, "glm-5.1")
         self.assertEqual(model_for_role("validator", env).model, "glm-4.6")
+        self.assertEqual(model_for_role("context_collector", env).model, "glm-4.7")
+        self.assertEqual(model_for_role("unknown_role", env).model, "glm-5.1")
 
     def test_read_only_tool_permission(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
