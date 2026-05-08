@@ -144,6 +144,9 @@ def run(agent_port: int | None = None, control_port: int | None = None) -> dict[
             run_data = request_json("GET", f"{control_base}/api/agent-runs/{work['agent_run_id']}")
             package = request_json("GET", f"{control_base}/api/work-packages/{work['work_package_id']}")
             events = request_json("GET", f"{control_base}/api/agent-runs/{work['agent_run_id']}/events")
+            result_view = request_json("GET", f"{control_base}/api/agent-runs/{work['agent_run_id']}/result")
+            trace = request_json("GET", f"{control_base}/api/agent-runs/{work['agent_run_id']}/trace")
+            artifacts = request_json("GET", f"{control_base}/api/agent-runs/{work['agent_run_id']}/artifacts")
             backend_events = request_json(
                 "GET",
                 f"{agent_base}/internal/agent-runs/{work['agent_run_id']}/events",
@@ -162,9 +165,12 @@ def run(agent_port: int | None = None, control_port: int | None = None) -> dict[
             assert_event(event_types, "approval.requested")
             assert_event(backend_event_types, "agent_run.graph_runtime")
             trace_event = next(
-                (event for event in backend_events if event["type"] == "trace.langsmith_linked"),
+                (event for event in backend_events if event["type"] == "trace.linked"),
                 None,
             )
+            assert result_view["trace"]["trace"]["id"] == work["trace_id"]
+            assert trace["trace"]["id"] == work["trace_id"]
+            assert len(artifacts) >= 3
 
             return {
                 "status": "ok",
@@ -173,7 +179,8 @@ def run(agent_port: int | None = None, control_port: int | None = None) -> dict[
                 "agent_run_id": work["agent_run_id"],
                 "work_package_id": work["work_package_id"],
                 "approval_id": work["approval_id"],
-                "langsmith_trace_id": work["langsmith_trace_id"],
+                "trace_id": work["trace_id"],
+                "external_trace_id": work["external_trace_id"],
                 "trace_event": trace_event["payload"] if trace_event else None,
                 "event_types": event_types,
                 "backend_event_types": backend_event_types,

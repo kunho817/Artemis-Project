@@ -23,6 +23,7 @@ from .tools import ReadOnlyToolRouter
 class ArtemisGraphState(TypedDict, total=False):
     request: AgentBackendRequest
     trace_id: str
+    external_trace_id: str | None
     trace_enabled: bool
     events: list[AgentBackendEvent]
     intent_result: IntentResult
@@ -66,12 +67,15 @@ class MVP1GraphRunner:
         state: ArtemisGraphState = {
             "request": request,
             "trace_id": trace.trace_id,
+            "external_trace_id": trace.external_trace_id,
             "trace_enabled": trace.enabled,
             "events": [
                 AgentBackendEvent(
-                    "trace.langsmith_linked",
+                    "trace.linked",
                     {
                         "trace_id": trace.trace_id,
+                        "external_trace_id": trace.external_trace_id,
+                        "provider": "langsmith" if trace.external_trace_id else "local",
                         "run_id": trace.run_id,
                         "live": trace.enabled and trace.live_tracing_available,
                         "requested": trace.requested,
@@ -210,7 +214,8 @@ class MVP1GraphRunner:
             context_summary=context,
             work_package=work_package,
             risk_hints=work_package.risks if work_package else [],
-            langsmith_trace_id=state["trace_id"],
+            trace_id=state["trace_id"],
+            external_trace_id=state.get("external_trace_id"),
             events=state.get("events", []),
             errors=errors,
         )

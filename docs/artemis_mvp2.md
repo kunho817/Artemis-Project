@@ -20,6 +20,7 @@ MVP 2는 이 흐름을 GUI와 event stream으로 노출한다.
 → local trace/event 확인
 ```
 
+
 MVP 2는 아직 코드 수정 도구가 아니다.  
 MVP 2는 Artemis가 “채팅창”이 아니라 “개발 운영 화면”으로 동작할 수 있는지 검증하는 GUI foundation slice이다.
 
@@ -571,4 +572,24 @@ MVP 2는 patch 생성, 파일 쓰기, 테스트 실행, Diff Viewer, Brainstormi
 - Control Plane은 GUI용 product state를 정규화한다.
 - Agent Backend 내부 구현은 GUI 계약에 노출하지 않는다.
 - Observability는 local-first이다.
+```
+
+---
+
+## 15. Implementation status
+
+Session #48 started the MVP 2 foundation slice:
+
+```text
+- apps/gui React + Vite + TypeScript skeleton
+- Control Plane project/session listing endpoints
+- async POST /api/work-package-requests
+- polling GET /api/agent-runs/{agent_run_id}/events?after={event_id}
+- SSE GET /api/agent-runs/{agent_run_id}/events/stream
+- GET /api/agent-runs/{agent_run_id}/result
+- GET /api/agent-runs/{agent_run_id}/trace
+- GET /api/agent-runs/{agent_run_id}/artifacts
+- local trace summary tables
+- neutral trace_id / external_trace_id naming
+- MVP 2 backend startup script
 ```

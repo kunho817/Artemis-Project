@@ -56,7 +56,8 @@ class AgentRun:
     status: AgentRunStatus
     intent: str | None
     current_phase: str | None
-    langsmith_trace_id: str | None
+    trace_id: str | None
+    external_trace_id: str | None
     created_at: str
     updated_at: str
 
@@ -132,6 +133,39 @@ class Artifact:
     title: str
     payload: dict[str, Any]
     created_at: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
+class Trace:
+    id: str
+    project_id: str
+    session_id: str
+    agent_run_id: str
+    root_name: str
+    status: str
+    started_at: str
+    ended_at: str | None
+    metadata: dict[str, Any]
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
+class TraceStep:
+    id: str
+    trace_id: str
+    parent_step_id: str | None
+    name: str
+    type: str
+    status: str
+    inputs_summary: str
+    outputs_summary: str
+    started_at: str
+    ended_at: str | None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

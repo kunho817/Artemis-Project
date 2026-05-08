@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import tempfile
+import time
 import unittest
 
 from services.agent_backend.app.config import model_for_role
@@ -49,9 +50,13 @@ class MVP1ContractTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             (root / "README.md").write_text("Artemis MVP 1", encoding="utf-8")
+            (root / "node_modules").mkdir()
+            (root / "node_modules" / "large.js").write_text("Artemis should be ignored", encoding="utf-8")
             tools = ReadOnlyToolRouter(root)
 
             self.assertTrue(tools.read_file("README.md").ok)
+            self.assertNotIn("node_modules", tools.list_files().output)
+            self.assertNotIn("node_modules", tools.grep("ignored").output)
             with self.assertRaises(ToolPermissionError):
                 tools.assert_allowed("write_file")
             with self.assertRaises(ToolPermissionError):
@@ -130,12 +135,13 @@ class MVP1ContractTests(unittest.TestCase):
             )
 
             self.assertEqual(result["status"], "pending_approval")
-            self.assertTrue(result["langsmith_trace_id"].startswith("local_"))
+            self.assertTrue(result["trace_id"].startswith("trace_"))
+            self.assertIsNone(result["external_trace_id"])
 
             run = store.get_agent_run(result["agent_run_id"])
             self.assertEqual(run["status"], "completed")
             self.assertEqual(run["intent"], "planning_request")
-            self.assertEqual(run["langsmith_trace_id"], result["langsmith_trace_id"])
+            self.assertEqual(run["trace_id"], result["trace_id"])
 
             package = store.get_work_package(result["work_package_id"])
             self.assertEqual(package["status"], "pending_approval")
@@ -145,11 +151,24 @@ class MVP1ContractTests(unittest.TestCase):
             events = store.list_events(result["agent_run_id"])
             event_types = {event["type"] for event in events}
             self.assertIn("agent_run.created", event_types)
-            self.assertIn("trace.langsmith_linked", event_types)
+            self.assertIn("trace.linked", event_types)
             self.assertIn("agent_run.graph_runtime", event_types)
             self.assertIn("artifact.created", event_types)
             self.assertIn("work_package.pending_approval", event_types)
             self.assertIn("approval.requested", event_types)
+
+            trace = store.get_trace_summary(result["agent_run_id"])
+            self.assertEqual(trace["trace"]["id"], result["trace_id"])
+            self.assertTrue(trace["steps"])
+
+            artifacts = store.list_artifacts(result["agent_run_id"])
+            self.assertEqual(
+                {artifact["type"] for artifact in artifacts},
+                {"intent_result", "context_summary", "work_package_draft"},
+            )
+
+            after_first = store.list_events(result["agent_run_id"], after=events[0]["id"])
+            self.assertEqual(after_first[0]["id"], events[1]["id"])
 
             approval = service.resolve_approval(
                 approval_id=result["approval_id"],
@@ -159,6 +178,75 @@ class MVP1ContractTests(unittest.TestCase):
             approved_package = store.get_work_package(result["work_package_id"])
             self.assertEqual(approved_package["approval_status"], "approved")
             self.assertEqual(approved_package["status"], "approved")
+
+            result_view = service.get_agent_run_result(result["agent_run_id"])
+            self.assertEqual(result_view["approval"]["status"], "approved")
+            self.assertEqual(result_view["work_package"]["id"], result["work_package_id"])
+            self.assertEqual(result_view["trace"]["trace"]["id"], result["trace_id"])
+
+    def test_control_plane_mvp2_async_api_contract(self) -> None:
+        try:
+            from fastapi.testclient import TestClient
+        except Exception as exc:
+            self.skipTest(f"fastapi test client is not available: {exc}")
+
+        from services.control_plane.app.api import create_app
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            project_root = root / "project"
+            project_root.mkdir()
+            (project_root / "README.md").write_text("Artemis test project", encoding="utf-8")
+            (project_root / "AGENTS.md").write_text("Project rules", encoding="utf-8")
+
+            app = create_app(
+                str(root / "artemis.db"),
+                agent_backend=InProcessAgentBackendClient(),
+            )
+            client = TestClient(app)
+            project = client.post(
+                "/api/projects/open",
+                json={"name": "test", "root_path": str(project_root)},
+            ).json()
+            session = client.post(
+                "/api/sessions",
+                json={"project_id": project["id"], "title": "MVP2 API test"},
+            ).json()
+            queued = client.post(
+                "/api/work-package-requests",
+                json={
+                    "project_id": project["id"],
+                    "session_id": session["id"],
+                    "user_request": "Create an MVP 2 event stream test.",
+                },
+            ).json()
+
+            self.assertEqual(queued["status"], "queued")
+            self.assertIn("/events/stream", queued["events_url"])
+
+            deadline = time.monotonic() + 5
+            run = {}
+            while time.monotonic() < deadline:
+                run = client.get(f"/api/agent-runs/{queued['agent_run_id']}").json()
+                if run["status"] in {"completed", "failed", "canceled"}:
+                    break
+                time.sleep(0.05)
+
+            self.assertEqual(run["status"], "completed")
+            result = client.get(f"/api/agent-runs/{queued['agent_run_id']}/result").json()
+            trace = client.get(f"/api/agent-runs/{queued['agent_run_id']}/trace").json()
+            artifacts = client.get(f"/api/agent-runs/{queued['agent_run_id']}/artifacts").json()
+            events = client.get(f"/api/agent-runs/{queued['agent_run_id']}/events").json()
+            polled = client.get(
+                f"/api/agent-runs/{queued['agent_run_id']}/events",
+                params={"after": events[0]["id"]},
+            ).json()
+
+            self.assertEqual(result["agent_run"]["trace_id"], trace["trace"]["id"])
+            self.assertIsNotNone(result["work_package"])
+            self.assertIsNotNone(result["approval"])
+            self.assertGreaterEqual(len(artifacts), 3)
+            self.assertEqual(polled[0]["id"], events[1]["id"])
 
 
 if __name__ == "__main__":

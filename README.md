@@ -2,7 +2,7 @@
 
 Artemis is being rebuilt as a backend foundation for a personal AI development organization.
 
-MVP 1 focuses on one vertical slice:
+MVP 1 established one backend vertical slice:
 
 ```text
 user request
@@ -12,6 +12,17 @@ user request
 -> pending approval state
 -> event log
 -> local trace correlation id
+```
+
+MVP 2 adds the first GUI + event stream slice:
+
+```text
+React GUI
+-> Control Plane async Work Package request
+-> AgentRun event polling / SSE stream
+-> WorkPackage detail
+-> approval controls
+-> local trace and artifact viewer
 ```
 
 The old Go TUI implementation is preserved on the `legacy/go-tui` branch.
@@ -36,6 +47,8 @@ services/
 tests/
   contract/            # MVP 1 contract tests
 docs/                  # Planning and design documents
+apps/
+  gui/                 # MVP 2 React GUI
 ```
 
 ## Run Contract Tests
@@ -52,6 +65,33 @@ python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install fastapi annotated-doc uvicorn langchain langchain-openai langgraph langsmith pydantic python-dotenv httpx
 .\.venv\Scripts\python.exe -m unittest discover -s tests
 .\.venv\Scripts\python.exe scripts\smoke_api.py
+```
+
+## Run MVP 2 GUI
+
+Start the backend services:
+
+```powershell
+.\.venv\Scripts\python.exe scripts\start_mvp2_services.py
+```
+
+Start the GUI in another shell:
+
+```powershell
+cd apps\gui
+npm install
+npm run dev
+```
+
+The default GUI expects Control Plane at `http://127.0.0.1:8000`. Override with
+`VITE_CONTROL_PLANE_URL` when needed.
+
+## GUI Build
+
+```powershell
+cd apps\gui
+npm run build
+npm audit --omit=dev
 ```
 
 To verify an explicitly enabled LangSmith endpoint without changing `.env`, run:

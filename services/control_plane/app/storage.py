@@ -15,6 +15,8 @@ from .models import (
     Event,
     Project,
     Session,
+    Trace,
+    TraceStep,
     WorkPackage,
     new_id,
     utc_now,
@@ -67,7 +69,8 @@ class SQLiteStore:
                   status TEXT NOT NULL,
                   intent TEXT,
                   current_phase TEXT,
-                  langsmith_trace_id TEXT,
+                  trace_id TEXT,
+                  external_trace_id TEXT,
                   created_at TEXT NOT NULL,
                   updated_at TEXT NOT NULL
                 );
@@ -115,8 +118,44 @@ class SQLiteStore:
                   payload TEXT NOT NULL,
                   created_at TEXT NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS traces (
+                  id TEXT PRIMARY KEY,
+                  project_id TEXT NOT NULL,
+                  session_id TEXT NOT NULL,
+                  agent_run_id TEXT NOT NULL,
+                  root_name TEXT NOT NULL,
+                  status TEXT NOT NULL,
+                  started_at TEXT NOT NULL,
+                  ended_at TEXT,
+                  metadata TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS trace_steps (
+                  id TEXT PRIMARY KEY,
+                  trace_id TEXT NOT NULL,
+                  parent_step_id TEXT,
+                  name TEXT NOT NULL,
+                  type TEXT NOT NULL,
+                  status TEXT NOT NULL,
+                  inputs_summary TEXT NOT NULL,
+                  outputs_summary TEXT NOT NULL,
+                  started_at TEXT NOT NULL,
+                  ended_at TEXT
+                );
                 """
             )
+            self._ensure_column(db, "agent_runs", "trace_id", "TEXT")
+            self._ensure_column(db, "agent_runs", "external_trace_id", "TEXT")
+
+    def _ensure_column(
+        self,
+        db: sqlite3.Connection,
+        table_name: str,
+        column_name: str,
+        column_type: str,
+    ) -> None:
+        columns = {row["name"] for row in db.execute(f"PRAGMA table_info({table_name})").fetchall()}
+        if column_name not in columns:
+            db.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_type}")
 
     def create_project(self, name: str, root_path: str) -> Project:
         now = utc_now()
@@ -128,6 +167,18 @@ class SQLiteStore:
             )
         return project
 
+    def list_projects(self) -> list[dict[str, Any]]:
+        with self._connect() as db:
+            rows = db.execute("SELECT * FROM projects ORDER BY updated_at DESC").fetchall()
+        return [dict(row) for row in rows]
+
+    def get_project(self, project_id: str) -> dict[str, Any]:
+        with self._connect() as db:
+            row = db.execute("SELECT * FROM projects WHERE id=?", (project_id,)).fetchone()
+        if row is None:
+            raise KeyError(project_id)
+        return dict(row)
+
     def create_session(self, project_id: str, title: str) -> Session:
         now = utc_now()
         session = Session(new_id("sess"), project_id, title, "active", now, now)
@@ -137,6 +188,24 @@ class SQLiteStore:
                 (session.id, session.project_id, session.title, session.status, session.created_at, session.updated_at),
             )
         return session
+
+    def list_sessions(self, project_id: str | None = None) -> list[dict[str, Any]]:
+        with self._connect() as db:
+            if project_id is None:
+                rows = db.execute("SELECT * FROM sessions ORDER BY updated_at DESC").fetchall()
+            else:
+                rows = db.execute(
+                    "SELECT * FROM sessions WHERE project_id=? ORDER BY updated_at DESC",
+                    (project_id,),
+                ).fetchall()
+        return [dict(row) for row in rows]
+
+    def get_session(self, session_id: str) -> dict[str, Any]:
+        with self._connect() as db:
+            row = db.execute("SELECT * FROM sessions WHERE id=?", (session_id,)).fetchone()
+        if row is None:
+            raise KeyError(session_id)
+        return dict(row)
 
     def create_agent_run(self, project_id: str, session_id: str, user_request: str) -> AgentRun:
         now = utc_now()
@@ -148,13 +217,29 @@ class SQLiteStore:
             status="queued",
             intent=None,
             current_phase=None,
-            langsmith_trace_id=None,
+            trace_id=None,
+            external_trace_id=None,
             created_at=now,
             updated_at=now,
         )
         with self._connect() as db:
             db.execute(
-                "INSERT INTO agent_runs VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                """
+                INSERT INTO agent_runs (
+                  id,
+                  project_id,
+                  session_id,
+                  user_request,
+                  status,
+                  intent,
+                  current_phase,
+                  trace_id,
+                  external_trace_id,
+                  created_at,
+                  updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
                 (
                     run.id,
                     run.project_id,
@@ -163,7 +248,8 @@ class SQLiteStore:
                     run.status,
                     run.intent,
                     run.current_phase,
-                    run.langsmith_trace_id,
+                    run.trace_id,
+                    run.external_trace_id,
                     run.created_at,
                     run.updated_at,
                 ),
@@ -177,7 +263,8 @@ class SQLiteStore:
         status: str | None = None,
         intent: str | None = None,
         current_phase: str | None = None,
-        langsmith_trace_id: str | None = None,
+        trace_id: str | None = None,
+        external_trace_id: str | None = None,
     ) -> None:
         updates: dict[str, Any] = {"updated_at": utc_now()}
         if status is not None:
@@ -186,8 +273,10 @@ class SQLiteStore:
             updates["intent"] = intent
         if current_phase is not None:
             updates["current_phase"] = current_phase
-        if langsmith_trace_id is not None:
-            updates["langsmith_trace_id"] = langsmith_trace_id
+        if trace_id is not None:
+            updates["trace_id"] = trace_id
+        if external_trace_id is not None:
+            updates["external_trace_id"] = external_trace_id
         assignments = ", ".join(f"{key}=?" for key in updates)
         with self._connect() as db:
             db.execute(
@@ -318,6 +407,13 @@ class SQLiteStore:
             approval["status"] = status
             approval["resolved_at"] = resolved_at
             if approval["target_type"] == "work_package":
+                package = db.execute(
+                    "SELECT source_agent_run_id FROM work_packages WHERE id=?",
+                    (approval["target_id"],),
+                ).fetchone()
+                approval["source_agent_run_id"] = (
+                    package["source_agent_run_id"] if package is not None else None
+                )
                 package_status = "approved" if status == "approved" else "rejected"
                 db.execute(
                     """
@@ -365,6 +461,19 @@ class SQLiteStore:
             )
         return artifact
 
+    def list_artifacts(self, agent_run_id: str) -> list[dict[str, Any]]:
+        with self._connect() as db:
+            rows = db.execute(
+                "SELECT * FROM artifacts WHERE source_agent_run_id=? ORDER BY created_at ASC",
+                (agent_run_id,),
+            ).fetchall()
+        artifacts: list[dict[str, Any]] = []
+        for row in rows:
+            artifact = dict(row)
+            artifact["payload"] = json.loads(artifact["payload"])
+            artifacts.append(artifact)
+        return artifacts
+
     def append_event(
         self,
         *,
@@ -379,7 +488,7 @@ class SQLiteStore:
             fh.write(json.dumps(event.to_dict(), ensure_ascii=False) + "\n")
         return event
 
-    def list_events(self, agent_run_id: str) -> list[dict[str, Any]]:
+    def list_events(self, agent_run_id: str, after: str | None = None) -> list[dict[str, Any]]:
         if not self.event_log_path.exists():
             return []
         events: list[dict[str, Any]] = []
@@ -388,14 +497,166 @@ class SQLiteStore:
                 event = json.loads(line)
                 if event.get("agent_run_id") == agent_run_id:
                     events.append(event)
+        if after is None:
+            return events
+        for index, event in enumerate(events):
+            if event["id"] == after:
+                return events[index + 1 :]
         return events
+
+    def get_work_package_by_agent_run(self, agent_run_id: str) -> dict[str, Any] | None:
+        with self._connect() as db:
+            row = db.execute(
+                "SELECT id FROM work_packages WHERE source_agent_run_id=? ORDER BY created_at DESC LIMIT 1",
+                (agent_run_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return self.get_work_package(row["id"])
+
+    def get_approval_for_target(self, *, target_type: str, target_id: str) -> dict[str, Any] | None:
+        with self._connect() as db:
+            row = db.execute(
+                """
+                SELECT * FROM approval_requests
+                WHERE target_type=? AND target_id=?
+                ORDER BY created_at DESC
+                LIMIT 1
+                """,
+                (target_type, target_id),
+            ).fetchone()
+        if row is None:
+            return None
+        return dict(row)
+
+    def record_trace_summary(
+        self,
+        *,
+        trace_id: str,
+        project_id: str,
+        session_id: str,
+        agent_run_id: str,
+        root_name: str,
+        status: str,
+        metadata: dict[str, Any],
+        events: list[dict[str, Any]],
+    ) -> Trace:
+        now = utc_now()
+        started_at = events[0]["created_at"] if events else now
+        ended_at = now if status in {"completed", "failed", "canceled"} else None
+        trace = Trace(
+            id=trace_id,
+            project_id=project_id,
+            session_id=session_id,
+            agent_run_id=agent_run_id,
+            root_name=root_name,
+            status=status,
+            started_at=started_at,
+            ended_at=ended_at,
+            metadata=metadata,
+        )
+
+        steps: list[TraceStep] = []
+        phase_events = [event for event in events if event["type"] == "agent_run.phase_changed"]
+        for index, event in enumerate(phase_events, start=1):
+            phase = str(event.get("payload", {}).get("phase", f"phase_{index}"))
+            steps.append(
+                TraceStep(
+                    id=new_id("step"),
+                    trace_id=trace.id,
+                    parent_step_id=None,
+                    name=phase,
+                    type="graph_node",
+                    status="completed",
+                    inputs_summary="",
+                    outputs_summary=json.dumps(event.get("payload", {}), ensure_ascii=False),
+                    started_at=event["created_at"],
+                    ended_at=event["created_at"],
+                )
+            )
+        if not steps:
+            steps.append(
+                TraceStep(
+                    id=new_id("step"),
+                    trace_id=trace.id,
+                    parent_step_id=None,
+                    name=root_name,
+                    type="root",
+                    status=status,
+                    inputs_summary="",
+                    outputs_summary=json.dumps({"status": status}, ensure_ascii=False),
+                    started_at=started_at,
+                    ended_at=ended_at,
+                )
+            )
+
+        with self._connect() as db:
+            db.execute(
+                """
+                INSERT OR REPLACE INTO traces VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    trace.id,
+                    trace.project_id,
+                    trace.session_id,
+                    trace.agent_run_id,
+                    trace.root_name,
+                    trace.status,
+                    trace.started_at,
+                    trace.ended_at,
+                    json.dumps(trace.metadata, ensure_ascii=False),
+                ),
+            )
+            db.execute("DELETE FROM trace_steps WHERE trace_id=?", (trace.id,))
+            db.executemany(
+                """
+                INSERT INTO trace_steps VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                [
+                    (
+                        step.id,
+                        step.trace_id,
+                        step.parent_step_id,
+                        step.name,
+                        step.type,
+                        step.status,
+                        step.inputs_summary,
+                        step.outputs_summary,
+                        step.started_at,
+                        step.ended_at,
+                    )
+                    for step in steps
+                ],
+            )
+        return trace
+
+    def get_trace_summary(self, agent_run_id: str) -> dict[str, Any]:
+        with self._connect() as db:
+            trace_row = db.execute(
+                "SELECT * FROM traces WHERE agent_run_id=? ORDER BY started_at DESC LIMIT 1",
+                (agent_run_id,),
+            ).fetchone()
+            if trace_row is None:
+                raise KeyError(agent_run_id)
+            step_rows = db.execute(
+                "SELECT * FROM trace_steps WHERE trace_id=? ORDER BY started_at ASC, id ASC",
+                (trace_row["id"],),
+            ).fetchall()
+        trace = dict(trace_row)
+        trace["metadata"] = json.loads(trace["metadata"])
+        return {
+            "trace": trace,
+            "steps": [dict(row) for row in step_rows],
+        }
 
     def get_agent_run(self, run_id: str) -> dict[str, Any]:
         with self._connect() as db:
             row = db.execute("SELECT * FROM agent_runs WHERE id=?", (run_id,)).fetchone()
         if row is None:
             raise KeyError(run_id)
-        return dict(row)
+        data = dict(row)
+        data.setdefault("external_trace_id", None)
+        return data
 
     def get_work_package(self, package_id: str) -> dict[str, Any]:
         with self._connect() as db:

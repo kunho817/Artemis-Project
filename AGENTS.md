@@ -119,13 +119,16 @@ Each mapping can be overridden with `ARTEMIS_GLM_MODEL_<ROLE>`.
 - [x] LangGraph validation failure path is covered by contract tests.
 - [x] Observability direction revised to local-first trace storage with LangSmith self-hosted/Cloud as explicit opt-in.
 - [x] MVP 2 GUI + Event Stream design document created at `docs/artemis_mvp2.md`.
+- [x] `langsmith_trace_id` naming replaced with neutral `trace_id` / `external_trace_id` terminology.
+- [x] MVP 2 Control Plane endpoints added for async Work Package requests, event polling/SSE, result, artifacts, and local trace summary.
+- [x] First-class local trace summary tables and GUI viewer path added.
+- [x] MVP 2 React/Vite/TypeScript GUI skeleton created at `apps/gui`.
+- [x] Persistent MVP 2 backend startup script added at `scripts/start_mvp2_services.py`.
+- [x] MVP 2 contract coverage added for async API result, event polling fallback, trace summary, and artifacts.
 
 ### Pending
 
-- [ ] Replace `langsmith_trace_id` naming with neutral `trace_id` / `external_trace_id` terminology.
-- [ ] Implement a first-class local trace store and viewer path for MVP 2.
 - [ ] Replace deterministic Work Package fallback with LLM-generated structured output where appropriate.
-- [ ] Add persistent service startup scripts.
 - [ ] Add real LangGraph checkpointing after MVP 1 contracts stabilize.
 
 ## Session History
@@ -140,6 +143,7 @@ Each mapping can be overridden with `ARTEMIS_GLM_MODEL_<ROLE>`.
 | #45 | 2026-05-08 | Clean `.venv` dependency install completed. Contract tests, compile checks, FastAPI HTTP smoke, live GLM LangChain call, and live LangSmith trace path all passed under `.venv`; global Python remains unsuitable for API verification. |
 | #46 | 2026-05-08 | MVP 1 re-verification found and fixed a validation failure path bug where empty risk hints crashed before schema validation. Added contract coverage; tests, compile checks, HTTP smoke, live GLM call, and live LangSmith trace path passed under `.venv`. |
 | #47 | 2026-05-08 | Planning session updated observability direction: LangSmith Cloud is no longer a default because of cost; Artemis local trace store is the default, with self-hosted/Cloud LangSmith only as explicit opt-in. MVP 2 design document created. |
+| #48 | 2026-05-08 | MVP 2 foundation slice started. Added Control Plane async Work Package request API, event polling/SSE, result/artifact/trace endpoints, local trace summary storage, neutral trace naming, React/Vite GUI skeleton, backend startup script, and MVP 2 contract coverage. Contract tests, compile checks, FastAPI smoke, GUI build, and npm audit passed. |
 
 ## Session Rules
 

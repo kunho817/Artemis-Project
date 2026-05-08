@@ -352,7 +352,7 @@ AgentRun
 - intent
 - current_phase
 - trace_id
-- optional_langsmith_trace_id
+- external_trace_id
 - created_at
 - updated_at
 ```
@@ -591,7 +591,7 @@ approval.rejected
 
 artifact.created
 
-trace.langsmith_linked
+trace.linked
 ```
 
 ### 11.2 Event 예시

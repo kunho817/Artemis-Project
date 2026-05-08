@@ -22,6 +22,19 @@ DENIED_TOOLS = frozenset(
         "external_network_call",
     }
 )
+IGNORED_PATH_PARTS = frozenset(
+    {
+        ".git",
+        ".venv",
+        "__pycache__",
+        ".pytest_cache",
+        "node_modules",
+        "dist",
+        "build",
+        ".vite",
+        "data",
+    }
+)
 
 
 class ToolPermissionError(PermissionError):
@@ -65,10 +78,9 @@ class ReadOnlyToolRouter:
 
     def list_files(self, max_files: int = 400) -> ToolResult:
         self.assert_allowed("list_files")
-        ignored = {".git", ".venv", "__pycache__", ".pytest_cache"}
         files: list[str] = []
         for path in self.repository_root.rglob("*"):
-            if any(part in ignored for part in path.parts):
+            if any(part in IGNORED_PATH_PARTS for part in path.parts):
                 continue
             if path.is_file():
                 files.append(path.relative_to(self.repository_root).as_posix())
@@ -81,7 +93,7 @@ class ReadOnlyToolRouter:
         pattern_lower = pattern.lower()
         matches: list[str] = []
         for path in self.repository_root.rglob("*"):
-            if not path.is_file() or ".git" in path.parts:
+            if not path.is_file() or any(part in IGNORED_PATH_PARTS for part in path.parts):
                 continue
             try:
                 text = path.read_text(encoding="utf-8", errors="replace")

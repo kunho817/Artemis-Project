@@ -26,7 +26,7 @@ class ControlPlaneService:
         session = self.store.create_session(project_id=project_id, title=title)
         return session.to_dict()
 
-    def create_work_package_from_request(
+    def start_work_package_request(
         self,
         *,
         project: dict[str, Any],
@@ -41,11 +41,63 @@ class ControlPlaneService:
             event_type="agent_run.created",
             payload={"status": "queued"},
         )
-        self.store.update_agent_run(run.id, status="running", current_phase="agent_backend")
+        return {
+            "project_id": project["id"],
+            "session_id": session["id"],
+            "agent_run_id": run.id,
+            "status": "queued",
+            "events_url": f"/api/agent-runs/{run.id}/events/stream",
+        }
+
+    def execute_work_package_request(
+        self,
+        *,
+        project: dict[str, Any],
+        session: dict[str, Any],
+        agent_run_id: str,
+        user_request: str,
+    ) -> dict[str, Any]:
+        try:
+            return self._execute_work_package_request(
+                project=project,
+                session=session,
+                agent_run_id=agent_run_id,
+                user_request=user_request,
+            )
+        except Exception as exc:  # pragma: no cover - defensive background task path
+            self.store.update_agent_run(
+                agent_run_id,
+                status="failed",
+                current_phase="failed",
+            )
+            self.store.append_event(
+                project_id=project["id"],
+                session_id=session["id"],
+                agent_run_id=agent_run_id,
+                event_type="agent_run.failed",
+                payload={"error": str(exc)},
+            )
+            return {
+                "project_id": project["id"],
+                "session_id": session["id"],
+                "agent_run_id": agent_run_id,
+                "status": "failed",
+                "errors": [str(exc)],
+            }
+
+    def _execute_work_package_request(
+        self,
+        *,
+        project: dict[str, Any],
+        session: dict[str, Any],
+        agent_run_id: str,
+        user_request: str,
+    ) -> dict[str, Any]:
+        self.store.update_agent_run(agent_run_id, status="running", current_phase="agent_backend")
         self.store.append_event(
             project_id=project["id"],
             session_id=session["id"],
-            agent_run_id=run.id,
+            agent_run_id=agent_run_id,
             event_type="agent_run.started",
             payload={},
         )
@@ -54,7 +106,7 @@ class ControlPlaneService:
             {
                 "project_id": project["id"],
                 "session_id": session["id"],
-                "agent_run_id": run.id,
+                "agent_run_id": agent_run_id,
                 "user_request": user_request,
                 "project_root": project["root_path"],
             }
@@ -63,23 +115,26 @@ class ControlPlaneService:
             self.store.append_event(
                 project_id=project["id"],
                 session_id=session["id"],
-                agent_run_id=run.id,
+                agent_run_id=agent_run_id,
                 event_type=event["type"],
                 payload=event["payload"],
             )
 
+        trace_id = backend_result.get("trace_id")
+        external_trace_id = backend_result.get("external_trace_id")
         self.store.update_agent_run(
-            run.id,
+            agent_run_id,
             status=backend_result["status"],
             intent=backend_result["intent_result"]["intent"],
             current_phase="completed" if backend_result["status"] == "completed" else "failed",
-            langsmith_trace_id=backend_result["langsmith_trace_id"],
+            trace_id=trace_id,
+            external_trace_id=external_trace_id,
         )
 
         self._create_artifact_and_event(
             project_id=project["id"],
             session_id=session["id"],
-            source_agent_run_id=run.id,
+            source_agent_run_id=agent_run_id,
             artifact_type="intent_result",
             title="Intent Result",
             payload=backend_result["intent_result"],
@@ -87,25 +142,35 @@ class ControlPlaneService:
         self._create_artifact_and_event(
             project_id=project["id"],
             session_id=session["id"],
-            source_agent_run_id=run.id,
+            source_agent_run_id=agent_run_id,
             artifact_type="context_summary",
             title="Context Summary",
             payload=backend_result["context_summary"],
         )
 
         if backend_result["status"] != "completed" or backend_result["work_package"] is None:
-            return {
-                "agent_run_id": run.id,
+            result = {
+                "agent_run_id": agent_run_id,
                 "status": backend_result["status"],
                 "errors": backend_result["errors"],
-                "langsmith_trace_id": backend_result["langsmith_trace_id"],
+                "trace_id": trace_id,
+                "external_trace_id": external_trace_id,
             }
+            self._record_trace_from_run(
+                project=project,
+                session=session,
+                agent_run_id=agent_run_id,
+                trace_id=trace_id,
+                external_trace_id=external_trace_id,
+                status=backend_result["status"],
+            )
+            return result
 
         draft = backend_result["work_package"]
         self._create_artifact_and_event(
             project_id=project["id"],
             session_id=session["id"],
-            source_agent_run_id=run.id,
+            source_agent_run_id=agent_run_id,
             artifact_type="work_package_draft",
             title=draft["title"],
             payload=draft,
@@ -113,20 +178,20 @@ class ControlPlaneService:
         package = self.store.create_work_package(
             project_id=project["id"],
             session_id=session["id"],
-            source_agent_run_id=run.id,
+            source_agent_run_id=agent_run_id,
             draft=draft,
         )
         self.store.append_event(
             project_id=project["id"],
             session_id=session["id"],
-            agent_run_id=run.id,
+            agent_run_id=agent_run_id,
             event_type="work_package.created",
             payload={"work_package_id": package.id},
         )
         self.store.append_event(
             project_id=project["id"],
             session_id=session["id"],
-            agent_run_id=run.id,
+            agent_run_id=agent_run_id,
             event_type="work_package.pending_approval",
             payload={"work_package_id": package.id},
         )
@@ -136,13 +201,13 @@ class ControlPlaneService:
             session_id=session["id"],
             target_type="work_package",
             target_id=package.id,
-            reason="MVP 1 requires approval before any implementation work.",
+            reason="MVP 2 requires approval before any implementation work.",
             risk_level=package.risks[0]["level"] if package.risks else "medium",
         )
         self.store.append_event(
             project_id=project["id"],
             session_id=session["id"],
-            agent_run_id=run.id,
+            agent_run_id=agent_run_id,
             event_type="approval.requested",
             payload={
                 "approval_id": approval.id,
@@ -150,15 +215,66 @@ class ControlPlaneService:
                 "target_id": approval.target_id,
             },
         )
+        self._record_trace_from_run(
+            project=project,
+            session=session,
+            agent_run_id=agent_run_id,
+            trace_id=trace_id,
+            external_trace_id=external_trace_id,
+            status=backend_result["status"],
+        )
 
         return {
             "project_id": project["id"],
             "session_id": session["id"],
-            "agent_run_id": run.id,
+            "agent_run_id": agent_run_id,
             "work_package_id": package.id,
             "approval_id": approval.id,
             "status": "pending_approval",
-            "langsmith_trace_id": backend_result["langsmith_trace_id"],
+            "trace_id": trace_id,
+            "external_trace_id": external_trace_id,
+        }
+
+    def create_work_package_from_request(
+        self,
+        *,
+        project: dict[str, Any],
+        session: dict[str, Any],
+        user_request: str,
+    ) -> dict[str, Any]:
+        queued = self.start_work_package_request(
+            project=project,
+            session=session,
+            user_request=user_request,
+        )
+        return self.execute_work_package_request(
+            project=project,
+            session=session,
+            agent_run_id=queued["agent_run_id"],
+            user_request=user_request,
+        )
+
+    def get_agent_run_result(self, agent_run_id: str) -> dict[str, Any]:
+        run = self.store.get_agent_run(agent_run_id)
+        work_package = self.store.get_work_package_by_agent_run(agent_run_id)
+        approval = None
+        if work_package is not None:
+            approval = self.store.get_approval_for_target(
+                target_type="work_package",
+                target_id=work_package["id"],
+            )
+        try:
+            trace = self.store.get_trace_summary(agent_run_id)
+        except KeyError:
+            trace = None
+
+        return {
+            "agent_run": run,
+            "work_package": work_package,
+            "approval": approval,
+            "artifacts": self.store.list_artifacts(agent_run_id),
+            "trace": trace,
+            "events": self.store.list_events(agent_run_id),
         }
 
     def resolve_approval(self, *, approval_id: str, status: str) -> dict[str, Any]:
@@ -167,7 +283,7 @@ class ControlPlaneService:
         self.store.append_event(
             project_id=approval["project_id"],
             session_id=approval["session_id"],
-            agent_run_id=None,
+            agent_run_id=approval.get("source_agent_run_id"),
             event_type=event_type,
             payload={
                 "approval_id": approval["id"],
@@ -176,6 +292,32 @@ class ControlPlaneService:
             },
         )
         return approval
+
+    def _record_trace_from_run(
+        self,
+        *,
+        project: dict[str, Any],
+        session: dict[str, Any],
+        agent_run_id: str,
+        trace_id: str | None,
+        external_trace_id: str | None,
+        status: str,
+    ) -> None:
+        if trace_id is None:
+            return
+        self.store.record_trace_summary(
+            trace_id=trace_id,
+            project_id=project["id"],
+            session_id=session["id"],
+            agent_run_id=agent_run_id,
+            root_name="artemis_agent_run",
+            status=status,
+            metadata={
+                "external_trace_id": external_trace_id,
+                "event_count": len(self.store.list_events(agent_run_id)),
+            },
+            events=self.store.list_events(agent_run_id),
+        )
 
     def _create_artifact_and_event(
         self,

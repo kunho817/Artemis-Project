@@ -128,7 +128,8 @@ class FinalAgentRunResult:
     context_summary: ContextSummary
     work_package: WorkPackageDraft | None
     risk_hints: list[RiskHint]
-    langsmith_trace_id: str
+    trace_id: str
+    external_trace_id: str | None
     events: list[AgentBackendEvent]
     errors: list[str] = field(default_factory=list)
 
@@ -139,7 +140,8 @@ class FinalAgentRunResult:
             "context_summary": self.context_summary.to_dict(),
             "work_package": self.work_package.to_dict() if self.work_package else None,
             "risk_hints": [risk.to_dict() for risk in self.risk_hints],
-            "langsmith_trace_id": self.langsmith_trace_id,
+            "trace_id": self.trace_id,
+            "external_trace_id": self.external_trace_id,
             "events": [event.to_dict() for event in self.events],
             "errors": list(self.errors),
         }

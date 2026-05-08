@@ -17,6 +17,7 @@ import uuid
 @dataclass(frozen=True)
 class TraceContext:
     trace_id: str
+    external_trace_id: str | None
     run_id: str
     project_name: str
     enabled: bool
@@ -35,10 +36,11 @@ class LangSmithTracer:
         enabled = requested and api_key_available
         project_name = self._env.get("LANGSMITH_PROJECT", "artemis-mvp1")
         run_id = str(uuid.uuid4())
-        prefix = "ls" if enabled else "local"
-        trace_id = f"{prefix}_{project_id}_{session_id}_{agent_run_id}_{run_id}"
+        trace_id = f"trace_{uuid.uuid4().hex[:16]}"
+        external_trace_id = f"langsmith_{run_id}" if enabled else None
         return TraceContext(
             trace_id=trace_id,
+            external_trace_id=external_trace_id,
             run_id=run_id,
             project_name=project_name,
             enabled=enabled,
