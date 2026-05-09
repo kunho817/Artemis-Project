@@ -22,6 +22,7 @@ D:\Artemis_Project\
 │   ├── artemis_mvp3.md
 │   ├── artemis_mvp4.md
 │   ├── artemis_mvp5.md
+│   ├── artemis_mvp6.md
 │   ├── architecture.md
 │   ├── configuration.md
 │   ├── getting-started.md
@@ -145,13 +146,15 @@ Each mapping can be overridden with `ARTEMIS_GLM_MODEL_<ROLE>`.
 - [x] MVP 5 verification passed: `.venv` compileall, full unittest, FastAPI smoke, GUI build, npm audit, and `scripts/smoke_mvp5_gui.py`.
 - [x] MVP 5 verification rerun passed: implementation coverage, backend contracts, FastAPI smoke, GUI build/audit, and GUI e2e smoke were rechecked.
 - [x] MVP 5 planning-side revalidation passed: Memory / Decision Log structure, source-linked memory policy, API/GUI boundaries, safety policy, contracts, FastAPI smoke, GUI build/audit, and GUI e2e smoke were rechecked. Selected memory is exposed through explicit context APIs; automatic injection into later requests remains out of scope.
+- [x] MVP 6 Risk Radar / Quality Center design document created at `docs/artemis_mvp6.md`.
+- [x] MVP 6 selected memory boundary fixed: selected memory snapshots may be attached only through explicit RiskScan/request context, never through hidden automatic injection.
 
 ### Pending
 
 - [ ] Replace deterministic Work Package fallback with LLM-generated structured output where appropriate.
 - [ ] Replace deterministic MVP 3 implementation proposal/log patch with LLM-generated structured PatchSet output when policy and review gates are ready.
 - [ ] Add real LangGraph checkpointing after MVP 1 contracts stabilize.
-- [ ] Decide whether selected memory snapshots should be attached to later Work Package or Brainstorming requests in MVP 6, or remain an explicit context API only.
+- [ ] Implement MVP 6 Risk Radar / Quality Center vertical slice.
 
 ## Session History
 
@@ -179,6 +182,7 @@ Each mapping can be overridden with `ARTEMIS_GLM_MODEL_<ROLE>`.
 | #59 | 2026-05-09 | MVP 5 implementation session completed the Memory / Decision Log vertical slice. Added Control Plane memory storage/API/service support, Agent Backend MemoryCandidate generation, DecisionRecord promotion, Project Rules, Session Summary, Failure Memory, SQLite/FTS search, selected memory context, GUI Memory View, backend contracts, and `scripts/smoke_mvp5_gui.py`; verification passed with compileall, full unittest, FastAPI smoke, GUI build, npm audit, and MVP 5 GUI e2e smoke. |
 | #60 | 2026-05-09 | MVP 5 verification rerun completed. Rechecked Memory / Decision Log implementation coverage against `docs/artemis_mvp5.md`; `.venv` compileall, full unittest, FastAPI smoke, GUI build, npm audit, and `scripts/smoke_mvp5_gui.py` passed again. |
 | #61 | 2026-05-09 | Planning-side MVP 5 revalidation completed. Rechecked `docs/artemis_mvp5.md` completion conditions against Control Plane, Agent Backend, GUI, contract tests, and smoke scripts; selected memory currently remains an explicit context API rather than automatic request injection; compileall, full unittest, FastAPI smoke, GUI build, npm audit, and MVP 5 GUI e2e smoke passed again. |
+| #62 | 2026-05-09 | Planning session created MVP 6 design document. MVP 6 scope fixed as Risk Radar / Quality Center: RiskScanRun, RiskFinding, QualitySignal, ProjectHealthSnapshot, ArchitectureMapSnapshot lite, explicit selected memory attachment to RiskScan source context, finding status management, finding-to-WorkPackage conversion, GUI Risk Radar/Quality Center, and read-only repository/memory/execution signal analysis, with hidden automatic RAG, command execution, file writes, patch generation, test execution, CI integration, and external scanners excluded. |
 
 ## Session Rules
 
