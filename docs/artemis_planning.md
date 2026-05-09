@@ -14,6 +14,40 @@ Artemis의 목표는 개인 개발자가 혼자서는 감당하기 어려운 대
 
 ---
 
+## 0.1 현재 구현 상태
+
+2026-05-10 기준으로 MVP 1부터 MVP 6까지의 vertical slice는 구현과 계획측 재검증이 완료된 것으로 본다.
+
+완료된 기준 문서:
+
+```text
+- docs/artemis_mvp1.md
+- docs/artemis_mvp2.md
+- docs/artemis_mvp3.md
+- docs/artemis_mvp4.md
+- docs/artemis_mvp5.md
+- docs/artemis_mvp6.md
+```
+
+완료된 기능 축:
+
+```text
+MVP 1: Work Package backend foundation
+MVP 2: GUI + Event Stream
+MVP 3: Implementation Pipeline
+MVP 4: Brainstorming Room + Decision Record
+MVP 5: Memory / Decision Log
+MVP 6: Risk Radar / Quality Center
+```
+
+현재 `main` 브랜치는 새 Artemis 구현을 기준으로 한다.
+기존 Go TUI 구현은 `legacy/go-tui` 브랜치에 보존한다.
+
+이 문서는 초기 장기 기획 문서이므로 일부 예시는 아직 미래형 표현을 유지한다.
+다만 MVP 1~6에 해당하는 기반 기능은 완료된 현행 baseline으로 취급한다.
+
+---
+
 ## 1. Artemis의 핵심 정의
 
 ### 1.1 한 문장 정의
@@ -1392,7 +1426,7 @@ Git
 
 ---
 
-### MVP 1 — Agent Backend 기반
+### MVP 1 — Agent Backend 기반 [완료]
 
 목표:
 
@@ -1413,9 +1447,16 @@ Git
 - grep
 - git_status
 
+완료 기준:
+
+- 자연어 요청을 구조화된 Work Package로 변환
+- Control Plane / Agent Backend 경계 확립
+- local trace, event, approval, artifact 저장
+- read-only tool layer와 backend contract test 확보
+
 ---
 
-### MVP 2 — GUI + Event Stream
+### MVP 2 — GUI + Event Stream [완료]
 
 목표:
 
@@ -1430,9 +1471,17 @@ Git
 - event log
 - approval request view
 
+완료 기준:
+
+- React/Vite GUI skeleton
+- async Work Package request
+- event polling/SSE
+- local trace/artifact viewer
+- GUI e2e smoke
+
 ---
 
-### MVP 3 — Implementation Pipeline
+### MVP 3 — Implementation Pipeline [완료]
 
 목표:
 
@@ -1454,9 +1503,17 @@ run_tests
 review
 ```
 
+완료 기준:
+
+- approved WorkPackage -> ImplementationRun
+- ImplementationPlan / PatchSet / Diff Viewer
+- approval-gated patch apply
+- VerificationRun / ReviewResult
+- implementation timeline과 GUI smoke
+
 ---
 
-### MVP 4 — Brainstorming Room
+### MVP 4 — Brainstorming Room [완료]
 
 목표:
 
@@ -1474,9 +1531,17 @@ review
 - final summary
 - convert to work package
 
+완료 기준:
+
+- BrainstormingSession
+- role contribution / critique / option
+- DecisionBrief accept/reject
+- accepted DecisionRecord
+- DecisionRecord -> pending approval WorkPackage conversion
+
 ---
 
-### MVP 5 — Memory / Decision Log
+### MVP 5 — Memory / Decision Log [완료]
 
 목표:
 
@@ -1486,9 +1551,18 @@ review
 - 과거 결정 검색
 - Failure Memory 저장
 
+완료 기준:
+
+- ProjectMemoryItem / MemorySourceLink / MemoryExtractionRun
+- DecisionRecord promotion
+- Project Rule / Session Summary / Failure Memory
+- SQLite/FTS search
+- explicit selected memory context
+- GUI Memory View
+
 ---
 
-### MVP 6 — Risk Radar / Quality Center
+### MVP 6 — Risk Radar / Quality Center [완료]
 
 목표:
 
@@ -1497,27 +1571,33 @@ review
 - 기술 부채 탐지
 - 코드 품질 snapshot 제공
 
+완료 기준:
+
+- RiskScanRun / RiskFinding / QualitySignal
+- ProjectHealthSnapshot
+- ArchitectureMapSnapshot lite
+- explicit selected memory RiskScan context
+- finding status management
+- accepted finding -> pending approval WorkPackage conversion
+- GUI Risk Radar / Quality Center
+- read-only analysis policy
+
 ---
 
 ## 19. Codex에서 이어갈 때의 우선 구현 과제
 
-Codex에서는 다음 순서로 작업을 이어가는 것이 좋다.
+MVP 1~6 완료 이후 Codex에서는 다음 순서로 작업을 이어가는 것이 좋다.
 
-1. Repository 구조 생성
-2. Python Agent Backend FastAPI 기본 서버 생성
-3. LangGraph root graph skeleton 생성
-4. ArtemisState schema 작성
-5. Tool Router skeleton 작성
-6. read_file, list_files, grep, git_status 도구 구현
-7. Work Package schema 작성
-8. classify_intent node 작성
-9. create_work_package node 작성
-10. event publisher 작성
-11. GUI Backend 또는 GUI Client skeleton 작성
-12. WebSocket/SSE event stream 연결
-13. Brainstorming graph skeleton 작성
-14. Local trace 설정
-15. Diff & Review pipeline 추가
+1. deterministic Work Package fallback을 LLM-generated structured output으로 교체한다.
+2. deterministic MVP 3 implementation proposal/log patch를 LLM-generated structured PatchSet으로 교체한다.
+3. LangGraph checkpointing을 실제 장기 실행 흐름에 연결한다.
+4. Architecture Map lite를 더 깊은 dependency / boundary map으로 확장한다.
+5. Risk Radar finding trend와 repeated failure clustering을 추가한다.
+6. Quality Center에 선택적 coverage / CI result ingestion을 붙인다.
+7. Memory 기반 context recommendation을 실험하되 hidden automatic RAG는 기본값으로 넣지 않는다.
+8. release readiness dashboard를 추가한다.
+9. 협업/웹 사용을 고려한 사용자, 권한, project sharing 모델을 설계한다.
+10. plugin/MCP/tool permission policy를 GUI에서 관리할 수 있게 한다.
 
 ---
 
@@ -1733,13 +1813,14 @@ GUI가 이를 실시간 이벤트와 함께 표시한다.
 확장 순서:
 
 ```text
-Work Package
-→ Brainstorming Room
-→ Implementation Pipeline
-→ Diff & Review
-→ Memory
-→ Risk Radar
-→ Architecture Map
+[완료] Work Package
+→ [완료] GUI + Event Stream
+→ [완료] Implementation Pipeline / Diff & Review
+→ [완료] Brainstorming Room
+→ [완료] Memory
+→ [완료] Risk Radar / Quality Center
+→ [다음 후보] Deep Architecture Map
+→ [다음 후보] Release Readiness / Collaboration
 ```
 
 ---

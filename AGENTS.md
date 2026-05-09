@@ -152,6 +152,7 @@ Each mapping can be overridden with `ARTEMIS_GLM_MODEL_<ROLE>`.
 - [x] MVP 6 verification passed: `.venv` compileall, full unittest, FastAPI smoke, GUI build, npm audit, and `scripts/smoke_mvp6_gui.py`.
 - [x] MVP 6 verification rerun passed: implementation coverage, selected-memory RiskScan boundary, backend contracts, FastAPI smoke, GUI build/audit, and MVP 6 GUI e2e smoke were rechecked.
 - [x] MVP 6 planning-side revalidation passed: Risk Radar / Quality Center structure, explicit selected-memory RiskScan boundary, API/GUI boundaries, read-only analysis policy, backend contracts, FastAPI smoke, GUI build/audit, and GUI e2e smoke were rechecked.
+- [x] Central planning document updated so `docs/artemis_planning.md` treats MVP 1 through MVP 6 as completed baseline work as of 2026-05-10.
 
 ### Pending
 
@@ -189,6 +190,7 @@ Each mapping can be overridden with `ARTEMIS_GLM_MODEL_<ROLE>`.
 | #63 | 2026-05-10 | MVP 6 implementation session completed the Risk Radar / Quality Center vertical slice. Added Agent Backend RiskAnalysisCandidate generation, Control Plane RiskScan/Finding/Quality/Health/Architecture Map storage and APIs, explicit selected-memory scan context with archived/superseded blocking, finding accept/dismiss/mitigate and conversion to pending-approval Work Package, GUI Risk Radar and Quality Center, backend contracts, and `scripts/smoke_mvp6_gui.py`; verification passed with compileall, full unittest, FastAPI smoke, GUI build, npm audit, and MVP 6 GUI e2e smoke. |
 | #64 | 2026-05-10 | MVP 6 verification rerun completed. Rechecked Risk Radar / Quality Center completion conditions against `docs/artemis_mvp6.md`; `.venv` compileall, full unittest, FastAPI smoke, GUI build, npm audit, and `scripts/smoke_mvp6_gui.py` passed again. |
 | #65 | 2026-05-10 | Planning-side MVP 6 revalidation completed. Rechecked `docs/artemis_mvp6.md` completion conditions against Control Plane, Agent Backend, GUI, contract tests, and smoke scripts; RiskScan selected-memory attachment remains explicit-only and RiskScan analysis remains read-only; compileall, full unittest, FastAPI smoke, GUI build, npm audit, and MVP 6 GUI e2e smoke passed again. |
+| #66 | 2026-05-10 | Central planning document refresh completed. Updated `docs/artemis_planning.md` to mark MVP 1 through MVP 6 as completed baseline work, add a current implementation status section, annotate the MVP roadmap with completion criteria, and replace the old bootstrap task list with post-MVP6 follow-up priorities. |
 
 ## Session Rules
 
