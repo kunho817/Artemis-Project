@@ -143,6 +143,7 @@ Each mapping can be overridden with `ARTEMIS_GLM_MODEL_<ROLE>`.
 - [x] MVP 5 Memory / Decision Log design document created at `docs/artemis_mvp5.md`.
 - [x] MVP 5 Memory / Decision Log vertical slice added: ProjectMemoryItem, MemorySourceLink, MemoryExtractionRun, MemoryCandidate, DecisionRecord promotion, manual Project Rules, Session Summary, Failure Memory, SQLite/FTS search, selected memory context, backend contracts, and GUI Memory View.
 - [x] MVP 5 verification passed: `.venv` compileall, full unittest, FastAPI smoke, GUI build, npm audit, and `scripts/smoke_mvp5_gui.py`.
+- [x] MVP 5 verification rerun passed: implementation coverage, backend contracts, FastAPI smoke, GUI build/audit, and GUI e2e smoke were rechecked.
 
 ### Pending
 
@@ -174,6 +175,7 @@ Each mapping can be overridden with `ARTEMIS_GLM_MODEL_<ROLE>`.
 | #57 | 2026-05-09 | Planning-side MVP 4 revalidation completed. Rechecked `docs/artemis_mvp4.md` completion conditions against Control Plane, Agent Backend, GUI, contract tests, and smoke scripts; compileall, full unittest, FastAPI smoke, GUI build, npm audit, and MVP 4 GUI e2e smoke passed again. |
 | #58 | 2026-05-09 | Planning session created MVP 5 design document. MVP 5 scope fixed as local-first Memory / Decision Log: ProjectMemoryItem, source-linked memory, DecisionRecord promotion, Project Rules, Session Summary, Failure Memory, SQLite/FTS search, selected memory context, and GUI Memory View, with vector DB, external embeddings, automatic RAG, hidden context injection, file writes, and command execution excluded. |
 | #59 | 2026-05-09 | MVP 5 implementation session completed the Memory / Decision Log vertical slice. Added Control Plane memory storage/API/service support, Agent Backend MemoryCandidate generation, DecisionRecord promotion, Project Rules, Session Summary, Failure Memory, SQLite/FTS search, selected memory context, GUI Memory View, backend contracts, and `scripts/smoke_mvp5_gui.py`; verification passed with compileall, full unittest, FastAPI smoke, GUI build, npm audit, and MVP 5 GUI e2e smoke. |
+| #60 | 2026-05-09 | MVP 5 verification rerun completed. Rechecked Memory / Decision Log implementation coverage against `docs/artemis_mvp5.md`; `.venv` compileall, full unittest, FastAPI smoke, GUI build, npm audit, and `scripts/smoke_mvp5_gui.py` passed again. |
 
 ## Session Rules
 
