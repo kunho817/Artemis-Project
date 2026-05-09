@@ -16,6 +16,14 @@ import type {
   PatchSet,
   Project,
   ProjectMemoryItem,
+  QualitySnapshot,
+  RiskFinding,
+  RiskFindingConversionResult,
+  RiskFindingStatus,
+  RiskRadar,
+  RiskScanResponse,
+  RiskScanResult,
+  RiskScanScopeType,
   SelectedMemoryContext,
   Session,
   TraceSummary,
@@ -328,6 +336,65 @@ export class ControlPlaneApi {
     });
   }
 
+  async createRiskScan(payload: {
+    projectId: string;
+    sessionId: string;
+    scopeType: RiskScanScopeType;
+    includeSelectedMemory: boolean;
+    selectedMemoryIds: string[];
+    focus: string[];
+  }): Promise<RiskScanResponse> {
+    return this.request(`/api/projects/${payload.projectId}/risk-scans`, {
+      method: "POST",
+      body: {
+        session_id: payload.sessionId,
+        scope_type: payload.scopeType,
+        scope_id: null,
+        include_selected_memory: payload.includeSelectedMemory,
+        selected_memory_ids: payload.selectedMemoryIds,
+        focus: payload.focus
+      }
+    });
+  }
+
+  async getRiskScan(riskScanRunId: string): Promise<RiskScanResult["risk_scan_run"]> {
+    return this.request(`/api/risk-scans/${riskScanRunId}`);
+  }
+
+  async getRiskScanResult(riskScanRunId: string): Promise<RiskScanResult> {
+    return this.request(`/api/risk-scans/${riskScanRunId}/result`);
+  }
+
+  async listRiskScanEvents(riskScanRunId: string, after?: string): Promise<EventRecord[]> {
+    const suffix = after ? `?after=${encodeURIComponent(after)}` : "";
+    return this.request(`/api/risk-scans/${riskScanRunId}/events${suffix}`);
+  }
+
+  async getRiskRadar(projectId: string): Promise<RiskRadar> {
+    return this.request(`/api/projects/${projectId}/risk-radar`);
+  }
+
+  async getQualitySnapshot(projectId: string): Promise<QualitySnapshot> {
+    return this.request(`/api/projects/${projectId}/quality-snapshot`);
+  }
+
+  async updateRiskFindingStatus(
+    riskFindingId: string,
+    status: Exclude<RiskFindingStatus, "converted">
+  ): Promise<RiskFinding> {
+    return this.request(`/api/risk-findings/${riskFindingId}`, {
+      method: "PATCH",
+      body: { status }
+    });
+  }
+
+  async convertRiskFinding(riskFindingId: string): Promise<RiskFindingConversionResult> {
+    return this.request(`/api/risk-findings/${riskFindingId}/convert-to-work-package`, {
+      method: "POST",
+      body: {}
+    });
+  }
+
   eventStreamUrl(agentRunId: string): string {
     return `${this.baseUrl}/api/agent-runs/${agentRunId}/events/stream`;
   }
@@ -338,6 +405,10 @@ export class ControlPlaneApi {
 
   brainstormingEventStreamUrl(brainstormingSessionId: string): string {
     return `${this.baseUrl}/api/brainstorming-sessions/${brainstormingSessionId}/events/stream`;
+  }
+
+  riskScanEventStreamUrl(riskScanRunId: string): string {
+    return `${this.baseUrl}/api/risk-scans/${riskScanRunId}/events/stream`;
   }
 
   private async request<T>(path: string, init: { method?: string; body?: unknown } = {}): Promise<T> {

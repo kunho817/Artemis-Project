@@ -29,6 +29,9 @@ class AgentBackendClient(Protocol):
     def create_memory_candidate(self, payload: dict[str, Any]) -> dict[str, Any]:
         """Create a structured Project Memory candidate."""
 
+    def create_risk_analysis(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Create a structured Risk/Quality analysis candidate."""
+
 
 class HTTPAgentBackendClient:
     def __init__(self, base_url: str | None = None, timeout_seconds: float = 120.0) -> None:
@@ -57,6 +60,9 @@ class HTTPAgentBackendClient:
 
     def create_memory_candidate(self, payload: dict[str, Any]) -> dict[str, Any]:
         return self._post("/internal/memory-candidates", payload)
+
+    def create_risk_analysis(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return self._post("/internal/risk-scans", payload)
 
     def _post(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
         body = json.dumps(payload).encode("utf-8")
@@ -112,3 +118,10 @@ class InProcessAgentBackendClient:
         return service.create_memory_candidate(
             MemoryCandidateBackendRequest(**payload)
         ).to_dict()
+
+    def create_risk_analysis(self, payload: dict[str, Any]) -> dict[str, Any]:
+        from services.agent_backend.app.schemas import RiskScanBackendRequest
+        from services.agent_backend.app.service import AgentBackendService
+
+        service = self._service or AgentBackendService()
+        return service.create_risk_analysis(RiskScanBackendRequest(**payload)).to_dict()

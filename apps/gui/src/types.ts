@@ -397,3 +397,135 @@ export type SelectedMemoryContext = {
   selected_memory: SelectedMemoryItem[];
   source_context: SelectedMemoryItem["snapshot"][];
 };
+
+export type RiskScanStatus = "queued" | "collecting" | "analyzing" | "completed" | "failed" | "canceled";
+export type RiskScanScopeType =
+  | "project"
+  | "session"
+  | "work_package"
+  | "implementation_run"
+  | "review_result"
+  | "memory_focus";
+export type RiskFindingStatus = "open" | "accepted" | "dismissed" | "mitigated" | "converted";
+
+export type AnalysisSourceLink = {
+  source_type: string;
+  source_id: string;
+  relation: string;
+  label?: string;
+};
+
+export type RiskScanRun = {
+  id: string;
+  project_id: string;
+  session_id: string;
+  scope_type: RiskScanScopeType;
+  scope_id: string | null;
+  status: RiskScanStatus;
+  current_phase: string | null;
+  selected_memory_count: number;
+  trace_id: string | null;
+  source_context: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+};
+
+export type RiskFinding = {
+  id: string;
+  project_id: string;
+  risk_scan_run_id: string;
+  category: string;
+  severity: "info" | "low" | "medium" | "high" | "critical";
+  title: string;
+  summary: string;
+  evidence: string[];
+  recommendation: string;
+  confidence: number;
+  status: RiskFindingStatus;
+  source_links: AnalysisSourceLink[];
+  converted_work_package_id: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type QualitySignal = {
+  id: string;
+  project_id: string;
+  risk_scan_run_id: string;
+  kind: string;
+  status: "healthy" | "watch" | "at_risk" | "unknown";
+  title: string;
+  summary: string;
+  value: unknown;
+  target: unknown;
+  evidence: string[];
+  source_links: AnalysisSourceLink[];
+  created_at: string;
+};
+
+export type ProjectHealthSnapshot = {
+  id: string;
+  project_id: string;
+  risk_scan_run_id: string;
+  overall_status: "healthy" | "watch" | "at_risk" | "blocked" | "unknown";
+  overall_score: number;
+  risk_counts: Record<string, number>;
+  top_findings: Array<Record<string, unknown>>;
+  quality_summary: Record<string, unknown>;
+  recommendation: string;
+  created_at: string;
+};
+
+export type ArchitectureMapSnapshot = {
+  id: string;
+  project_id: string;
+  risk_scan_run_id: string;
+  nodes: Array<Record<string, unknown>>;
+  edges: Array<Record<string, unknown>>;
+  hotspots: Array<Record<string, unknown>>;
+  boundary_notes: string[];
+  created_at: string;
+};
+
+export type RiskScanResponse = {
+  project_id: string;
+  session_id: string;
+  risk_scan_run_id: string;
+  status: RiskScanStatus;
+  events_url: string;
+};
+
+export type RiskScanResult = {
+  risk_scan_run: RiskScanRun;
+  findings: RiskFinding[];
+  quality_signals: QualitySignal[];
+  project_health_snapshot: ProjectHealthSnapshot | null;
+  architecture_map_snapshot: ArchitectureMapSnapshot | null;
+  trace: TraceSummary | null;
+  events: EventRecord[];
+  artifacts: Artifact[];
+};
+
+export type RiskRadar = {
+  project_id: string;
+  latest_scan: RiskScanRun | null;
+  health: ProjectHealthSnapshot | null;
+  findings: RiskFinding[];
+  severity_counts: Record<string, number>;
+  category_counts: Record<string, number>;
+  status_counts: Record<string, number>;
+};
+
+export type QualitySnapshot = {
+  project_id: string;
+  latest_scan: RiskScanRun | null;
+  health: ProjectHealthSnapshot | null;
+  signals: QualitySignal[];
+  architecture_map: ArchitectureMapSnapshot | null;
+};
+
+export type RiskFindingConversionResult = {
+  risk_finding: RiskFinding;
+  work_package: WorkPackage;
+  approval: Approval | null;
+};

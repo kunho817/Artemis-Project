@@ -13,6 +13,8 @@ from services.agent_backend.app.schemas import (
     BrainstormingOptionDraft,
     DecisionBriefDraft,
     MemoryCandidateDraft,
+    QualitySignalDraft,
+    RiskFindingDraft,
     RiskHint,
     WorkPackageCandidateRequest,
     WorkPackageDraft,
@@ -767,6 +769,179 @@ class MVP1ContractTests(unittest.TestCase):
                 if event["type"] == "memory.item.created"
             ]
             self.assertGreaterEqual(len(extraction_events), 3)
+
+    def test_mvp6_risk_schema_validation(self) -> None:
+        finding = RiskFindingDraft(
+            category="verification",
+            severity="high",
+            title="Repeated verification failures",
+            summary="Failure memory points to repeated verification risk.",
+            evidence=["verification_run: failed"],
+            recommendation="Create a follow-up Work Package.",
+            confidence=0.86,
+            source_links=[
+                {
+                    "source_type": "verification_run",
+                    "source_id": "verify_001",
+                    "relation": "derived_from",
+                }
+            ],
+        )
+        signal = QualitySignalDraft(
+            kind="verification",
+            status="at_risk",
+            title="Recorded verification history",
+            summary="A failed run is recorded.",
+            value={"failed": 1},
+            target={"failed": 0},
+            evidence=["1 failed run"],
+            source_links=[
+                {
+                    "source_type": "repository_metric",
+                    "source_id": "repository_metrics",
+                    "relation": "derived_from",
+                }
+            ],
+        )
+
+        self.assertEqual(finding.validate(), [])
+        self.assertEqual(signal.validate(), [])
+
+        missing_source = RiskFindingDraft(
+            category="verification",
+            severity="medium",
+            title="No source",
+            summary="Invalid source policy.",
+            evidence=["missing"],
+            recommendation="Do not store.",
+            confidence=0.5,
+            source_links=[],
+        )
+        self.assertIn("source_links must be non-empty", missing_source.validate())
+
+    def test_mvp6_risk_scan_selected_memory_and_conversion_contract(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            project_root = root / "project"
+            project_root.mkdir()
+            (project_root / "README.md").write_text("Artemis MVP 6 project", encoding="utf-8")
+            (project_root / "docs").mkdir()
+            (project_root / "docs" / "artemis_mvp6.md").write_text(
+                "Risk Radar and Quality Center\n",
+                encoding="utf-8",
+            )
+
+            store = SQLiteStore(root / "artemis.db", root / "events.jsonl")
+            service = ControlPlaneService(store, agent_backend=InProcessAgentBackendClient())
+            project = service.open_project(name="test", root_path=str(project_root))
+            session = service.create_session(project_id=project["id"], title="MVP6 contract")
+
+            rule = service.create_manual_memory_item(
+                project_id=project["id"],
+                payload={
+                    "type": "project_rule",
+                    "title": "GUI calls Control Plane only",
+                    "summary": "The GUI must use Control Plane APIs.",
+                    "body": "All GUI actions go through Control Plane APIs.",
+                    "tags": ["architecture", "gui"],
+                    "importance": "high",
+                    "session_id": session["id"],
+                },
+            )
+            service.select_memory_for_session(session_id=session["id"], memory_item_id=rule["id"])
+
+            work_package_result = service.create_work_package_from_request(
+                project=project,
+                session=session,
+                user_request="Create an MVP 6 verification risk Work Package.",
+            )
+            service.resolve_approval(
+                approval_id=work_package_result["approval_id"],
+                status="approved",
+            )
+            implementation_run = store.create_implementation_run(
+                project_id=project["id"],
+                session_id=session["id"],
+                work_package_id=work_package_result["work_package_id"],
+            )
+            verification = store.create_verification_run(
+                implementation_run_id=implementation_run.id,
+                command="python -m unittest discover -s tests",
+                status="failed",
+                exit_code=1,
+                stdout="",
+                stderr="contract failure",
+            )
+            service.promote_verification_failure_memory(verification_run_id=verification.id)
+
+            scan_result = service.create_risk_scan(
+                project=project,
+                session=session,
+                scope_type="project",
+                include_selected_memory=True,
+                selected_memory_ids=[rule["id"]],
+                focus=["verification", "architecture", "process"],
+            )
+            run = scan_result["risk_scan_run"]
+            self.assertEqual(run["status"], "completed")
+            self.assertEqual(run["selected_memory_count"], 1)
+            self.assertEqual(run["source_context"]["selected_memory_snapshots"][0]["id"], rule["id"])
+            self.assertGreaterEqual(len(scan_result["findings"]), 1)
+            self.assertTrue(all(finding["source_links"] for finding in scan_result["findings"]))
+            self.assertGreaterEqual(len(scan_result["quality_signals"]), 3)
+            self.assertIsNotNone(scan_result["project_health_snapshot"])
+            self.assertIsNotNone(scan_result["architecture_map_snapshot"])
+            self.assertIsNotNone(scan_result["trace"])
+
+            radar = service.get_risk_radar(project_id=project["id"])
+            self.assertEqual(radar["latest_scan"]["id"], run["id"])
+            self.assertGreaterEqual(len(radar["findings"]), 1)
+            quality = service.get_quality_snapshot(project_id=project["id"])
+            self.assertEqual(quality["latest_scan"]["id"], run["id"])
+            self.assertGreaterEqual(len(quality["signals"]), 3)
+            self.assertIsNotNone(quality["architecture_map"])
+
+            finding = next(
+                item for item in scan_result["findings"] if item["severity"] in {"high", "medium"}
+            )
+            with self.assertRaises(ValueError):
+                service.convert_risk_finding_to_work_package(risk_finding_id=finding["id"])
+            accepted = service.update_risk_finding_status(
+                risk_finding_id=finding["id"],
+                status="accepted",
+            )
+            self.assertEqual(accepted["status"], "accepted")
+            converted = service.convert_risk_finding_to_work_package(
+                risk_finding_id=finding["id"],
+            )
+            self.assertEqual(converted["risk_finding"]["status"], "converted")
+            self.assertEqual(converted["work_package"]["status"], "pending_approval")
+            self.assertEqual(converted["approval"]["target_type"], "work_package")
+            duplicate = service.convert_risk_finding_to_work_package(
+                risk_finding_id=finding["id"],
+            )
+            self.assertEqual(duplicate["work_package"]["id"], converted["work_package"]["id"])
+
+            event_types = {event["type"] for event in store.list_events(run["id"])}
+            self.assertIn("selected_memory.attached_to_risk_scan", event_types)
+            self.assertIn("risk_finding.created", event_types)
+            self.assertIn("quality_signal.created", event_types)
+            self.assertIn("project_health_snapshot.created", event_types)
+            self.assertIn("risk_finding.converted_to_work_package", event_types)
+
+            trace = store.get_trace_summary(run["id"])
+            self.assertEqual(trace["trace"]["root_name"], "artemis_risk_scan")
+            self.assertTrue(trace["steps"])
+
+            service.archive_memory_item(memory_item_id=rule["id"])
+            with self.assertRaises(ValueError):
+                service.create_risk_scan(
+                    project=project,
+                    session=session,
+                    scope_type="project",
+                    include_selected_memory=True,
+                    selected_memory_ids=[rule["id"]],
+                )
 
 
 if __name__ == "__main__":

@@ -50,6 +50,18 @@ ALLOWED_MEMORY_SOURCE_TYPES = frozenset(
         "manual",
     }
 )
+ALLOWED_RISK_SCAN_SCOPE_TYPES = frozenset(
+    {"project", "session", "work_package", "implementation_run", "review_result", "memory_focus"}
+)
+ALLOWED_RISK_FINDING_STATUSES = frozenset({"open", "accepted", "dismissed", "mitigated", "converted"})
+ALLOWED_RISK_FINDING_CATEGORIES = frozenset(
+    {"architecture", "implementation", "verification", "schedule", "product", "security", "process"}
+)
+ALLOWED_RISK_FINDING_SEVERITIES = frozenset({"info", "low", "medium", "high", "critical"})
+ALLOWED_QUALITY_SIGNAL_KINDS = frozenset(
+    {"verification", "coverage_hint", "code_size", "memory", "process", "architecture"}
+)
+ALLOWED_QUALITY_SIGNAL_STATUSES = frozenset({"healthy", "watch", "at_risk", "unknown"})
 SECRET_MARKERS = ("api_key", "apikey", "password", "secret", "token", "bearer ")
 DEFAULT_BRAINSTORMING_ROLES: dict[str, list[str]] = {
     "free_ideation": ["product_planner", "system_architect", "implementation_planner"],
@@ -1117,6 +1129,475 @@ class ControlPlaneService:
             "approval": approval.to_dict(),
         }
 
+    def start_risk_scan(
+        self,
+        *,
+        project: dict[str, Any],
+        session: dict[str, Any],
+        scope_type: str = "project",
+        scope_id: str | None = None,
+        include_selected_memory: bool = False,
+        selected_memory_ids: list[str] | None = None,
+        focus: list[str] | None = None,
+    ) -> dict[str, Any]:
+        if scope_type not in ALLOWED_RISK_SCAN_SCOPE_TYPES:
+            raise ValueError(f"Unsupported risk scan scope_type: {scope_type}")
+        self._validate_risk_scope(project=project, session=session, scope_type=scope_type, scope_id=scope_id)
+        source_context = self._source_context_for_risk_scan(
+            project=project,
+            session=session,
+            scope_type=scope_type,
+            scope_id=scope_id,
+            include_selected_memory=include_selected_memory,
+            selected_memory_ids=selected_memory_ids or [],
+            focus=focus or [],
+        )
+        run = self.store.create_risk_scan_run(
+            project_id=project["id"],
+            session_id=session["id"],
+            scope_type=scope_type,
+            scope_id=scope_id,
+            selected_memory_count=len(source_context["selected_memory_snapshots"]),
+            source_context=source_context,
+        )
+        self.store.append_event(
+            project_id=project["id"],
+            session_id=session["id"],
+            agent_run_id=run.id,
+            event_type="risk_scan.created",
+            payload={
+                "risk_scan_run_id": run.id,
+                "scope_type": scope_type,
+                "scope_id": scope_id,
+                "selected_memory_count": run.selected_memory_count,
+            },
+        )
+        if run.selected_memory_count:
+            self.store.append_event(
+                project_id=project["id"],
+                session_id=session["id"],
+                agent_run_id=run.id,
+                event_type="selected_memory.attached_to_risk_scan",
+                payload={
+                    "risk_scan_run_id": run.id,
+                    "memory_item_ids": [item["id"] for item in source_context["selected_memory_snapshots"]],
+                },
+            )
+        return {
+            "project_id": project["id"],
+            "session_id": session["id"],
+            "risk_scan_run_id": run.id,
+            "status": "queued",
+            "events_url": f"/api/risk-scans/{run.id}/events/stream",
+        }
+
+    def execute_risk_scan(self, *, risk_scan_run_id: str) -> dict[str, Any]:
+        run = self.store.get_risk_scan_run(risk_scan_run_id)
+        project = self.store.get_project(run["project_id"])
+        session = self.store.get_session(run["session_id"])
+        try:
+            return self._execute_risk_scan(project=project, session=session, risk_scan_run=run)
+        except Exception as exc:  # pragma: no cover - defensive background task path
+            self.store.update_risk_scan_run(
+                risk_scan_run_id,
+                status="failed",
+                current_phase="failed",
+            )
+            self.store.append_event(
+                project_id=project["id"],
+                session_id=session["id"],
+                agent_run_id=risk_scan_run_id,
+                event_type="risk_scan.failed",
+                payload={"error": str(exc)},
+            )
+            return self.get_risk_scan_result(risk_scan_run_id)
+
+    def create_risk_scan(
+        self,
+        *,
+        project: dict[str, Any],
+        session: dict[str, Any],
+        scope_type: str = "project",
+        scope_id: str | None = None,
+        include_selected_memory: bool = False,
+        selected_memory_ids: list[str] | None = None,
+        focus: list[str] | None = None,
+    ) -> dict[str, Any]:
+        queued = self.start_risk_scan(
+            project=project,
+            session=session,
+            scope_type=scope_type,
+            scope_id=scope_id,
+            include_selected_memory=include_selected_memory,
+            selected_memory_ids=selected_memory_ids,
+            focus=focus,
+        )
+        return self.execute_risk_scan(risk_scan_run_id=queued["risk_scan_run_id"])
+
+    def _execute_risk_scan(
+        self,
+        *,
+        project: dict[str, Any],
+        session: dict[str, Any],
+        risk_scan_run: dict[str, Any],
+    ) -> dict[str, Any]:
+        risk_scan_run_id = risk_scan_run["id"]
+        self.store.update_risk_scan_run(
+            risk_scan_run_id,
+            status="collecting",
+            current_phase="collect_source_context",
+        )
+        self.store.append_event(
+            project_id=project["id"],
+            session_id=session["id"],
+            agent_run_id=risk_scan_run_id,
+            event_type="risk_scan.started",
+            payload={},
+        )
+        self.store.append_event(
+            project_id=project["id"],
+            session_id=session["id"],
+            agent_run_id=risk_scan_run_id,
+            event_type="risk_scan.phase_changed",
+            payload={"phase": "collect_source_context"},
+        )
+        self.store.update_risk_scan_run(
+            risk_scan_run_id,
+            status="analyzing",
+            current_phase="agent_backend",
+        )
+        result = self.agent_backend.create_risk_analysis(
+            {
+                "project_id": project["id"],
+                "session_id": session["id"],
+                "risk_scan_run_id": risk_scan_run_id,
+                "project_root": project["root_path"],
+                "scope_type": risk_scan_run["scope_type"],
+                "scope_id": risk_scan_run["scope_id"],
+                "focus": risk_scan_run["source_context"].get("focus", []),
+                "source_context": risk_scan_run["source_context"],
+            }
+        )
+        for event in result["events"]:
+            self.store.append_event(
+                project_id=project["id"],
+                session_id=session["id"],
+                agent_run_id=risk_scan_run_id,
+                event_type=event["type"],
+                payload=event["payload"],
+            )
+        trace_id = result.get("trace_id")
+        self.store.update_risk_scan_run(risk_scan_run_id, trace_id=trace_id)
+        if result["status"] != "completed":
+            self.store.update_risk_scan_run(
+                risk_scan_run_id,
+                status="failed",
+                current_phase="failed",
+            )
+            self._record_trace_from_risk_scan(
+                project=project,
+                session=session,
+                risk_scan_run_id=risk_scan_run_id,
+                trace_id=trace_id,
+                status="failed",
+            )
+            return self.get_risk_scan_result(risk_scan_run_id)
+
+        self._validate_risk_analysis_candidate(result)
+        findings = [
+            self.store.create_risk_finding(
+                project_id=project["id"],
+                risk_scan_run_id=risk_scan_run_id,
+                finding=finding,
+            )
+            for finding in result["findings"]
+        ]
+        quality_signals = [
+            self.store.create_quality_signal(
+                project_id=project["id"],
+                risk_scan_run_id=risk_scan_run_id,
+                signal=signal,
+            )
+            for signal in result["quality_signals"]
+        ]
+        architecture_map = self.store.create_architecture_map_snapshot(
+            project_id=project["id"],
+            risk_scan_run_id=risk_scan_run_id,
+            snapshot=result["architecture_map_snapshot"],
+        )
+        health = self.store.create_project_health_snapshot(
+            project_id=project["id"],
+            risk_scan_run_id=risk_scan_run_id,
+            snapshot=result["project_health_snapshot"],
+        )
+        for finding in findings:
+            self.store.append_event(
+                project_id=project["id"],
+                session_id=session["id"],
+                agent_run_id=risk_scan_run_id,
+                event_type="risk_finding.created",
+                payload={
+                    "risk_finding_id": finding.id,
+                    "severity": finding.severity,
+                    "category": finding.category,
+                },
+            )
+        for signal in quality_signals:
+            self.store.append_event(
+                project_id=project["id"],
+                session_id=session["id"],
+                agent_run_id=risk_scan_run_id,
+                event_type="quality_signal.created",
+                payload={"quality_signal_id": signal.id, "kind": signal.kind, "status": signal.status},
+            )
+        self.store.append_event(
+            project_id=project["id"],
+            session_id=session["id"],
+            agent_run_id=risk_scan_run_id,
+            event_type="architecture_map.created",
+            payload={"architecture_map_snapshot_id": architecture_map.id},
+        )
+        self.store.append_event(
+            project_id=project["id"],
+            session_id=session["id"],
+            agent_run_id=risk_scan_run_id,
+            event_type="project_health_snapshot.created",
+            payload={"project_health_snapshot_id": health.id, "overall_status": health.overall_status},
+        )
+        self._create_artifact_and_event(
+            project_id=project["id"],
+            session_id=session["id"],
+            source_agent_run_id=risk_scan_run_id,
+            artifact_type="risk_analysis_candidate",
+            title="Risk Analysis Candidate",
+            payload={
+                "finding_count": len(findings),
+                "quality_signal_count": len(quality_signals),
+                "overall_status": health.overall_status,
+                "source_context": risk_scan_run["source_context"],
+            },
+        )
+        self.store.update_risk_scan_run(
+            risk_scan_run_id,
+            status="completed",
+            current_phase="completed",
+            trace_id=trace_id,
+        )
+        self.store.append_event(
+            project_id=project["id"],
+            session_id=session["id"],
+            agent_run_id=risk_scan_run_id,
+            event_type="risk_scan.completed",
+            payload={"risk_scan_run_id": risk_scan_run_id},
+        )
+        self._record_trace_from_risk_scan(
+            project=project,
+            session=session,
+            risk_scan_run_id=risk_scan_run_id,
+            trace_id=trace_id,
+            status="completed",
+        )
+        return self.get_risk_scan_result(risk_scan_run_id)
+
+    def get_risk_scan_result(self, risk_scan_run_id: str) -> dict[str, Any]:
+        run = self.store.get_risk_scan_run(risk_scan_run_id)
+        try:
+            trace = self.store.get_trace_summary(risk_scan_run_id)
+        except KeyError:
+            trace = None
+        return {
+            "risk_scan_run": run,
+            "findings": self.store.list_risk_findings(
+                project_id=run["project_id"],
+                risk_scan_run_id=risk_scan_run_id,
+            ),
+            "quality_signals": self.store.list_quality_signals(
+                project_id=run["project_id"],
+                risk_scan_run_id=risk_scan_run_id,
+            ),
+            "project_health_snapshot": self.store.get_project_health_snapshot_by_risk_scan(risk_scan_run_id),
+            "architecture_map_snapshot": self.store.get_architecture_map_by_risk_scan(risk_scan_run_id),
+            "trace": trace,
+            "events": self.store.list_events(risk_scan_run_id),
+            "artifacts": self.store.list_artifacts(risk_scan_run_id),
+        }
+
+    def get_risk_radar(
+        self,
+        *,
+        project_id: str,
+        category: str | None = None,
+        severity: str | None = None,
+        status: str | None = None,
+    ) -> dict[str, Any]:
+        findings = self.store.list_risk_findings(
+            project_id=project_id,
+            category=category,
+            severity=severity,
+            status=status,
+        )
+        severity_counts: dict[str, int] = {severity_key: 0 for severity_key in ALLOWED_RISK_FINDING_SEVERITIES}
+        category_counts: dict[str, int] = {category_key: 0 for category_key in ALLOWED_RISK_FINDING_CATEGORIES}
+        status_counts: dict[str, int] = {status_key: 0 for status_key in ALLOWED_RISK_FINDING_STATUSES}
+        for finding in findings:
+            severity_counts[finding["severity"]] = severity_counts.get(finding["severity"], 0) + 1
+            category_counts[finding["category"]] = category_counts.get(finding["category"], 0) + 1
+            status_counts[finding["status"]] = status_counts.get(finding["status"], 0) + 1
+        return {
+            "project_id": project_id,
+            "latest_scan": (self.store.list_risk_scan_runs(project_id=project_id, limit=1) or [None])[0],
+            "health": self.store.get_latest_project_health_snapshot(project_id),
+            "findings": findings,
+            "severity_counts": severity_counts,
+            "category_counts": category_counts,
+            "status_counts": status_counts,
+        }
+
+    def get_quality_snapshot(self, *, project_id: str) -> dict[str, Any]:
+        latest_scan = (self.store.list_risk_scan_runs(project_id=project_id, limit=1) or [None])[0]
+        latest_scan_id = latest_scan["id"] if latest_scan else None
+        return {
+            "project_id": project_id,
+            "latest_scan": latest_scan,
+            "health": self.store.get_latest_project_health_snapshot(project_id),
+            "signals": self.store.list_quality_signals(
+                project_id=project_id,
+                risk_scan_run_id=latest_scan_id,
+            )
+            if latest_scan_id
+            else [],
+            "architecture_map": self.store.get_latest_architecture_map_snapshot(project_id),
+        }
+
+    def update_risk_finding_status(self, *, risk_finding_id: str, status: str) -> dict[str, Any]:
+        if status not in {"open", "accepted", "dismissed", "mitigated"}:
+            raise ValueError("RiskFinding status must be open, accepted, dismissed, or mitigated")
+        current = self.store.get_risk_finding(risk_finding_id)
+        if current["status"] == "converted" and status != "converted":
+            raise ValueError("Converted findings cannot be reopened in MVP 6")
+        updated = self.store.update_risk_finding(risk_finding_id, status=status)
+        run = self.store.get_risk_scan_run(updated["risk_scan_run_id"])
+        event_type = {
+            "accepted": "risk_finding.accepted",
+            "dismissed": "risk_finding.dismissed",
+            "mitigated": "risk_finding.mitigated",
+        }.get(status, "risk_finding.updated")
+        self.store.append_event(
+            project_id=updated["project_id"],
+            session_id=run["session_id"],
+            agent_run_id=run["id"],
+            event_type=event_type,
+            payload={"risk_finding_id": risk_finding_id, "status": status},
+        )
+        return updated
+
+    def convert_risk_finding_to_work_package(
+        self,
+        *,
+        risk_finding_id: str,
+        title: str | None = None,
+        goal: str | None = None,
+    ) -> dict[str, Any]:
+        finding = self.store.get_risk_finding(risk_finding_id)
+        if finding["converted_work_package_id"]:
+            return {
+                "risk_finding": finding,
+                "work_package": self.store.get_work_package(finding["converted_work_package_id"]),
+                "approval": self.store.get_approval_for_target(
+                    target_type="work_package",
+                    target_id=finding["converted_work_package_id"],
+                ),
+            }
+        if finding["status"] != "accepted":
+            raise ValueError("Only accepted RiskFindings can be converted")
+        run = self.store.get_risk_scan_run(finding["risk_scan_run_id"])
+        evidence_files = [
+            link.get("source_id", "")
+            for link in finding["source_links"]
+            if link.get("source_type") == "repository_file"
+        ]
+        draft = {
+            "title": title or finding["title"],
+            "goal": goal or finding["recommendation"],
+            "background": f"Converted from RiskFinding {finding['id']}: {finding['summary']}",
+            "scope": [
+                "Review the linked risk finding evidence.",
+                "Create a bounded remediation plan.",
+                "Keep remediation behind existing approval and implementation gates.",
+            ],
+            "out_of_scope": [
+                "Starting implementation automatically.",
+                "Applying patches without approval.",
+                "Running new verification commands from the risk scan path.",
+            ],
+            "related_files": evidence_files or ["docs/artemis_mvp6.md"],
+            "required_agents": ["Architect", "Planner", "QA"],
+            "implementation_steps": [
+                "Confirm the risk finding still applies.",
+                "Design the smallest follow-up slice that mitigates the risk.",
+                "Use the MVP 3 implementation pipeline after Work Package approval.",
+            ],
+            "verification": [
+                "backend contract test",
+                "GUI smoke test when user-facing",
+                "review result captures residual risk",
+            ],
+            "risks": [
+                {
+                    "level": finding["severity"] if finding["severity"] in {"low", "medium", "high", "critical"} else "low",
+                    "description": finding["summary"],
+                }
+            ],
+            "approval_required": True,
+            "completion_criteria": [
+                "Risk evidence has a clear mitigation path.",
+                "Converted Work Package is pending approval.",
+                "No implementation run starts automatically.",
+            ],
+        }
+        package = self.store.create_work_package(
+            project_id=finding["project_id"],
+            session_id=run["session_id"],
+            source_agent_run_id=run["id"],
+            draft=draft,
+        )
+        approval = self.store.create_approval_request(
+            project_id=finding["project_id"],
+            session_id=run["session_id"],
+            target_type="work_package",
+            target_id=package.id,
+            reason="MVP 6 converted an accepted RiskFinding into a Work Package candidate.",
+            risk_level=package.risks[0]["level"] if package.risks else "medium",
+        )
+        updated = self.store.update_risk_finding(
+            risk_finding_id,
+            status="converted",
+            converted_work_package_id=package.id,
+        )
+        self.store.append_event(
+            project_id=finding["project_id"],
+            session_id=run["session_id"],
+            agent_run_id=run["id"],
+            event_type="risk_finding.converted_to_work_package",
+            payload={
+                "risk_finding_id": risk_finding_id,
+                "work_package_id": package.id,
+                "approval_id": approval.id,
+            },
+        )
+        self.store.append_event(
+            project_id=finding["project_id"],
+            session_id=run["session_id"],
+            agent_run_id=run["id"],
+            event_type="work_package.pending_approval",
+            payload={"work_package_id": package.id},
+        )
+        return {
+            "risk_finding": updated,
+            "work_package": package.to_dict(),
+            "approval": approval.to_dict(),
+        }
+
     def create_manual_memory_item(
         self,
         *,
@@ -1369,6 +1850,232 @@ class ControlPlaneService:
             "source_context": [item["snapshot"] for item in selected],
         }
 
+    def _validate_risk_scope(
+        self,
+        *,
+        project: dict[str, Any],
+        session: dict[str, Any],
+        scope_type: str,
+        scope_id: str | None,
+    ) -> None:
+        if session["project_id"] != project["id"]:
+            raise ValueError("Session does not belong to project")
+        if scope_type in {"project", "session"}:
+            return
+        if not scope_id:
+            raise ValueError(f"scope_id is required for scope_type {scope_type}")
+        try:
+            if scope_type == "work_package":
+                item = self.store.get_work_package(scope_id)
+                if item["project_id"] != project["id"]:
+                    raise ValueError("WorkPackage does not belong to project")
+                return
+            if scope_type == "implementation_run":
+                item = self.store.get_implementation_run(scope_id)
+                if item["project_id"] != project["id"]:
+                    raise ValueError("ImplementationRun does not belong to project")
+                return
+            if scope_type == "review_result":
+                review = self.store.get_review_result_by_id(scope_id)
+                run = self.store.get_implementation_run(review["implementation_run_id"])
+                if run["project_id"] != project["id"]:
+                    raise ValueError("ReviewResult does not belong to project")
+                return
+            if scope_type == "memory_focus":
+                memory = self.store.get_memory_item(scope_id)
+                if memory["project_id"] != project["id"] or memory["status"] != "active":
+                    raise ValueError("Memory focus must be an active item in this project")
+                return
+        except KeyError as exc:
+            raise ValueError(f"Unknown risk scan scope: {scope_type}:{scope_id}") from exc
+        raise ValueError(f"Unsupported risk scan scope_type: {scope_type}")
+
+    def _source_context_for_risk_scan(
+        self,
+        *,
+        project: dict[str, Any],
+        session: dict[str, Any],
+        scope_type: str,
+        scope_id: str | None,
+        include_selected_memory: bool,
+        selected_memory_ids: list[str],
+        focus: list[str],
+    ) -> dict[str, Any]:
+        selected_memory = self._selected_memory_snapshots_for_risk_scan(
+            project=project,
+            session=session,
+            include_selected_memory=include_selected_memory,
+            selected_memory_ids=selected_memory_ids,
+        )
+        recent_work_packages = self.store.list_work_packages_by_session(session["id"])[:20]
+        implementation_runs = self.store.list_implementation_runs_by_project(
+            project_id=project["id"],
+            limit=30,
+        )
+        verification_runs = self.store.list_verification_runs_by_project(
+            project_id=project["id"],
+            limit=50,
+        )
+        review_results = self.store.list_review_results_by_project(
+            project_id=project["id"],
+            limit=50,
+        )
+        decision_records = self.store.list_decision_records(project["id"])[:30]
+        failure_memories = self.store.list_memory_items(
+            project_id=project["id"],
+            memory_type="failure",
+            status="active",
+            limit=30,
+        )
+        project_rules = self.store.list_memory_items(
+            project_id=project["id"],
+            memory_type="project_rule",
+            status="active",
+            limit=30,
+        )
+        return {
+            "project": project,
+            "session": session,
+            "scope_type": scope_type,
+            "scope_id": scope_id,
+            "focus": list(focus),
+            "selected_memory_snapshots": selected_memory,
+            "recent_work_packages": recent_work_packages,
+            "implementation_runs": implementation_runs,
+            "verification_runs": verification_runs,
+            "review_results": review_results,
+            "decision_records": decision_records,
+            "failure_memories": failure_memories,
+            "project_rules": project_rules,
+            "pending_approvals": self.store.list_approval_requests(
+                project_id=project["id"],
+                status="pending",
+                limit=50,
+            ),
+            "repository_metrics": self._collect_repository_metrics(project["root_path"]),
+        }
+
+    def _selected_memory_snapshots_for_risk_scan(
+        self,
+        *,
+        project: dict[str, Any],
+        session: dict[str, Any],
+        include_selected_memory: bool,
+        selected_memory_ids: list[str],
+    ) -> list[dict[str, Any]]:
+        if not include_selected_memory:
+            if selected_memory_ids:
+                raise ValueError("selected_memory_ids require include_selected_memory=true")
+            return []
+        selected_rows = self.store.list_selected_memory(session["id"])
+        selected_by_id = {row["memory_item_id"]: row for row in selected_rows}
+        requested_ids = selected_memory_ids or list(selected_by_id)
+        snapshots: list[dict[str, Any]] = []
+        for memory_item_id in requested_ids:
+            if memory_item_id not in selected_by_id:
+                raise ValueError("RiskScan can only include memory explicitly selected in the current session")
+            memory = self.store.get_memory_item(memory_item_id)
+            if memory["project_id"] != project["id"]:
+                raise ValueError("Selected memory does not belong to this project")
+            if memory["status"] != "active":
+                raise ValueError("Archived or superseded memory cannot be attached to a RiskScan")
+            snapshots.append(selected_by_id[memory_item_id]["snapshot"])
+        return snapshots
+
+    def _collect_repository_metrics(self, root_path: str) -> dict[str, Any]:
+        root = Path(root_path).resolve()
+        ignored = {".git", ".venv", "__pycache__", ".pytest_cache", "node_modules", "dist", "build", "data"}
+        file_count = 0
+        total_lines = 0
+        top_level_counts: dict[str, int] = {}
+        extension_counts: dict[str, int] = {}
+        kind_counts: dict[str, int] = {"source": 0, "test": 0, "doc": 0, "script": 0, "config": 0}
+        samples: list[dict[str, Any]] = []
+        if not root.exists():
+            return {
+                "file_count": 0,
+                "total_lines": 0,
+                "top_level_counts": {},
+                "extension_counts": {},
+                "kind_counts": kind_counts,
+                "has_tests": False,
+                "repository_file_samples": [],
+            }
+        for path in root.rglob("*"):
+            if any(part in ignored for part in path.relative_to(root).parts):
+                continue
+            if not path.is_file():
+                continue
+            file_count += 1
+            relative = path.relative_to(root).as_posix()
+            top_level = relative.split("/", 1)[0]
+            top_level_counts[top_level] = top_level_counts.get(top_level, 0) + 1
+            suffix = path.suffix.lower() or "(none)"
+            extension_counts[suffix] = extension_counts.get(suffix, 0) + 1
+            kind = self._classify_file_kind(relative)
+            kind_counts[kind] = kind_counts.get(kind, 0) + 1
+            line_count = 0
+            try:
+                if path.stat().st_size < 256_000:
+                    line_count = len(path.read_text(encoding="utf-8", errors="replace").splitlines())
+            except OSError:
+                line_count = 0
+            total_lines += line_count
+            if len(samples) < 40:
+                samples.append(
+                    {
+                        "path": relative,
+                        "extension": suffix,
+                        "top_level": top_level,
+                        "kind": kind,
+                        "line_count": line_count,
+                        "size": path.stat().st_size,
+                    }
+                )
+            if file_count >= 1200:
+                break
+        return {
+            "file_count": file_count,
+            "total_lines": total_lines,
+            "top_level_counts": top_level_counts,
+            "extension_counts": extension_counts,
+            "kind_counts": kind_counts,
+            "has_tests": kind_counts.get("test", 0) > 0,
+            "repository_file_samples": samples,
+        }
+
+    def _classify_file_kind(self, relative_path: str) -> str:
+        lowered = relative_path.lower()
+        if lowered.startswith("tests/") or "/test" in lowered or lowered.endswith(".spec.ts"):
+            return "test"
+        if lowered.startswith("docs/") or lowered.endswith(".md"):
+            return "doc"
+        if lowered.startswith("scripts/"):
+            return "script"
+        if lowered.endswith((".toml", ".json", ".yaml", ".yml", ".ini", ".cfg", ".lock")):
+            return "config"
+        return "source"
+
+    def _validate_risk_analysis_candidate(self, result: dict[str, Any]) -> None:
+        if result.get("project_health_snapshot") is None:
+            raise ValueError("RiskAnalysisCandidate requires project_health_snapshot")
+        if result.get("architecture_map_snapshot") is None:
+            raise ValueError("RiskAnalysisCandidate requires architecture_map_snapshot")
+        for finding in result.get("findings") or []:
+            if finding.get("category") not in ALLOWED_RISK_FINDING_CATEGORIES:
+                raise ValueError(f"Unsupported RiskFinding category: {finding.get('category')}")
+            if finding.get("severity") not in ALLOWED_RISK_FINDING_SEVERITIES:
+                raise ValueError(f"Unsupported RiskFinding severity: {finding.get('severity')}")
+            if not finding.get("source_links"):
+                raise ValueError("RiskFinding requires source links")
+        for signal in result.get("quality_signals") or []:
+            if signal.get("kind") not in ALLOWED_QUALITY_SIGNAL_KINDS:
+                raise ValueError(f"Unsupported QualitySignal kind: {signal.get('kind')}")
+            if signal.get("status") not in ALLOWED_QUALITY_SIGNAL_STATUSES:
+                raise ValueError(f"Unsupported QualitySignal status: {signal.get('status')}")
+            if not signal.get("source_links"):
+                raise ValueError("QualitySignal requires source links")
+
     def _create_memory_from_agent_candidate(
         self,
         *,
@@ -1579,6 +2286,35 @@ class ControlPlaneService:
             status=status,
             metadata={"event_count": len(self.store.list_events(extraction_run_id))},
             events=self.store.list_events(extraction_run_id),
+        )
+
+    def _record_trace_from_risk_scan(
+        self,
+        *,
+        project: dict[str, Any],
+        session: dict[str, Any],
+        risk_scan_run_id: str,
+        trace_id: str | None,
+        status: str,
+    ) -> None:
+        if trace_id is None:
+            return
+        run = self.store.get_risk_scan_run(risk_scan_run_id)
+        self.store.record_trace_summary(
+            trace_id=trace_id,
+            project_id=project["id"],
+            session_id=session["id"],
+            agent_run_id=risk_scan_run_id,
+            root_name="artemis_risk_scan",
+            status=status,
+            metadata={
+                "event_count": len(self.store.list_events(risk_scan_run_id)),
+                "scope_type": run["scope_type"],
+                "scope_id": run["scope_id"],
+                "selected_memory_count": run["selected_memory_count"],
+                "source_context": run["source_context"],
+            },
+            events=self.store.list_events(risk_scan_run_id),
         )
 
     def _record_trace_from_run(

@@ -7,6 +7,7 @@ from .schemas import (
     BrainstormingBackendRequest,
     ImplementationBackendRequest,
     MemoryCandidateBackendRequest,
+    RiskScanBackendRequest,
     ReviewBackendRequest,
 )
 from .service import AgentBackendService
@@ -53,6 +54,13 @@ def create_app() -> object:
         request = MemoryCandidateBackendRequest(**payload)
         result = service.create_memory_candidate(request).to_dict()
         runs[request.extraction_run_id] = result
+        return result
+
+    @app.post("/internal/risk-scans")
+    def create_risk_analysis(payload: dict[str, object]) -> dict[str, object]:
+        request = RiskScanBackendRequest(**payload)
+        result = service.create_risk_analysis(request).to_dict()
+        runs[request.risk_scan_run_id] = result
         return result
 
     @app.get("/internal/agent-runs/{agent_run_id}")

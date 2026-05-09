@@ -9,12 +9,14 @@ import {
   FileText,
   FolderOpen,
   GitPullRequest,
+  Map as MapIcon,
   Play,
   RefreshCw,
   RotateCcw,
   Search,
   Send,
   Server,
+  ShieldCheck,
   X
 } from "lucide-react";
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -33,6 +35,11 @@ import type {
   MemoryType,
   Project,
   ProjectMemoryItem,
+  QualitySnapshot,
+  RiskFinding,
+  RiskFindingStatus,
+  RiskRadar,
+  RiskScanResult,
   SelectedMemoryContext,
   Session,
   WorkPackage
@@ -122,6 +129,28 @@ const BRAINSTORMING_TERMINAL_STATES = new Set([
   "failed",
   "canceled"
 ]);
+const RISK_SCAN_SSE_EVENT_TYPES = [
+  "risk_scan.created",
+  "risk_scan.started",
+  "risk_scan.phase_changed",
+  "risk_scan.completed",
+  "risk_scan.failed",
+  "risk_finding.created",
+  "risk_finding.updated",
+  "risk_finding.accepted",
+  "risk_finding.dismissed",
+  "risk_finding.mitigated",
+  "risk_finding.converted_to_work_package",
+  "quality_signal.created",
+  "quality_snapshot.created",
+  "architecture_map.created",
+  "project_health_snapshot.created",
+  "selected_memory.attached_to_risk_scan",
+  "artifact.created",
+  "trace.linked",
+  "trace.step_recorded"
+];
+const RISK_SCAN_TERMINAL_STATES = new Set(["completed", "failed", "canceled"]);
 const BRAINSTORMING_ROLES = [
   "product_planner",
   "system_architect",
@@ -174,6 +203,13 @@ export function App() {
   const [memoryTab, setMemoryTab] = useState<
     "search" | "decisions" | "rules" | "failures" | "sessions" | "selected"
   >("search");
+  const [riskScanResult, setRiskScanResult] = useState<RiskScanResult | null>(null);
+  const [riskRadar, setRiskRadar] = useState<RiskRadar | null>(null);
+  const [qualitySnapshot, setQualitySnapshot] = useState<QualitySnapshot | null>(null);
+  const [riskEvents, setRiskEvents] = useState<EventRecord[]>([]);
+  const [riskDetail, setRiskDetail] = useState<RiskFinding | null>(null);
+  const [includeRiskMemory, setIncludeRiskMemory] = useState(true);
+  const [riskScopeType, setRiskScopeType] = useState<"project" | "session">("project");
   const [ruleDraft, setRuleDraft] = useState({
     title: "GUI calls Control Plane only",
     summary: "The GUI must not call Agent Backend directly.",
@@ -181,16 +217,18 @@ export function App() {
     tags: "architecture, gui, control-plane"
   });
   const [activeTab, setActiveTab] = useState<
-    "timeline" | "trace" | "artifacts" | "implementation" | "brainstorming" | "memory"
+    "timeline" | "trace" | "artifacts" | "implementation" | "brainstorming" | "memory" | "risk"
   >("timeline");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const lastEventIdRef = useRef<string | undefined>();
   const lastImplementationEventIdRef = useRef<string | undefined>();
   const lastBrainstormingEventIdRef = useRef<string | undefined>();
+  const lastRiskEventIdRef = useRef<string | undefined>();
 
   const currentStatus = agentRun?.status ?? "idle";
-  const selectedTrace = brainstormingResult?.trace ?? implementationResult?.trace ?? result?.trace ?? null;
+  const selectedTrace =
+    riskScanResult?.trace ?? brainstormingResult?.trace ?? implementationResult?.trace ?? result?.trace ?? null;
   const selectedArtifacts = result?.artifacts ?? [];
   const memoryEvents = useMemo(() => {
     const allEvents = [...events, ...implementationEvents, ...brainstormingEvents];
@@ -249,9 +287,15 @@ export function App() {
     setMemorySearchResults([]);
     setSelectedMemory(null);
     setMemoryDetail(null);
+    setRiskScanResult(null);
+    setRiskRadar(null);
+    setQualitySnapshot(null);
+    setRiskEvents([]);
+    setRiskDetail(null);
     lastEventIdRef.current = undefined;
     lastImplementationEventIdRef.current = undefined;
     lastBrainstormingEventIdRef.current = undefined;
+    lastRiskEventIdRef.current = undefined;
   }, [currentProject?.id]);
 
   const refreshMemory = useCallback(async () => {
@@ -282,6 +326,24 @@ export function App() {
   useEffect(() => {
     void refreshMemory().catch((err) => setError(errorMessage(err)));
   }, [refreshMemory]);
+
+  const refreshRisk = useCallback(async () => {
+    if (!currentProject) return;
+    const [radar, quality] = await Promise.all([
+      controlPlaneApi.getRiskRadar(currentProject.id),
+      controlPlaneApi.getQualitySnapshot(currentProject.id)
+    ]);
+    setRiskRadar(radar);
+    setQualitySnapshot(quality);
+    setRiskDetail((previous) => {
+      if (!previous) return radar.findings[0] ?? null;
+      return radar.findings.find((finding) => finding.id === previous.id) ?? previous;
+    });
+  }, [currentProject]);
+
+  useEffect(() => {
+    void refreshRisk().catch((err) => setError(errorMessage(err)));
+  }, [refreshRisk]);
 
   useEffect(() => {
     if (!agentRun?.id) return;
@@ -450,6 +512,68 @@ export function App() {
       source?.close();
     };
   }, [brainstormingResult?.brainstorming_session.id]);
+
+  useEffect(() => {
+    const riskScanRunId = riskScanResult?.risk_scan_run.id;
+    if (!riskScanRunId) return;
+    let canceled = false;
+    let source: EventSource | null = null;
+
+    const mergeRiskEvents = (nextEvents: EventRecord[]) => {
+      if (!nextEvents.length) return;
+      setRiskEvents((previous) => mergeEventRecords(previous, nextEvents));
+      lastRiskEventIdRef.current = nextEvents[nextEvents.length - 1].id;
+    };
+
+    const refreshRiskScan = async () => {
+      const run = await controlPlaneApi.getRiskScan(riskScanRunId);
+      if (canceled) return;
+      if (RISK_SCAN_TERMINAL_STATES.has(run.status)) {
+        const nextResult = await controlPlaneApi.getRiskScanResult(riskScanRunId);
+        if (!canceled) {
+          setRiskScanResult(nextResult);
+          setRiskDetail((previous) => previous ?? nextResult.findings[0] ?? null);
+          await refreshRisk();
+        }
+      }
+      if (!source) {
+        const nextEvents = await controlPlaneApi.listRiskScanEvents(
+          riskScanRunId,
+          lastRiskEventIdRef.current
+        );
+        if (!canceled) mergeRiskEvents(nextEvents);
+      }
+    };
+
+    if ("EventSource" in window) {
+      source = new EventSource(controlPlaneApi.riskScanEventStreamUrl(riskScanRunId));
+      const handleSse = (message: MessageEvent<string>) => {
+        try {
+          mergeRiskEvents([JSON.parse(message.data) as EventRecord]);
+        } catch (err) {
+          setError(errorMessage(err));
+        }
+      };
+      for (const type of RISK_SCAN_SSE_EVENT_TYPES) {
+        source.addEventListener(type, handleSse as EventListener);
+      }
+      source.onerror = () => {
+        source?.close();
+        source = null;
+      };
+    }
+
+    const interval = window.setInterval(() => {
+      void refreshRiskScan().catch((err) => setError(errorMessage(err)));
+    }, 900);
+    void refreshRiskScan().catch((err) => setError(errorMessage(err)));
+
+    return () => {
+      canceled = true;
+      window.clearInterval(interval);
+      source?.close();
+    };
+  }, [refreshRisk, riskScanResult?.risk_scan_run.id]);
 
   const openProject = async (event: FormEvent) => {
     event.preventDefault();
@@ -837,6 +961,100 @@ export function App() {
     }
   };
 
+  const startRiskScan = async () => {
+    if (!currentProject) return;
+    setBusy(true);
+    setError(null);
+    setRiskEvents([]);
+    setRiskScanResult(null);
+    setRiskDetail(null);
+    lastRiskEventIdRef.current = undefined;
+    try {
+      const session = currentSession ?? (await createSession());
+      if (!session) return;
+      const selectedIds =
+        includeRiskMemory && selectedMemory
+          ? selectedMemory.selected_memory.map((item) => item.memory_item_id)
+          : [];
+      const queued = await controlPlaneApi.createRiskScan({
+        projectId: currentProject.id,
+        sessionId: session.id,
+        scopeType: riskScopeType,
+        includeSelectedMemory: includeRiskMemory,
+        selectedMemoryIds: selectedIds,
+        focus: ["verification", "architecture", "process"]
+      });
+      setRiskScanResult({
+        risk_scan_run: {
+          id: queued.risk_scan_run_id,
+          project_id: queued.project_id,
+          session_id: queued.session_id,
+          scope_type: riskScopeType,
+          scope_id: null,
+          status: queued.status,
+          current_phase: null,
+          selected_memory_count: selectedIds.length,
+          trace_id: null,
+          source_context: {},
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString()
+        },
+        findings: [],
+        quality_signals: [],
+        project_health_snapshot: null,
+        architecture_map_snapshot: null,
+        trace: null,
+        events: [],
+        artifacts: []
+      });
+      setActiveTab("risk");
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const updateRiskFinding = async (finding: RiskFinding, status: Exclude<RiskFindingStatus, "converted">) => {
+    setBusy(true);
+    setError(null);
+    try {
+      const updated = await controlPlaneApi.updateRiskFindingStatus(finding.id, status);
+      setRiskDetail(updated);
+      if (riskScanResult) {
+        const nextResult = await controlPlaneApi.getRiskScanResult(riskScanResult.risk_scan_run.id);
+        setRiskScanResult(nextResult);
+        setRiskEvents(nextResult.events);
+      }
+      await refreshRisk();
+      setActiveTab("risk");
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const convertRiskFinding = async (finding: RiskFinding) => {
+    setBusy(true);
+    setError(null);
+    try {
+      const converted = await controlPlaneApi.convertRiskFinding(finding.id);
+      setRiskDetail(converted.risk_finding);
+      if (riskScanResult) {
+        const nextResult = await controlPlaneApi.getRiskScanResult(riskScanResult.risk_scan_run.id);
+        setRiskScanResult(nextResult);
+        setRiskEvents(nextResult.events);
+      }
+      await refreshRisk();
+      setActiveTab("risk");
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const toggleBrainstormingRole = (role: string) => {
     setSelectedBrainstormingRoles((previous) => {
       if (previous.includes(role)) {
@@ -1037,6 +1255,24 @@ export function App() {
           onTypeFilterChange={setMemoryTypeFilter}
           onUnselect={unselectMemory}
         />
+
+        <RiskQualityPanel
+          busy={busy}
+          detail={riskDetail}
+          includeSelectedMemory={includeRiskMemory}
+          quality={qualitySnapshot}
+          radar={riskRadar}
+          result={riskScanResult}
+          scopeType={riskScopeType}
+          selectedMemory={selectedMemory}
+          onConvert={convertRiskFinding}
+          onDetailChange={setRiskDetail}
+          onIncludeSelectedMemoryChange={setIncludeRiskMemory}
+          onRefresh={refreshRisk}
+          onScopeTypeChange={setRiskScopeType}
+          onStart={startRiskScan}
+          onUpdateFinding={updateRiskFinding}
+        />
       </main>
 
       <aside className="activity-panel">
@@ -1071,6 +1307,10 @@ export function App() {
             <Database size={15} />
             Memory
           </TabButton>
+          <TabButton active={activeTab === "risk"} onClick={() => setActiveTab("risk")}>
+            <ShieldCheck size={15} />
+            Risk
+          </TabButton>
         </div>
 
         {activeTab === "timeline" && <Timeline events={events} />}
@@ -1079,6 +1319,7 @@ export function App() {
         {activeTab === "implementation" && <Timeline events={implementationEvents} />}
         {activeTab === "brainstorming" && <Timeline events={brainstormingEvents} />}
         {activeTab === "memory" && <Timeline events={memoryEvents} />}
+        {activeTab === "risk" && <Timeline events={riskEvents} />}
       </aside>
     </div>
   );
@@ -1165,6 +1406,257 @@ function ApprovalPanel({
       ) : (
         <span className="muted">No approval request</span>
       )}
+    </section>
+  );
+}
+
+function RiskQualityPanel({
+  busy,
+  detail,
+  includeSelectedMemory,
+  quality,
+  radar,
+  result,
+  scopeType,
+  selectedMemory,
+  onConvert,
+  onDetailChange,
+  onIncludeSelectedMemoryChange,
+  onRefresh,
+  onScopeTypeChange,
+  onStart,
+  onUpdateFinding
+}: {
+  busy: boolean;
+  detail: RiskFinding | null;
+  includeSelectedMemory: boolean;
+  quality: QualitySnapshot | null;
+  radar: RiskRadar | null;
+  result: RiskScanResult | null;
+  scopeType: "project" | "session";
+  selectedMemory: SelectedMemoryContext | null;
+  onConvert: (finding: RiskFinding) => void;
+  onDetailChange: (finding: RiskFinding) => void;
+  onIncludeSelectedMemoryChange: (value: boolean) => void;
+  onRefresh: () => void;
+  onScopeTypeChange: (scope: "project" | "session") => void;
+  onStart: () => void;
+  onUpdateFinding: (
+    finding: RiskFinding,
+    status: Exclude<RiskFindingStatus, "converted">
+  ) => void;
+}) {
+  const health = result?.project_health_snapshot ?? radar?.health ?? quality?.health ?? null;
+  const findings = result?.findings.length ? result.findings : radar?.findings ?? [];
+  const signals = result?.quality_signals.length ? result.quality_signals : quality?.signals ?? [];
+  const architecture = result?.architecture_map_snapshot ?? quality?.architecture_map ?? null;
+  const selectedCount = selectedMemory?.source_context.length ?? 0;
+  const canConvert = detail?.status === "accepted" && !detail.converted_work_package_id;
+
+  return (
+    <section className="panel risk-panel">
+      <div className="panel-title">
+        <ShieldCheck size={16} />
+        <span>Risk Radar / Quality Center</span>
+        {result?.risk_scan_run && <StatusPill label={result.risk_scan_run.status} />}
+      </div>
+
+      <div className="risk-toolbar">
+        <label>
+          <span>Scope</span>
+          <select
+            value={scopeType}
+            onChange={(event) => onScopeTypeChange(event.target.value as "project" | "session")}
+          >
+            <option value="project">project</option>
+            <option value="session">session</option>
+          </select>
+        </label>
+        <label className="check-chip risk-memory-toggle">
+          <input
+            checked={includeSelectedMemory}
+            onChange={(event) => onIncludeSelectedMemoryChange(event.target.checked)}
+            type="checkbox"
+          />
+          <span>Include selected memory ({selectedCount})</span>
+        </label>
+        <button className="primary-button" disabled={busy} onClick={onStart} type="button">
+          <Play size={16} />
+          Start Risk Scan
+        </button>
+        <button className="command-button" disabled={busy} onClick={onRefresh} type="button">
+          <RefreshCw size={16} />
+          Refresh
+        </button>
+      </div>
+
+      <div className="risk-health-grid">
+        <article className="health-summary">
+          <span>Project Health</span>
+          <strong>{health ? Math.round(health.overall_score) : "--"}</strong>
+          {health && <StatusPill label={health.overall_status} />}
+          <p>{health?.recommendation ?? "No risk scan recorded"}</p>
+        </article>
+        <article className="health-summary">
+          <span>Severity Distribution</span>
+          <div className="metric-row">
+            {Object.entries(radar?.severity_counts ?? health?.risk_counts ?? {}).map(([key, value]) => (
+              <span key={key}>
+                {key}: {value}
+              </span>
+            ))}
+          </div>
+        </article>
+        <article className="health-summary">
+          <span>Selected Context</span>
+          <strong>{result?.risk_scan_run.selected_memory_count ?? selectedCount}</strong>
+          <p>
+            {selectedMemory?.source_context.map((item) => item.title).join(", ") || "No selected memory"}
+          </p>
+        </article>
+      </div>
+
+      <div className="risk-layout">
+        <div className="risk-list">
+          <div className="subsection-heading">
+            <h2>Risk Findings</h2>
+            <span>{findings.length} total</span>
+          </div>
+          {findings.length ? (
+            findings.map((finding) => (
+              <button
+                className={`risk-row-card ${detail?.id === finding.id ? "selected" : ""}`}
+                key={finding.id}
+                onClick={() => onDetailChange(finding)}
+                type="button"
+              >
+                <div>
+                  <strong>{finding.title}</strong>
+                  <span>{finding.summary}</span>
+                </div>
+                <span className={`risk-pill ${finding.severity}`}>{finding.severity}</span>
+                <StatusPill label={finding.status} />
+              </button>
+            ))
+          ) : (
+            <EmptyActivity label="No risk findings" />
+          )}
+        </div>
+
+        <div className="risk-detail">
+          {detail ? (
+            <>
+              <div className="subsection-heading">
+                <h2>{detail.title}</h2>
+                <StatusPill label={detail.category} />
+              </div>
+              <p>{detail.summary}</p>
+              <p>{detail.recommendation}</p>
+              <FieldGroup title="Evidence" values={detail.evidence} />
+              <FieldGroup
+                title="Source Links"
+                values={detail.source_links.map(
+                  (link) =>
+                    `${link.source_type}:${link.source_id} (${link.relation})${
+                      link.label ? ` - ${link.label}` : ""
+                    }`
+                )}
+              />
+              <div className="action-row">
+                <button
+                  className="approve-button"
+                  disabled={busy || detail.status === "accepted" || detail.status === "converted"}
+                  onClick={() => onUpdateFinding(detail, "accepted")}
+                  type="button"
+                >
+                  <Check size={16} />
+                  Accept Finding
+                </button>
+                <button
+                  className="reject-button"
+                  disabled={busy || detail.status === "dismissed" || detail.status === "converted"}
+                  onClick={() => onUpdateFinding(detail, "dismissed")}
+                  type="button"
+                >
+                  <X size={16} />
+                  Dismiss
+                </button>
+                <button
+                  className="command-button"
+                  disabled={busy || detail.status === "mitigated" || detail.status === "converted"}
+                  onClick={() => onUpdateFinding(detail, "mitigated")}
+                  type="button"
+                >
+                  <Check size={16} />
+                  Mitigate
+                </button>
+                <button
+                  className="command-button"
+                  disabled={busy || !canConvert}
+                  onClick={() => onConvert(detail)}
+                  type="button"
+                >
+                  <FileText size={16} />
+                  Convert to Work Package
+                </button>
+              </div>
+              {detail.converted_work_package_id && (
+                <span className="run-id">Work Package {detail.converted_work_package_id}</span>
+              )}
+            </>
+          ) : (
+            <EmptyActivity label="No finding detail" />
+          )}
+        </div>
+      </div>
+
+      <div className="quality-grid">
+        <div className="quality-section">
+          <div className="subsection-heading">
+            <h2>Quality Center</h2>
+            <span>{signals.length} signals</span>
+          </div>
+          <div className="quality-signal-list">
+            {signals.map((signal) => (
+              <article className="quality-signal" key={signal.id}>
+                <div>
+                  <strong>{signal.title}</strong>
+                  <StatusPill label={signal.status} />
+                </div>
+                <p>{signal.summary}</p>
+                <code>{formatUnknown(signal.value)}</code>
+              </article>
+            ))}
+            {!signals.length && <EmptyActivity label="No quality signals" />}
+          </div>
+        </div>
+
+        <div className="quality-section">
+          <div className="subsection-heading">
+            <h2>Architecture Map Lite</h2>
+            <MapIcon size={15} />
+          </div>
+          {architecture ? (
+            <div className="architecture-list">
+              <FieldGroup
+                title="Nodes"
+                values={architecture.nodes.map(
+                  (node) => `${String(node.label ?? node.id)} (${String(node.file_count ?? 0)})`
+                )}
+              />
+              <FieldGroup
+                title="Edges"
+                values={architecture.edges.map(
+                  (edge) => `${String(edge.from)} -> ${String(edge.to)} (${String(edge.relation)})`
+                )}
+              />
+              <FieldGroup title="Boundary Notes" values={architecture.boundary_notes} />
+            </div>
+          ) : (
+            <EmptyActivity label="No architecture map" />
+          )}
+        </div>
+      </div>
     </section>
   );
 }
@@ -1952,6 +2444,12 @@ function mergeEventRecords(previous: EventRecord[], next: EventRecord[]) {
 function summarizePayload(payload: Record<string, unknown>) {
   const text = JSON.stringify(payload);
   return text.length > 160 ? `${text.slice(0, 157)}...` : text;
+}
+
+function formatUnknown(value: unknown) {
+  const text = typeof value === "string" ? value : JSON.stringify(value);
+  if (!text) return "";
+  return text.length > 220 ? `${text.slice(0, 217)}...` : text;
 }
 
 function formatTime(value: string) {

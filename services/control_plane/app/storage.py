@@ -12,6 +12,7 @@ from typing import Any, Iterator
 from .models import (
     AgentRun,
     ApprovalRequest,
+    ArchitectureMapSnapshot,
     Artifact,
     BrainstormingContribution,
     BrainstormingCritique,
@@ -28,7 +29,11 @@ from .models import (
     PatchFile,
     PatchSet,
     Project,
+    ProjectHealthSnapshot,
     ProjectMemoryItem,
+    QualitySignal,
+    RiskFinding,
+    RiskScanRun,
     ReviewResult,
     Session,
     Trace,
@@ -357,6 +362,73 @@ class SQLiteStore:
                   snapshot TEXT NOT NULL,
                   created_at TEXT NOT NULL,
                   PRIMARY KEY (session_id, memory_item_id)
+                );
+                CREATE TABLE IF NOT EXISTS risk_scan_runs (
+                  id TEXT PRIMARY KEY,
+                  project_id TEXT NOT NULL,
+                  session_id TEXT NOT NULL,
+                  scope_type TEXT NOT NULL,
+                  scope_id TEXT,
+                  status TEXT NOT NULL,
+                  current_phase TEXT,
+                  selected_memory_count INTEGER NOT NULL,
+                  trace_id TEXT,
+                  source_context TEXT NOT NULL,
+                  created_at TEXT NOT NULL,
+                  updated_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS risk_findings (
+                  id TEXT PRIMARY KEY,
+                  project_id TEXT NOT NULL,
+                  risk_scan_run_id TEXT NOT NULL,
+                  category TEXT NOT NULL,
+                  severity TEXT NOT NULL,
+                  title TEXT NOT NULL,
+                  summary TEXT NOT NULL,
+                  evidence TEXT NOT NULL,
+                  recommendation TEXT NOT NULL,
+                  confidence REAL NOT NULL,
+                  status TEXT NOT NULL,
+                  source_links TEXT NOT NULL,
+                  converted_work_package_id TEXT,
+                  created_at TEXT NOT NULL,
+                  updated_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS quality_signals (
+                  id TEXT PRIMARY KEY,
+                  project_id TEXT NOT NULL,
+                  risk_scan_run_id TEXT NOT NULL,
+                  kind TEXT NOT NULL,
+                  status TEXT NOT NULL,
+                  title TEXT NOT NULL,
+                  summary TEXT NOT NULL,
+                  value TEXT NOT NULL,
+                  target TEXT NOT NULL,
+                  evidence TEXT NOT NULL,
+                  source_links TEXT NOT NULL,
+                  created_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS project_health_snapshots (
+                  id TEXT PRIMARY KEY,
+                  project_id TEXT NOT NULL,
+                  risk_scan_run_id TEXT NOT NULL,
+                  overall_status TEXT NOT NULL,
+                  overall_score REAL NOT NULL,
+                  risk_counts TEXT NOT NULL,
+                  top_findings TEXT NOT NULL,
+                  quality_summary TEXT NOT NULL,
+                  recommendation TEXT NOT NULL,
+                  created_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS architecture_map_snapshots (
+                  id TEXT PRIMARY KEY,
+                  project_id TEXT NOT NULL,
+                  risk_scan_run_id TEXT NOT NULL,
+                  nodes TEXT NOT NULL,
+                  edges TEXT NOT NULL,
+                  hotspots TEXT NOT NULL,
+                  boundary_notes TEXT NOT NULL,
+                  created_at TEXT NOT NULL
                 );
                 CREATE VIRTUAL TABLE IF NOT EXISTS memory_items_fts USING fts5(
                   memory_item_id UNINDEXED,
@@ -795,6 +867,7 @@ class SQLiteStore:
                 "implementation_run.phase_changed",
                 "brainstorming_session.phase_changed",
                 "memory.extraction_run.phase_changed",
+                "risk_scan.phase_changed",
             }
         ]
         for index, event in enumerate(phase_events, start=1):
@@ -1771,6 +1844,561 @@ class SQLiteStore:
                     events.append(event)
         return events
 
+    def list_approval_requests(
+        self,
+        *,
+        project_id: str,
+        status: str | None = None,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        clauses = ["project_id=?"]
+        params: list[Any] = [project_id]
+        if status:
+            clauses.append("status=?")
+            params.append(status)
+        params.append(max(1, min(limit, 200)))
+        with self._connect() as db:
+            rows = db.execute(
+                f"""
+                SELECT * FROM approval_requests
+                WHERE {" AND ".join(clauses)}
+                ORDER BY created_at DESC
+                LIMIT ?
+                """,
+                params,
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def list_implementation_runs_by_project(
+        self,
+        *,
+        project_id: str,
+        session_id: str | None = None,
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        clauses = ["project_id=?"]
+        params: list[Any] = [project_id]
+        if session_id:
+            clauses.append("session_id=?")
+            params.append(session_id)
+        params.append(max(1, min(limit, 200)))
+        with self._connect() as db:
+            rows = db.execute(
+                f"""
+                SELECT * FROM implementation_runs
+                WHERE {" AND ".join(clauses)}
+                ORDER BY created_at DESC
+                LIMIT ?
+                """,
+                params,
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def list_verification_runs_by_project(
+        self,
+        *,
+        project_id: str,
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        with self._connect() as db:
+            rows = db.execute(
+                """
+                SELECT v.*
+                FROM verification_runs v
+                JOIN implementation_runs i ON i.id=v.implementation_run_id
+                WHERE i.project_id=?
+                ORDER BY v.started_at DESC
+                LIMIT ?
+                """,
+                (project_id, max(1, min(limit, 200))),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def list_review_results_by_project(
+        self,
+        *,
+        project_id: str,
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        with self._connect() as db:
+            rows = db.execute(
+                """
+                SELECT r.*
+                FROM review_results r
+                JOIN implementation_runs i ON i.id=r.implementation_run_id
+                WHERE i.project_id=?
+                ORDER BY r.created_at DESC
+                LIMIT ?
+                """,
+                (project_id, max(1, min(limit, 200))),
+            ).fetchall()
+        results: list[dict[str, Any]] = []
+        for row in rows:
+            data = dict(row)
+            data["findings"] = json.loads(data["findings"])
+            data["residual_risks"] = json.loads(data["residual_risks"])
+            results.append(data)
+        return results
+
+    def create_risk_scan_run(
+        self,
+        *,
+        project_id: str,
+        session_id: str,
+        scope_type: str,
+        scope_id: str | None,
+        selected_memory_count: int,
+        source_context: dict[str, Any],
+    ) -> RiskScanRun:
+        now = utc_now()
+        item = RiskScanRun(
+            id=new_id("riskrun"),
+            project_id=project_id,
+            session_id=session_id,
+            scope_type=scope_type,  # type: ignore[arg-type]
+            scope_id=scope_id,
+            status="queued",
+            current_phase=None,
+            selected_memory_count=selected_memory_count,
+            trace_id=None,
+            source_context=source_context,
+            created_at=now,
+            updated_at=now,
+        )
+        with self._connect() as db:
+            db.execute(
+                "INSERT INTO risk_scan_runs VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    item.id,
+                    item.project_id,
+                    item.session_id,
+                    item.scope_type,
+                    item.scope_id,
+                    item.status,
+                    item.current_phase,
+                    item.selected_memory_count,
+                    item.trace_id,
+                    json.dumps(item.source_context, ensure_ascii=False),
+                    item.created_at,
+                    item.updated_at,
+                ),
+            )
+        return item
+
+    def update_risk_scan_run(
+        self,
+        risk_scan_run_id: str,
+        *,
+        status: str | None = None,
+        current_phase: str | None = None,
+        trace_id: str | None = None,
+    ) -> None:
+        updates: dict[str, Any] = {"updated_at": utc_now()}
+        if status is not None:
+            updates["status"] = status
+        if current_phase is not None:
+            updates["current_phase"] = current_phase
+        if trace_id is not None:
+            updates["trace_id"] = trace_id
+        assignments = ", ".join(f"{key}=?" for key in updates)
+        with self._connect() as db:
+            db.execute(
+                f"UPDATE risk_scan_runs SET {assignments} WHERE id=?",
+                (*updates.values(), risk_scan_run_id),
+            )
+
+    def get_risk_scan_run(self, risk_scan_run_id: str) -> dict[str, Any]:
+        with self._connect() as db:
+            row = db.execute(
+                "SELECT * FROM risk_scan_runs WHERE id=?",
+                (risk_scan_run_id,),
+            ).fetchone()
+        if row is None:
+            raise KeyError(risk_scan_run_id)
+        return self._decode_risk_scan_run(dict(row))
+
+    def list_risk_scan_runs(
+        self,
+        *,
+        project_id: str,
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        with self._connect() as db:
+            rows = db.execute(
+                """
+                SELECT * FROM risk_scan_runs
+                WHERE project_id=?
+                ORDER BY created_at DESC
+                LIMIT ?
+                """,
+                (project_id, max(1, min(limit, 200))),
+            ).fetchall()
+        return [self._decode_risk_scan_run(dict(row)) for row in rows]
+
+    def create_risk_finding(
+        self,
+        *,
+        project_id: str,
+        risk_scan_run_id: str,
+        finding: dict[str, Any],
+    ) -> RiskFinding:
+        if not finding.get("source_links"):
+            raise ValueError("RiskFinding requires at least one source link")
+        now = utc_now()
+        item = RiskFinding(
+            id=new_id("risk"),
+            project_id=project_id,
+            risk_scan_run_id=risk_scan_run_id,
+            category=finding["category"],
+            severity=finding["severity"],
+            title=finding["title"],
+            summary=finding["summary"],
+            evidence=list(finding["evidence"]),
+            recommendation=finding["recommendation"],
+            confidence=float(finding["confidence"]),
+            status="open",
+            source_links=list(finding["source_links"]),
+            converted_work_package_id=None,
+            created_at=now,
+            updated_at=now,
+        )
+        with self._connect() as db:
+            db.execute(
+                "INSERT INTO risk_findings VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    item.id,
+                    item.project_id,
+                    item.risk_scan_run_id,
+                    item.category,
+                    item.severity,
+                    item.title,
+                    item.summary,
+                    json.dumps(item.evidence, ensure_ascii=False),
+                    item.recommendation,
+                    item.confidence,
+                    item.status,
+                    json.dumps(item.source_links, ensure_ascii=False),
+                    item.converted_work_package_id,
+                    item.created_at,
+                    item.updated_at,
+                ),
+            )
+        return item
+
+    def get_risk_finding(self, risk_finding_id: str) -> dict[str, Any]:
+        with self._connect() as db:
+            row = db.execute(
+                "SELECT * FROM risk_findings WHERE id=?",
+                (risk_finding_id,),
+            ).fetchone()
+        if row is None:
+            raise KeyError(risk_finding_id)
+        return self._decode_risk_finding(dict(row))
+
+    def list_risk_findings(
+        self,
+        *,
+        project_id: str,
+        risk_scan_run_id: str | None = None,
+        category: str | None = None,
+        severity: str | None = None,
+        status: str | None = None,
+        source_type: str | None = None,
+        source_id: str | None = None,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        clauses = ["project_id=?"]
+        params: list[Any] = [project_id]
+        if risk_scan_run_id:
+            clauses.append("risk_scan_run_id=?")
+            params.append(risk_scan_run_id)
+        if category:
+            clauses.append("category=?")
+            params.append(category)
+        if severity:
+            clauses.append("severity=?")
+            params.append(severity)
+        if status:
+            clauses.append("status=?")
+            params.append(status)
+        if source_type:
+            clauses.append("source_links LIKE ?")
+            params.append(f"%\"source_type\": \"{source_type}\"%")
+        if source_id:
+            clauses.append("source_links LIKE ?")
+            params.append(f"%\"source_id\": \"{source_id}\"%")
+        params.append(max(1, min(limit, 200)))
+        with self._connect() as db:
+            rows = db.execute(
+                f"""
+                SELECT * FROM risk_findings
+                WHERE {" AND ".join(clauses)}
+                ORDER BY
+                  CASE severity
+                    WHEN 'critical' THEN 0
+                    WHEN 'high' THEN 1
+                    WHEN 'medium' THEN 2
+                    WHEN 'low' THEN 3
+                    ELSE 4
+                  END,
+                  created_at DESC
+                LIMIT ?
+                """,
+                params,
+            ).fetchall()
+        return [self._decode_risk_finding(dict(row)) for row in rows]
+
+    def update_risk_finding(
+        self,
+        risk_finding_id: str,
+        *,
+        status: str | None = None,
+        converted_work_package_id: str | None = None,
+    ) -> dict[str, Any]:
+        updates: dict[str, Any] = {"updated_at": utc_now()}
+        if status is not None:
+            updates["status"] = status
+        if converted_work_package_id is not None:
+            updates["converted_work_package_id"] = converted_work_package_id
+        assignments = ", ".join(f"{key}=?" for key in updates)
+        with self._connect() as db:
+            db.execute(
+                f"UPDATE risk_findings SET {assignments} WHERE id=?",
+                (*updates.values(), risk_finding_id),
+            )
+        return self.get_risk_finding(risk_finding_id)
+
+    def create_quality_signal(
+        self,
+        *,
+        project_id: str,
+        risk_scan_run_id: str,
+        signal: dict[str, Any],
+    ) -> QualitySignal:
+        if not signal.get("source_links"):
+            raise ValueError("QualitySignal requires at least one source link")
+        item = QualitySignal(
+            id=new_id("quality"),
+            project_id=project_id,
+            risk_scan_run_id=risk_scan_run_id,
+            kind=signal["kind"],
+            status=signal["status"],
+            title=signal["title"],
+            summary=signal["summary"],
+            value=signal.get("value"),
+            target=signal.get("target"),
+            evidence=list(signal["evidence"]),
+            source_links=list(signal["source_links"]),
+            created_at=utc_now(),
+        )
+        with self._connect() as db:
+            db.execute(
+                "INSERT INTO quality_signals VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    item.id,
+                    item.project_id,
+                    item.risk_scan_run_id,
+                    item.kind,
+                    item.status,
+                    item.title,
+                    item.summary,
+                    json.dumps(item.value, ensure_ascii=False),
+                    json.dumps(item.target, ensure_ascii=False),
+                    json.dumps(item.evidence, ensure_ascii=False),
+                    json.dumps(item.source_links, ensure_ascii=False),
+                    item.created_at,
+                ),
+            )
+        return item
+
+    def get_quality_signal(self, quality_signal_id: str) -> dict[str, Any]:
+        with self._connect() as db:
+            row = db.execute(
+                "SELECT * FROM quality_signals WHERE id=?",
+                (quality_signal_id,),
+            ).fetchone()
+        if row is None:
+            raise KeyError(quality_signal_id)
+        return self._decode_quality_signal(dict(row))
+
+    def list_quality_signals(
+        self,
+        *,
+        project_id: str,
+        risk_scan_run_id: str | None = None,
+        kind: str | None = None,
+        status: str | None = None,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        clauses = ["project_id=?"]
+        params: list[Any] = [project_id]
+        if risk_scan_run_id:
+            clauses.append("risk_scan_run_id=?")
+            params.append(risk_scan_run_id)
+        if kind:
+            clauses.append("kind=?")
+            params.append(kind)
+        if status:
+            clauses.append("status=?")
+            params.append(status)
+        params.append(max(1, min(limit, 200)))
+        with self._connect() as db:
+            rows = db.execute(
+                f"""
+                SELECT * FROM quality_signals
+                WHERE {" AND ".join(clauses)}
+                ORDER BY created_at DESC
+                LIMIT ?
+                """,
+                params,
+            ).fetchall()
+        return [self._decode_quality_signal(dict(row)) for row in rows]
+
+    def create_project_health_snapshot(
+        self,
+        *,
+        project_id: str,
+        risk_scan_run_id: str,
+        snapshot: dict[str, Any],
+    ) -> ProjectHealthSnapshot:
+        item = ProjectHealthSnapshot(
+            id=new_id("health"),
+            project_id=project_id,
+            risk_scan_run_id=risk_scan_run_id,
+            overall_status=snapshot["overall_status"],
+            overall_score=float(snapshot["overall_score"]),
+            risk_counts=dict(snapshot["risk_counts"]),
+            top_findings=list(snapshot["top_findings"]),
+            quality_summary=dict(snapshot["quality_summary"]),
+            recommendation=snapshot["recommendation"],
+            created_at=utc_now(),
+        )
+        with self._connect() as db:
+            db.execute(
+                "INSERT INTO project_health_snapshots VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    item.id,
+                    item.project_id,
+                    item.risk_scan_run_id,
+                    item.overall_status,
+                    item.overall_score,
+                    json.dumps(item.risk_counts, ensure_ascii=False),
+                    json.dumps(item.top_findings, ensure_ascii=False),
+                    json.dumps(item.quality_summary, ensure_ascii=False),
+                    item.recommendation,
+                    item.created_at,
+                ),
+            )
+        return item
+
+    def get_project_health_snapshot(self, snapshot_id: str) -> dict[str, Any]:
+        with self._connect() as db:
+            row = db.execute(
+                "SELECT * FROM project_health_snapshots WHERE id=?",
+                (snapshot_id,),
+            ).fetchone()
+        if row is None:
+            raise KeyError(snapshot_id)
+        return self._decode_project_health_snapshot(dict(row))
+
+    def get_latest_project_health_snapshot(self, project_id: str) -> dict[str, Any] | None:
+        with self._connect() as db:
+            row = db.execute(
+                """
+                SELECT * FROM project_health_snapshots
+                WHERE project_id=?
+                ORDER BY created_at DESC
+                LIMIT 1
+                """,
+                (project_id,),
+            ).fetchone()
+        return self._decode_project_health_snapshot(dict(row)) if row else None
+
+    def get_project_health_snapshot_by_risk_scan(
+        self,
+        risk_scan_run_id: str,
+    ) -> dict[str, Any] | None:
+        with self._connect() as db:
+            row = db.execute(
+                """
+                SELECT * FROM project_health_snapshots
+                WHERE risk_scan_run_id=?
+                ORDER BY created_at DESC
+                LIMIT 1
+                """,
+                (risk_scan_run_id,),
+            ).fetchone()
+        return self._decode_project_health_snapshot(dict(row)) if row else None
+
+    def create_architecture_map_snapshot(
+        self,
+        *,
+        project_id: str,
+        risk_scan_run_id: str,
+        snapshot: dict[str, Any],
+    ) -> ArchitectureMapSnapshot:
+        item = ArchitectureMapSnapshot(
+            id=new_id("archmap"),
+            project_id=project_id,
+            risk_scan_run_id=risk_scan_run_id,
+            nodes=list(snapshot["nodes"]),
+            edges=list(snapshot["edges"]),
+            hotspots=list(snapshot["hotspots"]),
+            boundary_notes=list(snapshot["boundary_notes"]),
+            created_at=utc_now(),
+        )
+        with self._connect() as db:
+            db.execute(
+                "INSERT INTO architecture_map_snapshots VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    item.id,
+                    item.project_id,
+                    item.risk_scan_run_id,
+                    json.dumps(item.nodes, ensure_ascii=False),
+                    json.dumps(item.edges, ensure_ascii=False),
+                    json.dumps(item.hotspots, ensure_ascii=False),
+                    json.dumps(item.boundary_notes, ensure_ascii=False),
+                    item.created_at,
+                ),
+            )
+        return item
+
+    def get_architecture_map_snapshot(self, snapshot_id: str) -> dict[str, Any]:
+        with self._connect() as db:
+            row = db.execute(
+                "SELECT * FROM architecture_map_snapshots WHERE id=?",
+                (snapshot_id,),
+            ).fetchone()
+        if row is None:
+            raise KeyError(snapshot_id)
+        return self._decode_architecture_map_snapshot(dict(row))
+
+    def get_architecture_map_by_risk_scan(self, risk_scan_run_id: str) -> dict[str, Any] | None:
+        with self._connect() as db:
+            row = db.execute(
+                """
+                SELECT * FROM architecture_map_snapshots
+                WHERE risk_scan_run_id=?
+                ORDER BY created_at DESC
+                LIMIT 1
+                """,
+                (risk_scan_run_id,),
+            ).fetchone()
+        return self._decode_architecture_map_snapshot(dict(row)) if row else None
+
+    def get_latest_architecture_map_snapshot(self, project_id: str) -> dict[str, Any] | None:
+        with self._connect() as db:
+            row = db.execute(
+                """
+                SELECT * FROM architecture_map_snapshots
+                WHERE project_id=?
+                ORDER BY created_at DESC
+                LIMIT 1
+                """,
+                (project_id,),
+            ).fetchone()
+        return self._decode_architecture_map_snapshot(dict(row)) if row else None
+
     def _upsert_memory_index(self, db: sqlite3.Connection, memory_item_id: str) -> None:
         row = db.execute(
             "SELECT * FROM project_memory_items WHERE id=?",
@@ -1824,6 +2452,38 @@ class SQLiteStore:
         data["tags"] = json.loads(data["tags"])
         data["source_links"] = json.loads(data["source_links"])
         data["confidence"] = float(data["confidence"])
+        return data
+
+    def _decode_risk_scan_run(self, data: dict[str, Any]) -> dict[str, Any]:
+        data["source_context"] = json.loads(data["source_context"])
+        data["selected_memory_count"] = int(data["selected_memory_count"])
+        return data
+
+    def _decode_risk_finding(self, data: dict[str, Any]) -> dict[str, Any]:
+        data["evidence"] = json.loads(data["evidence"])
+        data["source_links"] = json.loads(data["source_links"])
+        data["confidence"] = float(data["confidence"])
+        return data
+
+    def _decode_quality_signal(self, data: dict[str, Any]) -> dict[str, Any]:
+        data["value"] = json.loads(data["value"])
+        data["target"] = json.loads(data["target"])
+        data["evidence"] = json.loads(data["evidence"])
+        data["source_links"] = json.loads(data["source_links"])
+        return data
+
+    def _decode_project_health_snapshot(self, data: dict[str, Any]) -> dict[str, Any]:
+        data["risk_counts"] = json.loads(data["risk_counts"])
+        data["top_findings"] = json.loads(data["top_findings"])
+        data["quality_summary"] = json.loads(data["quality_summary"])
+        data["overall_score"] = float(data["overall_score"])
+        return data
+
+    def _decode_architecture_map_snapshot(self, data: dict[str, Any]) -> dict[str, Any]:
+        data["nodes"] = json.loads(data["nodes"])
+        data["edges"] = json.loads(data["edges"])
+        data["hotspots"] = json.loads(data["hotspots"])
+        data["boundary_notes"] = json.loads(data["boundary_notes"])
         return data
 
     def _memory_search_result(

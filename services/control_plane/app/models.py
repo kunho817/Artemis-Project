@@ -69,6 +69,36 @@ MemoryExtractionStatus = Literal[
     "canceled",
 ]
 MemoryCandidateStatus = Literal["pending", "accepted", "rejected"]
+RiskScanStatus = Literal["queued", "collecting", "analyzing", "completed", "failed", "canceled"]
+RiskScanScopeType = Literal[
+    "project",
+    "session",
+    "work_package",
+    "implementation_run",
+    "review_result",
+    "memory_focus",
+]
+RiskFindingCategory = Literal[
+    "architecture",
+    "implementation",
+    "verification",
+    "schedule",
+    "product",
+    "security",
+    "process",
+]
+RiskFindingSeverity = Literal["info", "low", "medium", "high", "critical"]
+RiskFindingStatus = Literal["open", "accepted", "dismissed", "mitigated", "converted"]
+QualitySignalKind = Literal[
+    "verification",
+    "coverage_hint",
+    "code_size",
+    "memory",
+    "process",
+    "architecture",
+]
+QualitySignalStatus = Literal["healthy", "watch", "at_risk", "unknown"]
+ProjectHealthStatus = Literal["healthy", "watch", "at_risk", "blocked", "unknown"]
 
 
 def utc_now() -> str:
@@ -496,6 +526,98 @@ class MemoryCandidate:
     confidence: float
     source_links: list[dict[str, Any]]
     status: MemoryCandidateStatus
+    created_at: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
+class RiskScanRun:
+    id: str
+    project_id: str
+    session_id: str
+    scope_type: RiskScanScopeType
+    scope_id: str | None
+    status: RiskScanStatus
+    current_phase: str | None
+    selected_memory_count: int
+    trace_id: str | None
+    source_context: dict[str, Any]
+    created_at: str
+    updated_at: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
+class RiskFinding:
+    id: str
+    project_id: str
+    risk_scan_run_id: str
+    category: RiskFindingCategory
+    severity: RiskFindingSeverity
+    title: str
+    summary: str
+    evidence: list[str]
+    recommendation: str
+    confidence: float
+    status: RiskFindingStatus
+    source_links: list[dict[str, Any]]
+    converted_work_package_id: str | None
+    created_at: str
+    updated_at: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
+class QualitySignal:
+    id: str
+    project_id: str
+    risk_scan_run_id: str
+    kind: QualitySignalKind
+    status: QualitySignalStatus
+    title: str
+    summary: str
+    value: Any
+    target: Any
+    evidence: list[str]
+    source_links: list[dict[str, Any]]
+    created_at: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
+class ProjectHealthSnapshot:
+    id: str
+    project_id: str
+    risk_scan_run_id: str
+    overall_status: ProjectHealthStatus
+    overall_score: float
+    risk_counts: dict[str, int]
+    top_findings: list[dict[str, Any]]
+    quality_summary: dict[str, Any]
+    recommendation: str
+    created_at: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
+class ArchitectureMapSnapshot:
+    id: str
+    project_id: str
+    risk_scan_run_id: str
+    nodes: list[dict[str, Any]]
+    edges: list[dict[str, Any]]
+    hotspots: list[dict[str, Any]]
+    boundary_notes: list[str]
     created_at: str
 
     def to_dict(self) -> dict[str, Any]:

@@ -323,6 +323,10 @@ textarea:focus {
   margin-top: 16px;
 }
 
+.risk-panel {
+  margin-top: 16px;
+}
+
 .brainstorming-compose {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 220px 200px;
@@ -335,6 +339,163 @@ textarea:focus {
   grid-template-columns: minmax(0, 1fr) 180px 160px auto;
   gap: 12px;
   align-items: end;
+}
+
+.risk-toolbar {
+  display: grid;
+  grid-template-columns: 160px minmax(220px, 1fr) auto auto;
+  gap: 12px;
+  align-items: end;
+}
+
+.risk-memory-toggle {
+  align-self: end;
+  border-radius: 7px;
+  min-height: 36px;
+}
+
+.risk-health-grid,
+.quality-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.quality-grid {
+  grid-template-columns: minmax(0, 1.1fr) minmax(0, 0.9fr);
+  padding-top: 14px;
+  border-top: 1px solid #d7dfdb;
+}
+
+.health-summary,
+.risk-detail,
+.quality-section {
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid #d7dfdb;
+  border-radius: 8px;
+  background: #fbfdfc;
+}
+
+.health-summary {
+  display: grid;
+  gap: 8px;
+  align-content: start;
+}
+
+.health-summary > span,
+.quality-section > span {
+  color: #60706a;
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.health-summary strong {
+  font-size: 28px;
+  line-height: 1;
+}
+
+.health-summary p,
+.risk-detail p,
+.quality-signal p {
+  margin: 0;
+  color: #465550;
+  line-height: 1.45;
+}
+
+.metric-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.metric-row span {
+  min-height: 26px;
+  padding: 5px 8px;
+  border-radius: 999px;
+  background: #edf1ef;
+  color: #34413c;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.risk-layout {
+  display: grid;
+  grid-template-columns: minmax(280px, 0.9fr) minmax(0, 1.1fr);
+  gap: 14px;
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid #d7dfdb;
+}
+
+.risk-list,
+.quality-signal-list,
+.architecture-list {
+  display: grid;
+  align-content: start;
+  gap: 10px;
+}
+
+.risk-row-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 10px;
+  align-items: center;
+  min-height: 64px;
+  padding: 10px;
+  border: 1px solid #d7dfdb;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #26302c;
+  text-align: left;
+}
+
+.risk-row-card.selected {
+  border-color: #31795f;
+  background: #edf7f1;
+}
+
+.risk-row-card strong,
+.risk-row-card span,
+.quality-signal strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.risk-row-card div span {
+  display: block;
+  color: #60706a;
+  font-size: 12px;
+  margin-top: 3px;
+}
+
+.quality-signal {
+  display: grid;
+  gap: 8px;
+  padding: 11px;
+  border: 1px solid #d7dfdb;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.quality-signal > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.quality-signal code {
+  display: block;
+  padding: 8px;
+  border-radius: 6px;
+  background: #f1f4f2;
+  color: #43514c;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
 }
 
 .memory-tabs,
@@ -758,6 +919,7 @@ textarea:focus {
 .status-pill.approved,
 .status-pill.applied,
 .status-pill.accepted,
+.status-pill.mitigated,
 .status-pill.active,
 .status-pill.decision,
 .status-pill.project_rule,
@@ -765,6 +927,7 @@ textarea:focus {
 .status-pill.supportive,
 .status-pill.pass,
 .status-pill.passed,
+.status-pill.healthy,
 .status-badge.online {
   color: #1d6b35;
   background: #e6f4e8;
@@ -784,6 +947,16 @@ textarea:focus {
 .status-pill.cautious,
 .status-pill.running,
 .status-pill.queued,
+.status-pill.collecting,
+.status-pill.analyzing,
+.status-pill.open,
+.status-pill.watch,
+.status-pill.architecture,
+.status-pill.implementation,
+.status-pill.verification,
+.status-pill.schedule,
+.status-pill.product,
+.status-pill.process,
 .status-badge.checking {
   color: #7d5515;
   background: #fff5d7;
@@ -798,6 +971,10 @@ textarea:focus {
 .status-pill.needs_changes,
 .status-pill.archived,
 .status-pill.failure,
+.status-pill.dismissed,
+.status-pill.converted,
+.status-pill.at_risk,
+.status-pill.security,
 .status-badge.offline {
   color: #a23421;
   background: #fff0ec;
@@ -962,6 +1139,10 @@ textarea:focus {
 
   .brainstorming-compose,
   .brainstorming-grid,
+  .risk-toolbar,
+  .risk-health-grid,
+  .risk-layout,
+  .quality-grid,
   .memory-toolbar,
   .memory-layout,
   .project-rule-form {

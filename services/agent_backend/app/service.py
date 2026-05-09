@@ -20,11 +20,17 @@ from .schemas import (
     ImplementationBackendRequest,
     ImplementationPlanDraft,
     ImplementationProposalResult,
+    ArchitectureMapSnapshotDraft,
     MemoryCandidateBackendRequest,
     MemoryCandidateDraft,
     MemoryCandidateRunResult,
     PatchFileDraft,
     PatchSetDraft,
+    ProjectHealthSnapshotDraft,
+    QualitySignalDraft,
+    RiskAnalysisCandidateResult,
+    RiskFindingDraft,
+    RiskScanBackendRequest,
     ReviewBackendRequest,
     ReviewResultDraft,
     WorkPackageCandidateRequest,
@@ -408,6 +414,166 @@ class AgentBackendService:
                 status="failed",
                 trace_id=trace_id,
                 candidate=None,
+                events=events,
+                errors=[str(exc)],
+            )
+
+    def create_risk_analysis(
+        self,
+        request: RiskScanBackendRequest,
+    ) -> RiskAnalysisCandidateResult:
+        trace_id = f"trace_{uuid.uuid4().hex[:16]}"
+        events = [
+            AgentBackendEvent(
+                "trace.linked",
+                {
+                    "trace_id": trace_id,
+                    "provider": "local",
+                    "risk_scan_run_id": request.risk_scan_run_id,
+                },
+            ),
+            AgentBackendEvent("risk_scan.started", {"trace_id": trace_id}),
+        ]
+        try:
+            events.append(
+                AgentBackendEvent(
+                    "risk_scan.phase_changed",
+                    {"phase": "load_project_context_bundle"},
+                )
+            )
+            context = dict(request.source_context or {})
+            events.append(
+                AgentBackendEvent(
+                    "risk_scan.phase_changed",
+                    {"phase": "collect_repository_signals"},
+                )
+            )
+            repository_signals = _collect_repository_signals(request.project_root, context)
+            events.append(
+                AgentBackendEvent(
+                    "risk_scan.repository_signals_collected",
+                    {
+                        "file_count": repository_signals["metrics"]["file_count"],
+                        "todo_count": len(repository_signals["todo_matches"]),
+                    },
+                )
+            )
+
+            events.append(
+                AgentBackendEvent(
+                    "risk_scan.phase_changed",
+                    {"phase": "collect_memory_signals"},
+                )
+            )
+            memory_signals = _collect_memory_signals(context)
+            events.append(
+                AgentBackendEvent(
+                    "risk_scan.phase_changed",
+                    {"phase": "collect_execution_signals"},
+                )
+            )
+            execution_signals = _collect_execution_signals(context)
+
+            events.append(
+                AgentBackendEvent(
+                    "risk_scan.phase_changed",
+                    {"phase": "draft_risk_findings"},
+                )
+            )
+            findings = _build_risk_findings(
+                request=request,
+                repository_signals=repository_signals,
+                memory_signals=memory_signals,
+                execution_signals=execution_signals,
+            )
+            events.append(
+                AgentBackendEvent(
+                    "risk_scan.phase_changed",
+                    {"phase": "draft_quality_signals"},
+                )
+            )
+            quality_signals = _build_quality_signals(
+                repository_signals=repository_signals,
+                memory_signals=memory_signals,
+                execution_signals=execution_signals,
+            )
+            events.append(
+                AgentBackendEvent(
+                    "risk_scan.phase_changed",
+                    {"phase": "draft_architecture_map_lite"},
+                )
+            )
+            architecture_map = _build_architecture_map(repository_signals)
+            events.append(
+                AgentBackendEvent(
+                    "risk_scan.phase_changed",
+                    {"phase": "rank_and_dedupe_findings"},
+                )
+            )
+            findings = _rank_and_dedupe_findings(findings)
+            health_snapshot = _build_project_health_snapshot(findings, quality_signals)
+
+            events.append(
+                AgentBackendEvent(
+                    "risk_scan.phase_changed",
+                    {"phase": "validate_analysis"},
+                )
+            )
+            errors = _validate_risk_analysis(findings, quality_signals, health_snapshot, architecture_map)
+            if errors:
+                events.append(AgentBackendEvent("risk_scan.failed", {"errors": errors}))
+                return RiskAnalysisCandidateResult(
+                    status="failed",
+                    trace_id=trace_id,
+                    findings=findings,
+                    quality_signals=quality_signals,
+                    project_health_snapshot=health_snapshot,
+                    architecture_map_snapshot=architecture_map,
+                    source_context=context,
+                    events=events,
+                    errors=errors,
+                )
+
+            events.extend(
+                [
+                    AgentBackendEvent(
+                        "risk_finding.created",
+                        {"count": len(findings)},
+                    ),
+                    AgentBackendEvent(
+                        "quality_signal.created",
+                        {"count": len(quality_signals)},
+                    ),
+                    AgentBackendEvent("quality_snapshot.created", {}),
+                    AgentBackendEvent("architecture_map.created", {}),
+                    AgentBackendEvent("project_health_snapshot.created", {}),
+                    AgentBackendEvent(
+                        "trace.step_recorded",
+                        {"trace_id": trace_id, "step": "validate_analysis"},
+                    ),
+                    AgentBackendEvent("risk_scan.completed", {}),
+                ]
+            )
+            return RiskAnalysisCandidateResult(
+                status="completed",
+                trace_id=trace_id,
+                findings=findings,
+                quality_signals=quality_signals,
+                project_health_snapshot=health_snapshot,
+                architecture_map_snapshot=architecture_map,
+                source_context=context,
+                events=events,
+            )
+        except Exception as exc:  # pragma: no cover - defensive service boundary
+            events.append(AgentBackendEvent("risk_scan.failed", {"error": str(exc)}))
+            return RiskAnalysisCandidateResult(
+                status="failed",
+                trace_id=trace_id,
+                findings=[],
+                quality_signals=[],
+                project_health_snapshot=None,
+                architecture_map_snapshot=None,
+                source_context=request.source_context,
                 events=events,
                 errors=[str(exc)],
             )
@@ -885,3 +1051,539 @@ def _bullet_list(values: list[str]) -> str:
     if not values:
         return "- None recorded"
     return "\n".join(f"- {value}" for value in values)
+
+
+def _collect_repository_signals(project_root: str, context: dict[str, object]) -> dict[str, object]:
+    tools = ReadOnlyToolRouter(project_root)
+    file_lines = [line for line in tools.list_files(max_files=800).output.splitlines() if line]
+    metrics = _repository_metrics_from_context(file_lines, context)
+    todo_matches = _grep_many(tools, ["TODO", "FIXME", "HACK"], max_matches=24)
+    secret_hints = _grep_many(tools, ["password", "secret", "token"], max_matches=18)
+    boundary_hints = _grep_many(
+        tools,
+        ["ARTEMIS_AGENT_BACKEND_URL", "/internal/", "127.0.0.1:8765"],
+        max_matches=18,
+    )
+    return {
+        "files": file_lines,
+        "metrics": metrics,
+        "todo_matches": todo_matches,
+        "secret_hints": secret_hints,
+        "boundary_hints": boundary_hints,
+        "git_status": tools.git_status().output,
+    }
+
+
+def _repository_metrics_from_context(
+    files: list[str],
+    context: dict[str, object],
+) -> dict[str, object]:
+    provided = context.get("repository_metrics")
+    if isinstance(provided, dict):
+        return provided
+    top_level_counts: dict[str, int] = {}
+    extension_counts: dict[str, int] = {}
+    kind_counts = {"source": 0, "test": 0, "doc": 0, "script": 0, "config": 0}
+    for file_path in files:
+        top_level = file_path.split("/", 1)[0]
+        top_level_counts[top_level] = top_level_counts.get(top_level, 0) + 1
+        suffix = Path(file_path).suffix.lower() or "(none)"
+        extension_counts[suffix] = extension_counts.get(suffix, 0) + 1
+        lowered = file_path.lower()
+        if lowered.startswith("tests/") or "/test" in lowered or lowered.endswith(".spec.ts"):
+            kind_counts["test"] += 1
+        elif lowered.startswith("docs/") or lowered.endswith(".md"):
+            kind_counts["doc"] += 1
+        elif lowered.startswith("scripts/"):
+            kind_counts["script"] += 1
+        elif lowered.endswith((".toml", ".json", ".yaml", ".yml", ".ini", ".cfg")):
+            kind_counts["config"] += 1
+        else:
+            kind_counts["source"] += 1
+    return {
+        "file_count": len(files),
+        "top_level_counts": top_level_counts,
+        "extension_counts": extension_counts,
+        "kind_counts": kind_counts,
+        "has_tests": any(path.startswith("tests/") or "/tests/" in path for path in files),
+        "has_gui": any(path.startswith("apps/gui/") for path in files),
+        "has_control_plane": any(path.startswith("services/control_plane/") for path in files),
+        "has_agent_backend": any(path.startswith("services/agent_backend/") for path in files),
+        "has_docs": any(path.startswith("docs/") for path in files),
+    }
+
+
+def _grep_many(
+    tools: ReadOnlyToolRouter,
+    patterns: list[str],
+    *,
+    max_matches: int,
+) -> list[str]:
+    matches: list[str] = []
+    for pattern in patterns:
+        for line in tools.grep(pattern, max_matches=max_matches).output.splitlines():
+            if line not in matches:
+                matches.append(line)
+            if len(matches) >= max_matches:
+                return matches
+    return matches
+
+
+def _collect_memory_signals(context: dict[str, object]) -> dict[str, object]:
+    selected = _list_dicts(context.get("selected_memory_snapshots"))
+    failure_memories = _list_dicts(context.get("failure_memories"))
+    project_rules = _list_dicts(context.get("project_rules"))
+    decision_records = _list_dicts(context.get("decision_records"))
+    return {
+        "selected_memory": selected,
+        "failure_memories": failure_memories,
+        "project_rules": project_rules,
+        "decision_records": decision_records,
+        "selected_count": len(selected),
+        "failure_count": len(failure_memories),
+        "rule_count": len(project_rules),
+    }
+
+
+def _collect_execution_signals(context: dict[str, object]) -> dict[str, object]:
+    implementation_runs = _list_dicts(context.get("implementation_runs"))
+    verification_runs = _list_dicts(context.get("verification_runs"))
+    review_results = _list_dicts(context.get("review_results"))
+    work_packages = _list_dicts(context.get("recent_work_packages"))
+    pending_approvals = _list_dicts(context.get("pending_approvals"))
+    failed_verification = [
+        run for run in verification_runs if str(run.get("status")) in {"failed", "blocked"}
+    ]
+    residual_reviews = [
+        review for review in review_results if _string_list(review.get("residual_risks"))
+    ]
+    return {
+        "implementation_runs": implementation_runs,
+        "verification_runs": verification_runs,
+        "review_results": review_results,
+        "work_packages": work_packages,
+        "pending_approvals": pending_approvals,
+        "failed_verification": failed_verification,
+        "residual_reviews": residual_reviews,
+    }
+
+
+def _build_risk_findings(
+    *,
+    request: RiskScanBackendRequest,
+    repository_signals: dict[str, object],
+    memory_signals: dict[str, object],
+    execution_signals: dict[str, object],
+) -> list[RiskFindingDraft]:
+    findings: list[RiskFindingDraft] = []
+    metrics = repository_signals["metrics"]
+    metric_link = _source_link("repository_metric", "repository_metrics", "derived_from", "Repository metrics")
+
+    failed_verification = _list_dicts(execution_signals.get("failed_verification"))
+    failure_memories = _list_dicts(memory_signals.get("failure_memories"))
+    if failed_verification or failure_memories:
+        evidence = [
+            f"{len(failed_verification)} failed or blocked verification runs are recorded.",
+            f"{len(failure_memories)} failure memory items are active.",
+        ]
+        source_links = [metric_link]
+        for run in failed_verification[:3]:
+            source_links.append(
+                _source_link(
+                    "verification_run",
+                    str(run.get("id", "unknown")),
+                    "derived_from",
+                    str(run.get("command", "verification run")),
+                )
+            )
+        for memory in failure_memories[:3]:
+            source_links.append(
+                _source_link(
+                    "memory_item",
+                    str(memory.get("id", "unknown")),
+                    "derived_from",
+                    str(memory.get("title", "failure memory")),
+                )
+            )
+        findings.append(
+            RiskFindingDraft(
+                category="verification",
+                severity="high" if failed_verification else "medium",
+                title="Recorded failures need follow-up before health is treated as stable",
+                summary="Failure memory or failed verification records indicate unresolved quality risk.",
+                evidence=evidence,
+                recommendation="Accept this finding and convert it into a focused follow-up Work Package if the risk is still current.",
+                confidence=0.86,
+                source_links=source_links,
+            )
+        )
+
+    residual_reviews = _list_dicts(execution_signals.get("residual_reviews"))
+    if residual_reviews:
+        review = residual_reviews[0]
+        findings.append(
+            RiskFindingDraft(
+                category="implementation",
+                severity="medium",
+                title="Review residual risks are still visible in project history",
+                summary="At least one ReviewResult records residual risks that should remain visible in Quality Center.",
+                evidence=_string_list(review.get("residual_risks"))[:4] or ["Residual risk recorded."],
+                recommendation="Review the linked ReviewResult and decide whether the residual risk needs a Work Package.",
+                confidence=0.78,
+                source_links=[
+                    _source_link(
+                        "review_result",
+                        str(review.get("id", "unknown")),
+                        "derived_from",
+                        "Review residual risk",
+                    )
+                ],
+            )
+        )
+
+    todo_matches = [str(item) for item in repository_signals.get("todo_matches", [])]
+    if todo_matches:
+        findings.append(
+            RiskFindingDraft(
+                category="implementation",
+                severity="low",
+                title="Repository contains TODO/FIXME markers",
+                summary="Read-only grep found implementation markers that can hide deferred work.",
+                evidence=todo_matches[:5],
+                recommendation="Triage the markers and convert only actionable items into Work Packages.",
+                confidence=0.72,
+                source_links=[metric_link],
+            )
+        )
+
+    boundary_hints = [str(item) for item in repository_signals.get("boundary_hints", [])]
+    suspicious_boundary = [
+        line for line in boundary_hints if line.startswith("apps/gui/") and "/internal/" in line
+    ]
+    if suspicious_boundary:
+        findings.append(
+            RiskFindingDraft(
+                category="architecture",
+                severity="high",
+                title="GUI may be reaching across the Agent Backend boundary",
+                summary="Risk Radar found GUI-side references to internal Agent Backend paths.",
+                evidence=suspicious_boundary[:5],
+                recommendation="Keep GUI calls routed through Control Plane APIs only.",
+                confidence=0.82,
+                source_links=[metric_link],
+            )
+        )
+
+    pending_approvals = _list_dicts(execution_signals.get("pending_approvals"))
+    if pending_approvals:
+        findings.append(
+            RiskFindingDraft(
+                category="process",
+                severity="medium",
+                title="Pending approvals may delay implementation flow",
+                summary="ApprovalRequest records are still pending and can hold Work Packages or patch proposals.",
+                evidence=[f"{len(pending_approvals)} pending approvals are recorded."],
+                recommendation="Review pending approvals before starting new implementation work.",
+                confidence=0.8,
+                source_links=[
+                    _source_link(
+                        "work_package",
+                        str(pending_approvals[0].get("target_id", "pending_approval")),
+                        "supports",
+                        "Pending approval",
+                    )
+                ],
+            )
+        )
+
+    if not bool(metrics.get("has_tests")):
+        findings.append(
+            RiskFindingDraft(
+                category="verification",
+                severity="medium",
+                title="Repository-level tests were not detected",
+                summary="The scan did not find a top-level tests directory in the read-only file list.",
+                evidence=["repository_metrics.has_tests is false"],
+                recommendation="Add or point Artemis at recorded verification coverage before relying on project health.",
+                confidence=0.74,
+                source_links=[metric_link],
+            )
+        )
+
+    if not findings:
+        findings.append(
+            RiskFindingDraft(
+                category="process",
+                severity="info",
+                title="No immediate high-risk source-linked issue detected",
+                summary=f"The {request.scope_type} scan found no failed verification, residual review, or boundary risk.",
+                evidence=["Repository and stored project signals were scanned read-only."],
+                recommendation="Keep using Risk Radar after implementation or verification records are added.",
+                confidence=0.66,
+                source_links=[metric_link],
+            )
+        )
+    return findings
+
+
+def _build_quality_signals(
+    *,
+    repository_signals: dict[str, object],
+    memory_signals: dict[str, object],
+    execution_signals: dict[str, object],
+) -> list[QualitySignalDraft]:
+    metrics = repository_signals["metrics"]
+    metric_link = _source_link("repository_metric", "repository_metrics", "derived_from", "Repository metrics")
+    failed_verification = _list_dicts(execution_signals.get("failed_verification"))
+    verification_runs = _list_dicts(execution_signals.get("verification_runs"))
+    review_results = _list_dicts(execution_signals.get("review_results"))
+    failure_memories = _list_dicts(memory_signals.get("failure_memories"))
+    project_rules = _list_dicts(memory_signals.get("project_rules"))
+    pending_approvals = _list_dicts(execution_signals.get("pending_approvals"))
+    kind_counts = metrics.get("kind_counts", {}) if isinstance(metrics, dict) else {}
+    return [
+        QualitySignalDraft(
+            kind="verification",
+            status="at_risk" if failed_verification else ("healthy" if verification_runs else "unknown"),
+            title="Recorded verification history",
+            summary=(
+                f"{len(verification_runs)} verification runs are recorded; "
+                f"{len(failed_verification)} are failed or blocked."
+            ),
+            value={"total": len(verification_runs), "failed_or_blocked": len(failed_verification)},
+            target={"failed_or_blocked": 0},
+            evidence=[
+                f"Verification runs: {len(verification_runs)}",
+                f"Review results: {len(review_results)}",
+            ],
+            source_links=[metric_link],
+        ),
+        QualitySignalDraft(
+            kind="coverage_hint",
+            status="healthy" if bool(metrics.get("has_tests")) else "watch",
+            title="Test artifact coverage hint",
+            summary="Read-only repository metadata was used to identify test and smoke artifacts.",
+            value={"has_tests": bool(metrics.get("has_tests")), "kind_counts": kind_counts},
+            target={"has_tests": True},
+            evidence=[f"kind_counts={kind_counts}"],
+            source_links=[metric_link],
+        ),
+        QualitySignalDraft(
+            kind="code_size",
+            status="watch" if int(metrics.get("file_count", 0)) > 300 else "healthy",
+            title="Repository size and module concentration",
+            summary="File counts are grouped by top-level module to reveal hotspots.",
+            value={
+                "file_count": metrics.get("file_count", 0),
+                "top_level_counts": metrics.get("top_level_counts", {}),
+            },
+            target={"file_count": "review manually above 300 files"},
+            evidence=[f"file_count={metrics.get('file_count', 0)}"],
+            source_links=[metric_link],
+        ),
+        QualitySignalDraft(
+            kind="memory",
+            status="watch" if failure_memories else ("healthy" if project_rules else "unknown"),
+            title="Memory-derived quality signal",
+            summary=(
+                f"{len(project_rules)} active project rules and "
+                f"{len(failure_memories)} active failure memories were included."
+            ),
+            value={"project_rules": len(project_rules), "failure_memories": len(failure_memories)},
+            target={"failure_memories": 0},
+            evidence=[
+                f"Selected memory: {memory_signals.get('selected_count', 0)}",
+                f"Project rules: {len(project_rules)}",
+            ],
+            source_links=[
+                _source_link(
+                    "memory_item",
+                    str((project_rules or failure_memories or [{"id": "memory_summary"}])[0].get("id")),
+                    "derived_from",
+                    "Memory summary",
+                )
+            ]
+            if (project_rules or failure_memories)
+            else [metric_link],
+        ),
+        QualitySignalDraft(
+            kind="process",
+            status="watch" if pending_approvals else "healthy",
+            title="Approval and process signal",
+            summary=f"{len(pending_approvals)} pending approvals are currently visible.",
+            value={"pending_approvals": len(pending_approvals)},
+            target={"pending_approvals": 0},
+            evidence=[f"pending_approvals={len(pending_approvals)}"],
+            source_links=[metric_link],
+        ),
+    ]
+
+
+def _build_architecture_map(repository_signals: dict[str, object]) -> ArchitectureMapSnapshotDraft:
+    metrics = repository_signals["metrics"]
+    top_level_counts = metrics.get("top_level_counts", {}) if isinstance(metrics, dict) else {}
+    expected_modules = [
+        "apps/gui",
+        "services/control_plane",
+        "services/agent_backend",
+        "tests",
+        "scripts",
+        "docs",
+    ]
+    files = [str(item) for item in repository_signals.get("files", [])]
+    nodes = []
+    for module in expected_modules:
+        count = sum(1 for file_path in files if file_path == module or file_path.startswith(f"{module}/"))
+        nodes.append(
+            {
+                "id": module,
+                "label": module,
+                "kind": "module",
+                "file_count": count,
+                "present": count > 0,
+            }
+        )
+    for top_level, count in sorted(top_level_counts.items()):
+        if not any(node["id"] == top_level for node in nodes):
+            nodes.append(
+                {
+                    "id": top_level,
+                    "label": top_level,
+                    "kind": "top_level",
+                    "file_count": count,
+                    "present": True,
+                }
+            )
+    edges = [
+        {"from": "apps/gui", "to": "services/control_plane", "relation": "HTTP API"},
+        {"from": "services/control_plane", "to": "services/agent_backend", "relation": "internal API"},
+        {"from": "services/control_plane", "to": "SQLite store", "relation": "canonical state"},
+        {"from": "services/agent_backend", "to": "read-only tools", "relation": "analysis input"},
+    ]
+    hotspots = sorted(
+        [
+            {"module": str(module), "file_count": int(count)}
+            for module, count in top_level_counts.items()
+        ],
+        key=lambda item: item["file_count"],
+        reverse=True,
+    )[:5]
+    boundary_notes = [
+        "GUI must call Control Plane only.",
+        "Control Plane owns canonical product state.",
+        "Agent Backend returns structured analysis candidates and does not persist findings.",
+    ]
+    return ArchitectureMapSnapshotDraft(
+        nodes=nodes,
+        edges=edges,
+        hotspots=hotspots,
+        boundary_notes=boundary_notes,
+    )
+
+
+def _build_project_health_snapshot(
+    findings: list[RiskFindingDraft],
+    quality_signals: list[QualitySignalDraft],
+) -> ProjectHealthSnapshotDraft:
+    severity_weights = {"critical": 32, "high": 22, "medium": 12, "low": 5, "info": 1}
+    risk_counts = {severity: 0 for severity in severity_weights}
+    penalty = 0
+    for finding in findings:
+        risk_counts[finding.severity] += 1
+        penalty += severity_weights[finding.severity]
+    score = max(0.0, min(100.0, 100.0 - penalty))
+    if risk_counts["critical"]:
+        status = "blocked"
+    elif risk_counts["high"] or score < 60:
+        status = "at_risk"
+    elif risk_counts["medium"] or any(signal.status == "watch" for signal in quality_signals):
+        status = "watch"
+    else:
+        status = "healthy"
+    quality_summary: dict[str, Any] = {}
+    for signal in quality_signals:
+        quality_summary[signal.kind] = signal.status
+    top_findings = [
+        {
+            "title": finding.title,
+            "severity": finding.severity,
+            "category": finding.category,
+            "confidence": finding.confidence,
+        }
+        for finding in findings[:5]
+    ]
+    return ProjectHealthSnapshotDraft(
+        overall_status=status,  # type: ignore[arg-type]
+        overall_score=score,
+        risk_counts=risk_counts,
+        top_findings=top_findings,
+        quality_summary=quality_summary,
+        recommendation=_health_recommendation(status),
+    )
+
+
+def _rank_and_dedupe_findings(findings: list[RiskFindingDraft]) -> list[RiskFindingDraft]:
+    severity_rank = {"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4}
+    seen: set[tuple[str, str]] = set()
+    deduped: list[RiskFindingDraft] = []
+    for finding in sorted(findings, key=lambda item: (severity_rank[item.severity], item.title)):
+        key = (finding.category, finding.title.lower())
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(finding)
+    return deduped
+
+
+def _validate_risk_analysis(
+    findings: list[RiskFindingDraft],
+    quality_signals: list[QualitySignalDraft],
+    health_snapshot: ProjectHealthSnapshotDraft,
+    architecture_map: ArchitectureMapSnapshotDraft,
+) -> list[str]:
+    errors: list[str] = []
+    if not findings:
+        errors.append("findings must be non-empty")
+    if not quality_signals:
+        errors.append("quality_signals must be non-empty")
+    for finding in findings:
+        errors.extend(finding.validate())
+    for signal in quality_signals:
+        errors.extend(signal.validate())
+    if not architecture_map.nodes:
+        errors.append("architecture_map.nodes must be non-empty")
+    if not health_snapshot.recommendation.strip():
+        errors.append("project_health_snapshot.recommendation is required")
+    return errors
+
+
+def _health_recommendation(status: str) -> str:
+    if status == "blocked":
+        return "Resolve critical findings before expanding implementation scope."
+    if status == "at_risk":
+        return "Accept and convert the highest severity finding that still applies."
+    if status == "watch":
+        return "Review medium findings and keep verification records current."
+    if status == "healthy":
+        return "No immediate action is required; rescan after new implementation work."
+    return "Project health is unknown until more signals are recorded."
+
+
+def _source_link(
+    source_type: str,
+    source_id: str,
+    relation: str,
+    label: str,
+) -> dict[str, str]:
+    return {
+        "source_type": source_type,
+        "source_id": source_id,
+        "relation": relation,
+        "label": label,
+    }
+
+
+def _list_dicts(value: object) -> list[dict[str, object]]:
+    if not isinstance(value, list):
+        return []
+    return [item for item in value if isinstance(item, dict)]

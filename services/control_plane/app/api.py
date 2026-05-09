@@ -20,6 +20,7 @@ TERMINAL_BRAINSTORMING_STATES = {
     "failed",
     "canceled",
 }
+TERMINAL_RISK_SCAN_STATES = {"completed", "failed", "canceled"}
 
 
 def create_app(db_path: str = "data/artemis.db", agent_backend: Any | None = None) -> object:
@@ -566,6 +567,177 @@ def create_app(db_path: str = "data/artemis.db", agent_backend: Any | None = Non
     def unselect_memory(session_id: str, memory_item_id: str) -> dict[str, str]:
         service.unselect_memory_for_session(session_id=session_id, memory_item_id=memory_item_id)
         return {"status": "removed"}
+
+    @app.post("/api/projects/{project_id}/risk-scans")
+    def create_risk_scan(
+        project_id: str,
+        payload: dict[str, Any],
+        background_tasks: BackgroundTasks,
+    ) -> dict[str, Any]:
+        from fastapi import HTTPException
+
+        try:
+            project = store.get_project(project_id)
+            session = store.get_session(payload["session_id"])
+            queued = service.start_risk_scan(
+                project=project,
+                session=session,
+                scope_type=payload.get("scope_type", "project"),
+                scope_id=payload.get("scope_id"),
+                include_selected_memory=bool(payload.get("include_selected_memory", False)),
+                selected_memory_ids=list(payload.get("selected_memory_ids") or []),
+                focus=list(payload.get("focus") or []),
+            )
+            background_tasks.add_task(
+                service.execute_risk_scan,
+                risk_scan_run_id=queued["risk_scan_run_id"],
+            )
+            return queued
+        except (KeyError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.get("/api/projects/{project_id}/risk-scans")
+    def list_risk_scans(project_id: str, limit: int = 50) -> list[dict[str, Any]]:
+        return store.list_risk_scan_runs(project_id=project_id, limit=limit)
+
+    @app.get("/api/risk-scans/{risk_scan_run_id}")
+    def get_risk_scan(risk_scan_run_id: str) -> dict[str, Any]:
+        return store.get_risk_scan_run(risk_scan_run_id)
+
+    @app.get("/api/risk-scans/{risk_scan_run_id}/result")
+    def get_risk_scan_result(risk_scan_run_id: str) -> dict[str, Any]:
+        return service.get_risk_scan_result(risk_scan_run_id)
+
+    @app.get("/api/risk-scans/{risk_scan_run_id}/events")
+    def get_risk_scan_events(
+        risk_scan_run_id: str,
+        after: str | None = None,
+    ) -> list[dict[str, Any]]:
+        return store.list_events(risk_scan_run_id, after=after)
+
+    @app.get("/api/risk-scans/{risk_scan_run_id}/events/stream")
+    def stream_risk_scan_events(risk_scan_run_id: str) -> object:
+        async def event_generator() -> Any:
+            last_event_id: str | None = None
+            while True:
+                events = store.list_events(risk_scan_run_id, after=last_event_id)
+                for event in events:
+                    last_event_id = event["id"]
+                    yield (
+                        f"id: {event['id']}\n"
+                        f"event: {event['type']}\n"
+                        f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+                    )
+
+                try:
+                    run = store.get_risk_scan_run(risk_scan_run_id)
+                except KeyError:
+                    run = None
+                if run is not None and run["status"] in TERMINAL_RISK_SCAN_STATES and not events:
+                    break
+                await asyncio.sleep(0.5)
+
+        return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+    @app.get("/api/risk-scans/{risk_scan_run_id}/trace")
+    def get_risk_scan_trace(risk_scan_run_id: str) -> dict[str, Any]:
+        return store.get_trace_summary(risk_scan_run_id)
+
+    @app.get("/api/projects/{project_id}/risk-radar")
+    def get_risk_radar(
+        project_id: str,
+        category: str | None = None,
+        severity: str | None = None,
+        status: str | None = None,
+    ) -> dict[str, Any]:
+        return service.get_risk_radar(
+            project_id=project_id,
+            category=category,
+            severity=severity,
+            status=status,
+        )
+
+    @app.get("/api/projects/{project_id}/risk-findings")
+    def list_risk_findings(
+        project_id: str,
+        category: str | None = None,
+        severity: str | None = None,
+        status: str | None = None,
+        source_type: str | None = None,
+        source_id: str | None = None,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        return store.list_risk_findings(
+            project_id=project_id,
+            category=category,
+            severity=severity,
+            status=status,
+            source_type=source_type,
+            source_id=source_id,
+            limit=limit,
+        )
+
+    @app.get("/api/risk-findings/{risk_finding_id}")
+    def get_risk_finding(risk_finding_id: str) -> dict[str, Any]:
+        return store.get_risk_finding(risk_finding_id)
+
+    @app.patch("/api/risk-findings/{risk_finding_id}")
+    def update_risk_finding(risk_finding_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        from fastapi import HTTPException
+
+        try:
+            return service.update_risk_finding_status(
+                risk_finding_id=risk_finding_id,
+                status=payload["status"],
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/api/risk-findings/{risk_finding_id}/convert-to-work-package")
+    def convert_risk_finding(
+        risk_finding_id: str,
+        payload: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        from fastapi import HTTPException
+
+        try:
+            return service.convert_risk_finding_to_work_package(
+                risk_finding_id=risk_finding_id,
+                title=(payload or {}).get("title"),
+                goal=(payload or {}).get("goal"),
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.get("/api/projects/{project_id}/quality-snapshot")
+    def get_quality_snapshot(project_id: str) -> dict[str, Any]:
+        return service.get_quality_snapshot(project_id=project_id)
+
+    @app.get("/api/projects/{project_id}/quality-signals")
+    def list_quality_signals(
+        project_id: str,
+        kind: str | None = None,
+        status: str | None = None,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        return store.list_quality_signals(
+            project_id=project_id,
+            kind=kind,
+            status=status,
+            limit=limit,
+        )
+
+    @app.get("/api/quality-signals/{quality_signal_id}")
+    def get_quality_signal(quality_signal_id: str) -> dict[str, Any]:
+        return store.get_quality_signal(quality_signal_id)
+
+    @app.get("/api/projects/{project_id}/architecture-map")
+    def get_latest_architecture_map(project_id: str) -> dict[str, Any] | None:
+        return store.get_latest_architecture_map_snapshot(project_id)
+
+    @app.get("/api/risk-scans/{risk_scan_run_id}/architecture-map")
+    def get_risk_scan_architecture_map(risk_scan_run_id: str) -> dict[str, Any] | None:
+        return store.get_architecture_map_by_risk_scan(risk_scan_run_id)
 
     @app.get("/api/health")
     def health() -> dict[str, str]:

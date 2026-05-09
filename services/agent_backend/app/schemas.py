@@ -37,6 +37,34 @@ MemorySourceType = Literal[
     "session",
     "manual",
 ]
+RiskScanScopeType = Literal[
+    "project",
+    "session",
+    "work_package",
+    "implementation_run",
+    "review_result",
+    "memory_focus",
+]
+RiskFindingCategory = Literal[
+    "architecture",
+    "implementation",
+    "verification",
+    "schedule",
+    "product",
+    "security",
+    "process",
+]
+RiskFindingSeverity = Literal["info", "low", "medium", "high", "critical"]
+QualitySignalKind = Literal[
+    "verification",
+    "coverage_hint",
+    "code_size",
+    "memory",
+    "process",
+    "architecture",
+]
+QualitySignalStatus = Literal["healthy", "watch", "at_risk", "unknown"]
+ProjectHealthStatus = Literal["healthy", "watch", "at_risk", "blocked", "unknown"]
 
 
 @dataclass
@@ -462,6 +490,149 @@ class MemoryCandidateRunResult:
             "status": self.status,
             "trace_id": self.trace_id,
             "candidate": self.candidate.to_dict() if self.candidate else None,
+            "events": [event.to_dict() for event in self.events],
+            "errors": list(self.errors),
+        }
+
+
+@dataclass
+class RiskScanBackendRequest:
+    project_id: str
+    session_id: str
+    risk_scan_run_id: str
+    project_root: str
+    scope_type: RiskScanScopeType
+    scope_id: str | None = None
+    focus: list[str] = field(default_factory=list)
+    source_context: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class RiskFindingDraft:
+    category: RiskFindingCategory
+    severity: RiskFindingSeverity
+    title: str
+    summary: str
+    evidence: list[str]
+    recommendation: str
+    confidence: float
+    source_links: list[dict[str, Any]]
+
+    def validate(self) -> list[str]:
+        errors: list[str] = []
+        if self.category not in {
+            "architecture",
+            "implementation",
+            "verification",
+            "schedule",
+            "product",
+            "security",
+            "process",
+        }:
+            errors.append("category is invalid")
+        if self.severity not in {"info", "low", "medium", "high", "critical"}:
+            errors.append("severity is invalid")
+        for field_name in ("title", "summary", "recommendation"):
+            if not getattr(self, field_name).strip():
+                errors.append(f"{field_name} is required")
+        if not self.evidence:
+            errors.append("evidence must be non-empty")
+        if not self.source_links:
+            errors.append("source_links must be non-empty")
+        if not 0.0 <= self.confidence <= 1.0:
+            errors.append("confidence must be between 0.0 and 1.0")
+        return errors
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
+class QualitySignalDraft:
+    kind: QualitySignalKind
+    status: QualitySignalStatus
+    title: str
+    summary: str
+    value: Any
+    target: Any
+    evidence: list[str]
+    source_links: list[dict[str, Any]]
+
+    def validate(self) -> list[str]:
+        errors: list[str] = []
+        if self.kind not in {
+            "verification",
+            "coverage_hint",
+            "code_size",
+            "memory",
+            "process",
+            "architecture",
+        }:
+            errors.append("kind is invalid")
+        if self.status not in {"healthy", "watch", "at_risk", "unknown"}:
+            errors.append("status is invalid")
+        for field_name in ("title", "summary"):
+            if not getattr(self, field_name).strip():
+                errors.append(f"{field_name} is required")
+        if not self.evidence:
+            errors.append("evidence must be non-empty")
+        if not self.source_links:
+            errors.append("source_links must be non-empty")
+        return errors
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
+class ProjectHealthSnapshotDraft:
+    overall_status: ProjectHealthStatus
+    overall_score: float
+    risk_counts: dict[str, int]
+    top_findings: list[dict[str, Any]]
+    quality_summary: dict[str, Any]
+    recommendation: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
+class ArchitectureMapSnapshotDraft:
+    nodes: list[dict[str, Any]]
+    edges: list[dict[str, Any]]
+    hotspots: list[dict[str, Any]]
+    boundary_notes: list[str]
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
+class RiskAnalysisCandidateResult:
+    status: Literal["completed", "failed"]
+    trace_id: str
+    findings: list[RiskFindingDraft]
+    quality_signals: list[QualitySignalDraft]
+    project_health_snapshot: ProjectHealthSnapshotDraft | None
+    architecture_map_snapshot: ArchitectureMapSnapshotDraft | None
+    source_context: dict[str, Any]
+    events: list[AgentBackendEvent]
+    errors: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "status": self.status,
+            "trace_id": self.trace_id,
+            "findings": [finding.to_dict() for finding in self.findings],
+            "quality_signals": [signal.to_dict() for signal in self.quality_signals],
+            "project_health_snapshot": self.project_health_snapshot.to_dict()
+            if self.project_health_snapshot
+            else None,
+            "architecture_map_snapshot": self.architecture_map_snapshot.to_dict()
+            if self.architecture_map_snapshot
+            else None,
+            "source_context": self.source_context,
             "events": [event.to_dict() for event in self.events],
             "errors": list(self.errors),
         }
