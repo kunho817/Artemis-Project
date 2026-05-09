@@ -26,6 +26,17 @@ BrainstormingMode = Literal[
 ]
 BrainstormingSourceType = Literal["topic", "work_package", "implementation_run", "review_result"]
 BrainstormingStance = Literal["supportive", "cautious", "opposed", "exploratory"]
+MemoryType = Literal["decision", "session_summary", "project_rule", "failure", "work_note"]
+MemorySourceType = Literal[
+    "decision_record",
+    "brainstorming_session",
+    "work_package",
+    "implementation_run",
+    "verification_run",
+    "review_result",
+    "session",
+    "manual",
+]
 
 
 @dataclass
@@ -394,6 +405,63 @@ class BrainstormingRunResult:
             "critiques": [item.to_dict() for item in self.critiques],
             "options": [item.to_dict() for item in self.options],
             "decision_brief": self.decision_brief.to_dict() if self.decision_brief else None,
+            "events": [event.to_dict() for event in self.events],
+            "errors": list(self.errors),
+        }
+
+
+@dataclass
+class MemoryCandidateBackendRequest:
+    project_id: str
+    session_id: str
+    extraction_run_id: str
+    project_root: str
+    source_type: MemorySourceType
+    source_id: str
+    source_snapshot: dict[str, Any]
+
+
+@dataclass
+class MemoryCandidateDraft:
+    type: MemoryType
+    title: str
+    summary: str
+    body: str
+    tags: list[str]
+    importance: str
+    confidence: float
+    source_links: list[dict[str, Any]]
+
+    def validate(self) -> list[str]:
+        errors: list[str] = []
+        for field_name in ("type", "title", "summary", "body"):
+            if not str(getattr(self, field_name)).strip():
+                errors.append(f"{field_name} is required")
+        if self.type not in {"decision", "session_summary", "project_rule", "failure", "work_note"}:
+            errors.append("type is invalid")
+        if not self.source_links:
+            errors.append("source_links must be non-empty")
+        if not 0.0 <= self.confidence <= 1.0:
+            errors.append("confidence must be between 0.0 and 1.0")
+        return errors
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
+class MemoryCandidateRunResult:
+    status: Literal["completed", "failed"]
+    trace_id: str
+    candidate: MemoryCandidateDraft | None
+    events: list[AgentBackendEvent]
+    errors: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "status": self.status,
+            "trace_id": self.trace_id,
+            "candidate": self.candidate.to_dict() if self.candidate else None,
             "events": [event.to_dict() for event in self.events],
             "errors": list(self.errors),
         }

@@ -6,6 +6,7 @@ from .schemas import (
     AgentBackendRequest,
     BrainstormingBackendRequest,
     ImplementationBackendRequest,
+    MemoryCandidateBackendRequest,
     ReviewBackendRequest,
 )
 from .service import AgentBackendService
@@ -45,6 +46,13 @@ def create_app() -> object:
         request = BrainstormingBackendRequest(**payload)
         result = service.run_brainstorming(request).to_dict()
         runs[request.brainstorming_session_id] = result
+        return result
+
+    @app.post("/internal/memory-candidates")
+    def create_memory_candidate(payload: dict[str, object]) -> dict[str, object]:
+        request = MemoryCandidateBackendRequest(**payload)
+        result = service.create_memory_candidate(request).to_dict()
+        runs[request.extraction_run_id] = result
         return result
 
     @app.get("/internal/agent-runs/{agent_run_id}")

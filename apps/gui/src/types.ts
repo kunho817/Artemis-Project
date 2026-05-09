@@ -342,3 +342,58 @@ export type DecisionConversionResult = {
   work_package: WorkPackage;
   approval: Approval | null;
 };
+
+export type MemoryType = "decision" | "session_summary" | "project_rule" | "failure" | "work_note";
+export type MemoryStatus = "active" | "archived" | "superseded";
+
+export type MemorySourceLink = {
+  id: string;
+  memory_item_id: string;
+  source_type: string;
+  source_id: string;
+  relation: string;
+  created_at: string;
+};
+
+export type ProjectMemoryItem = {
+  id: string;
+  project_id: string;
+  type: MemoryType;
+  title: string;
+  summary: string;
+  body: string;
+  tags: string[];
+  status: MemoryStatus;
+  importance: string;
+  confidence: number;
+  created_by: string;
+  source_count: number;
+  last_used_at: string | null;
+  created_at: string;
+  updated_at: string;
+  source_links: MemorySourceLink[];
+};
+
+export type MemorySearchResult = {
+  item: ProjectMemoryItem;
+  score: number;
+  matched_fields: string[];
+  source_links: MemorySourceLink[];
+  snippet: string;
+};
+
+export type SelectedMemoryItem = {
+  session_id: string;
+  memory_item_id: string;
+  snapshot: Pick<
+    ProjectMemoryItem,
+    "id" | "type" | "title" | "summary" | "body" | "tags" | "source_links"
+  >;
+  created_at: string;
+};
+
+export type SelectedMemoryContext = {
+  session_id: string;
+  selected_memory: SelectedMemoryItem[];
+  source_context: SelectedMemoryItem["snapshot"][];
+};

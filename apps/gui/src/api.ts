@@ -11,8 +11,12 @@ import type {
   EventRecord,
   ImplementationRun,
   ImplementationRunResult,
+  MemorySearchResult,
+  MemoryType,
   PatchSet,
   Project,
+  ProjectMemoryItem,
+  SelectedMemoryContext,
   Session,
   TraceSummary,
   VerificationRun,
@@ -204,6 +208,123 @@ export class ControlPlaneApi {
     return this.request(`/api/decision-records/${decisionRecordId}/convert-to-work-package`, {
       method: "POST",
       body: {}
+    });
+  }
+
+  async listMemory(projectId: string, type?: MemoryType, status = "active"): Promise<ProjectMemoryItem[]> {
+    const params = new URLSearchParams();
+    if (type) params.set("type", type);
+    if (status) params.set("status", status);
+    const suffix = params.toString() ? `?${params.toString()}` : "";
+    return this.request(`/api/projects/${projectId}/memory${suffix}`);
+  }
+
+  async searchMemory(payload: {
+    projectId: string;
+    query: string;
+    type?: MemoryType | "";
+    status?: string;
+  }): Promise<MemorySearchResult[]> {
+    const params = new URLSearchParams();
+    params.set("q", payload.query);
+    if (payload.type) params.set("type", payload.type);
+    if (payload.status) params.set("status", payload.status);
+    return this.request(`/api/projects/${payload.projectId}/memory/search?${params.toString()}`);
+  }
+
+  async createProjectRule(payload: {
+    projectId: string;
+    sessionId?: string;
+    title: string;
+    summary: string;
+    body: string;
+    tags: string[];
+    importance: string;
+  }): Promise<ProjectMemoryItem> {
+    return this.request(`/api/projects/${payload.projectId}/memory`, {
+      method: "POST",
+      body: {
+        type: "project_rule",
+        title: payload.title,
+        summary: payload.summary,
+        body: payload.body,
+        tags: payload.tags,
+        importance: payload.importance,
+        session_id: payload.sessionId
+      }
+    });
+  }
+
+  async updateMemoryItem(
+    memoryItemId: string,
+    payload: Partial<Pick<ProjectMemoryItem, "title" | "summary" | "body" | "tags" | "importance">>
+  ): Promise<ProjectMemoryItem> {
+    return this.request(`/api/memory/items/${memoryItemId}`, {
+      method: "PATCH",
+      body: payload
+    });
+  }
+
+  async archiveMemoryItem(memoryItemId: string): Promise<ProjectMemoryItem> {
+    return this.request(`/api/memory/items/${memoryItemId}/archive`, {
+      method: "POST",
+      body: {}
+    });
+  }
+
+  async restoreMemoryItem(memoryItemId: string): Promise<ProjectMemoryItem> {
+    return this.request(`/api/memory/items/${memoryItemId}/restore`, {
+      method: "POST",
+      body: {}
+    });
+  }
+
+  async promoteDecisionRecord(decisionRecordId: string): Promise<ProjectMemoryItem> {
+    return this.request(`/api/decision-records/${decisionRecordId}/promote-to-memory`, {
+      method: "POST",
+      body: {}
+    });
+  }
+
+  async createSessionMemorySummary(sessionId: string): Promise<{
+    status: string;
+    memory_item: ProjectMemoryItem | null;
+    reason?: string;
+  }> {
+    return this.request(`/api/sessions/${sessionId}/memory-summary`, {
+      method: "POST",
+      body: {}
+    });
+  }
+
+  async promoteReviewFailureMemory(reviewResultId: string): Promise<ProjectMemoryItem> {
+    return this.request(`/api/review-results/${reviewResultId}/promote-failure-memory`, {
+      method: "POST",
+      body: {}
+    });
+  }
+
+  async promoteVerificationFailureMemory(verificationRunId: string): Promise<ProjectMemoryItem> {
+    return this.request(`/api/verification-runs/${verificationRunId}/promote-failure-memory`, {
+      method: "POST",
+      body: {}
+    });
+  }
+
+  async listSelectedMemory(sessionId: string): Promise<SelectedMemoryContext> {
+    return this.request(`/api/sessions/${sessionId}/selected-memory`);
+  }
+
+  async selectMemory(sessionId: string, memoryItemId: string): Promise<SelectedMemoryContext["selected_memory"][number]> {
+    return this.request(`/api/sessions/${sessionId}/selected-memory`, {
+      method: "POST",
+      body: { memory_item_id: memoryItemId }
+    });
+  }
+
+  async unselectMemory(sessionId: string, memoryItemId: string): Promise<{ status: string }> {
+    return this.request(`/api/sessions/${sessionId}/selected-memory/${memoryItemId}`, {
+      method: "DELETE"
     });
   }
 

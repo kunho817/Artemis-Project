@@ -4,11 +4,15 @@ import {
   CircleAlert,
   CircleDot,
   Code2,
+  Archive,
+  Database,
   FileText,
   FolderOpen,
   GitPullRequest,
   Play,
   RefreshCw,
+  RotateCcw,
+  Search,
   Send,
   Server,
   X
@@ -22,9 +26,14 @@ import type {
   BrainstormingMode,
   BrainstormingResult,
   BrainstormingSourceType,
+  DecisionRecord,
   EventRecord,
   ImplementationRunResult,
+  MemorySearchResult,
+  MemoryType,
   Project,
+  ProjectMemoryItem,
+  SelectedMemoryContext,
   Session,
   WorkPackage
 } from "./types";
@@ -155,8 +164,24 @@ export function App() {
   ]);
   const [brainstormingResult, setBrainstormingResult] = useState<BrainstormingResult | null>(null);
   const [brainstormingEvents, setBrainstormingEvents] = useState<EventRecord[]>([]);
+  const [memoryItems, setMemoryItems] = useState<ProjectMemoryItem[]>([]);
+  const [memorySearchResults, setMemorySearchResults] = useState<MemorySearchResult[]>([]);
+  const [selectedMemory, setSelectedMemory] = useState<SelectedMemoryContext | null>(null);
+  const [memoryDetail, setMemoryDetail] = useState<ProjectMemoryItem | null>(null);
+  const [memoryQuery, setMemoryQuery] = useState("Control Plane");
+  const [memoryTypeFilter, setMemoryTypeFilter] = useState<MemoryType | "">("");
+  const [memoryStatusFilter, setMemoryStatusFilter] = useState("active");
+  const [memoryTab, setMemoryTab] = useState<
+    "search" | "decisions" | "rules" | "failures" | "sessions" | "selected"
+  >("search");
+  const [ruleDraft, setRuleDraft] = useState({
+    title: "GUI calls Control Plane only",
+    summary: "The GUI must not call Agent Backend directly.",
+    body: "All GUI actions go through Control Plane APIs. Agent Backend remains an internal service boundary.",
+    tags: "architecture, gui, control-plane"
+  });
   const [activeTab, setActiveTab] = useState<
-    "timeline" | "trace" | "artifacts" | "implementation" | "brainstorming"
+    "timeline" | "trace" | "artifacts" | "implementation" | "brainstorming" | "memory"
   >("timeline");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -167,6 +192,10 @@ export function App() {
   const currentStatus = agentRun?.status ?? "idle";
   const selectedTrace = brainstormingResult?.trace ?? implementationResult?.trace ?? result?.trace ?? null;
   const selectedArtifacts = result?.artifacts ?? [];
+  const memoryEvents = useMemo(() => {
+    const allEvents = [...events, ...implementationEvents, ...brainstormingEvents];
+    return allEvents.filter((event) => event.type.startsWith("memory.") || event.type.includes("memory"));
+  }, [brainstormingEvents, events, implementationEvents]);
 
   const refreshBackend = useCallback(async () => {
     setBackendStatus("checking");
@@ -216,10 +245,43 @@ export function App() {
     setImplementationEvents([]);
     setBrainstormingResult(null);
     setBrainstormingEvents([]);
+    setMemoryItems([]);
+    setMemorySearchResults([]);
+    setSelectedMemory(null);
+    setMemoryDetail(null);
     lastEventIdRef.current = undefined;
     lastImplementationEventIdRef.current = undefined;
     lastBrainstormingEventIdRef.current = undefined;
   }, [currentProject?.id]);
+
+  const refreshMemory = useCallback(async () => {
+    if (!currentProject) return;
+    const [items, searchResults, selected] = await Promise.all([
+      controlPlaneApi.listMemory(currentProject.id, undefined, memoryStatusFilter),
+      controlPlaneApi.searchMemory({
+        projectId: currentProject.id,
+        query: memoryQuery,
+        type: memoryTypeFilter,
+        status: memoryStatusFilter
+      }),
+      currentSession
+        ? controlPlaneApi.listSelectedMemory(currentSession.id)
+        : Promise.resolve(null)
+    ]);
+    setMemoryItems(items);
+    setMemorySearchResults(searchResults);
+    setSelectedMemory(selected);
+    setMemoryDetail((previous) => {
+      if (!previous) return searchResults[0]?.item ?? items[0] ?? null;
+      return searchResults.find((result) => result.item.id === previous.id)?.item
+        ?? items.find((item) => item.id === previous.id)
+        ?? previous;
+    });
+  }, [currentProject, currentSession, memoryQuery, memoryStatusFilter, memoryTypeFilter]);
+
+  useEffect(() => {
+    void refreshMemory().catch((err) => setError(errorMessage(err)));
+  }, [refreshMemory]);
 
   useEffect(() => {
     if (!agentRun?.id) return;
@@ -641,6 +703,140 @@ export function App() {
     }
   };
 
+  const createProjectRule = async () => {
+    if (!currentProject) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const item = await controlPlaneApi.createProjectRule({
+        projectId: currentProject.id,
+        sessionId: currentSession?.id,
+        title: ruleDraft.title.trim(),
+        summary: ruleDraft.summary.trim(),
+        body: ruleDraft.body.trim(),
+        tags: parseTags(ruleDraft.tags),
+        importance: "high"
+      });
+      setMemoryDetail(item);
+      setMemoryTab("rules");
+      await refreshMemory();
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const promoteCurrentDecision = async () => {
+    const record = brainstormingResult?.decision_record;
+    if (!record) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const item = await controlPlaneApi.promoteDecisionRecord(record.id);
+      setMemoryDetail(item);
+      setMemoryTab("decisions");
+      await refreshMemory();
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const createSessionSummary = async () => {
+    if (!currentSession) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const result = await controlPlaneApi.createSessionMemorySummary(currentSession.id);
+      if (result.memory_item) {
+        setMemoryDetail(result.memory_item);
+      }
+      setMemoryTab("sessions");
+      await refreshMemory();
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const promoteLatestFailure = async () => {
+    const review = implementationResult?.review_result;
+    const failedVerification = implementationResult?.verification_runs.find((run) =>
+      ["failed", "blocked"].includes(run.status)
+    );
+    if (!review && !failedVerification) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const item =
+        review && ["needs_changes", "blocked"].includes(review.status)
+          ? await controlPlaneApi.promoteReviewFailureMemory(review.id)
+          : failedVerification
+            ? await controlPlaneApi.promoteVerificationFailureMemory(failedVerification.id)
+            : null;
+      if (item) {
+        setMemoryDetail(item);
+        setMemoryTab("failures");
+      }
+      await refreshMemory();
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const archiveOrRestoreMemory = async (item: ProjectMemoryItem) => {
+    setBusy(true);
+    setError(null);
+    try {
+      const next =
+        item.status === "active"
+          ? await controlPlaneApi.archiveMemoryItem(item.id)
+          : await controlPlaneApi.restoreMemoryItem(item.id);
+      setMemoryDetail(next);
+      await refreshMemory();
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const selectMemory = async (item: ProjectMemoryItem) => {
+    if (!currentSession) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await controlPlaneApi.selectMemory(currentSession.id, item.id);
+      const selected = await controlPlaneApi.listSelectedMemory(currentSession.id);
+      setSelectedMemory(selected);
+      setMemoryTab("selected");
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const unselectMemory = async (memoryItemId: string) => {
+    if (!currentSession) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await controlPlaneApi.unselectMemory(currentSession.id, memoryItemId);
+      const selected = await controlPlaneApi.listSelectedMemory(currentSession.id);
+      setSelectedMemory(selected);
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const toggleBrainstormingRole = (role: string) => {
     setSelectedBrainstormingRoles((previous) => {
       if (previous.includes(role)) {
@@ -811,6 +1007,36 @@ export function App() {
           onResolvePatch={resolvePatchSet}
           onStart={startImplementation}
         />
+
+        <MemoryPanel
+          busy={busy}
+          currentSession={currentSession}
+          detail={memoryDetail}
+          items={memoryItems}
+          query={memoryQuery}
+          result={implementationResult}
+          ruleDraft={ruleDraft}
+          searchResults={memorySearchResults}
+          selected={selectedMemory}
+          tab={memoryTab}
+          typeFilter={memoryTypeFilter}
+          statusFilter={memoryStatusFilter}
+          decisionRecord={brainstormingResult?.decision_record ?? null}
+          onArchiveRestore={archiveOrRestoreMemory}
+          onCreateProjectRule={createProjectRule}
+          onCreateSessionSummary={createSessionSummary}
+          onPromoteDecision={promoteCurrentDecision}
+          onPromoteFailure={promoteLatestFailure}
+          onQueryChange={setMemoryQuery}
+          onRefresh={refreshMemory}
+          onRuleDraftChange={setRuleDraft}
+          onSelect={selectMemory}
+          onSelectDetail={setMemoryDetail}
+          onStatusFilterChange={setMemoryStatusFilter}
+          onTabChange={setMemoryTab}
+          onTypeFilterChange={setMemoryTypeFilter}
+          onUnselect={unselectMemory}
+        />
       </main>
 
       <aside className="activity-panel">
@@ -841,6 +1067,10 @@ export function App() {
             <Activity size={15} />
             Brain
           </TabButton>
+          <TabButton active={activeTab === "memory"} onClick={() => setActiveTab("memory")}>
+            <Database size={15} />
+            Memory
+          </TabButton>
         </div>
 
         {activeTab === "timeline" && <Timeline events={events} />}
@@ -848,6 +1078,7 @@ export function App() {
         {activeTab === "artifacts" && <ArtifactsPanel artifacts={selectedArtifacts} />}
         {activeTab === "implementation" && <Timeline events={implementationEvents} />}
         {activeTab === "brainstorming" && <Timeline events={brainstormingEvents} />}
+        {activeTab === "memory" && <Timeline events={memoryEvents} />}
       </aside>
     </div>
   );
@@ -934,6 +1165,280 @@ function ApprovalPanel({
       ) : (
         <span className="muted">No approval request</span>
       )}
+    </section>
+  );
+}
+
+function MemoryPanel({
+  busy,
+  currentSession,
+  decisionRecord,
+  detail,
+  items,
+  query,
+  result,
+  ruleDraft,
+  searchResults,
+  selected,
+  statusFilter,
+  tab,
+  typeFilter,
+  onArchiveRestore,
+  onCreateProjectRule,
+  onCreateSessionSummary,
+  onPromoteDecision,
+  onPromoteFailure,
+  onQueryChange,
+  onRefresh,
+  onRuleDraftChange,
+  onSelect,
+  onSelectDetail,
+  onStatusFilterChange,
+  onTabChange,
+  onTypeFilterChange,
+  onUnselect
+}: {
+  busy: boolean;
+  currentSession: Session | null;
+  decisionRecord: DecisionRecord | null;
+  detail: ProjectMemoryItem | null;
+  items: ProjectMemoryItem[];
+  query: string;
+  result: ImplementationRunResult | null;
+  ruleDraft: { title: string; summary: string; body: string; tags: string };
+  searchResults: MemorySearchResult[];
+  selected: SelectedMemoryContext | null;
+  statusFilter: string;
+  tab: "search" | "decisions" | "rules" | "failures" | "sessions" | "selected";
+  typeFilter: MemoryType | "";
+  onArchiveRestore: (item: ProjectMemoryItem) => void;
+  onCreateProjectRule: () => void;
+  onCreateSessionSummary: () => void;
+  onPromoteDecision: () => void;
+  onPromoteFailure: () => void;
+  onQueryChange: (query: string) => void;
+  onRefresh: () => Promise<void>;
+  onRuleDraftChange: (draft: { title: string; summary: string; body: string; tags: string }) => void;
+  onSelect: (item: ProjectMemoryItem) => void;
+  onSelectDetail: (item: ProjectMemoryItem) => void;
+  onStatusFilterChange: (status: string) => void;
+  onTabChange: (tab: "search" | "decisions" | "rules" | "failures" | "sessions" | "selected") => void;
+  onTypeFilterChange: (type: MemoryType | "") => void;
+  onUnselect: (memoryItemId: string) => void;
+}) {
+  const lists = {
+    decisions: items.filter((item) => item.type === "decision"),
+    rules: items.filter((item) => item.type === "project_rule"),
+    failures: items.filter((item) => item.type === "failure"),
+    sessions: items.filter((item) => item.type === "session_summary")
+  };
+  const failureAvailable =
+    !!result?.review_result && ["needs_changes", "blocked"].includes(result.review_result.status)
+    || !!result?.verification_runs.some((run) => ["failed", "blocked"].includes(run.status));
+  const visibleItems =
+    tab === "search"
+      ? searchResults.map((searchResult) => searchResult.item)
+      : tab === "selected"
+        ? selected?.source_context
+            .map((snapshot) => items.find((item) => item.id === snapshot.id))
+            .filter((item): item is ProjectMemoryItem => Boolean(item)) ?? []
+        : lists[tab];
+
+  return (
+    <section className="panel memory-panel">
+      <div className="panel-title">
+        <Database size={16} />
+        <span>Memory</span>
+        <StatusPill label={`${items.length} active`} />
+      </div>
+
+      <div className="memory-toolbar">
+        <label className="wide-field">
+          <span>Search</span>
+          <input
+            value={query}
+            onChange={(event) => onQueryChange(event.target.value)}
+            placeholder="Search memory"
+          />
+        </label>
+        <label>
+          <span>Type</span>
+          <select
+            value={typeFilter}
+            onChange={(event) => onTypeFilterChange(event.target.value as MemoryType | "")}
+          >
+            <option value="">all</option>
+            <option value="decision">decision</option>
+            <option value="project_rule">project_rule</option>
+            <option value="failure">failure</option>
+            <option value="session_summary">session_summary</option>
+          </select>
+        </label>
+        <label>
+          <span>Status</span>
+          <select value={statusFilter} onChange={(event) => onStatusFilterChange(event.target.value)}>
+            <option value="active">active</option>
+            <option value="archived">archived</option>
+            <option value="">all</option>
+          </select>
+        </label>
+        <button className="command-button" disabled={busy} onClick={() => void onRefresh()} type="button">
+          <Search size={16} />
+          Search
+        </button>
+      </div>
+
+      <div className="memory-tabs">
+        {(["search", "decisions", "rules", "failures", "sessions", "selected"] as const).map(
+          (nextTab) => (
+            <button
+              className={`tab-button ${tab === nextTab ? "active" : ""}`}
+              key={nextTab}
+              onClick={() => onTabChange(nextTab)}
+              type="button"
+            >
+              {nextTab}
+            </button>
+          )
+        )}
+      </div>
+
+      <div className="memory-actions">
+        <button className="command-button" disabled={busy || !decisionRecord} onClick={onPromoteDecision} type="button">
+          <Database size={16} />
+          Promote Decision
+        </button>
+        <button className="command-button" disabled={busy || !currentSession} onClick={onCreateSessionSummary} type="button">
+          <FileText size={16} />
+          Summarize Session
+        </button>
+        <button className="command-button" disabled={busy || !failureAvailable} onClick={onPromoteFailure} type="button">
+          <CircleAlert size={16} />
+          Capture Failure
+        </button>
+      </div>
+
+      {tab === "rules" && (
+        <div className="project-rule-form">
+          <label>
+            <span>Rule Title</span>
+            <input
+              value={ruleDraft.title}
+              onChange={(event) => onRuleDraftChange({ ...ruleDraft, title: event.target.value })}
+            />
+          </label>
+          <label>
+            <span>Summary</span>
+            <input
+              value={ruleDraft.summary}
+              onChange={(event) => onRuleDraftChange({ ...ruleDraft, summary: event.target.value })}
+            />
+          </label>
+          <label>
+            <span>Rule Body</span>
+            <textarea
+              value={ruleDraft.body}
+              onChange={(event) => onRuleDraftChange({ ...ruleDraft, body: event.target.value })}
+            />
+          </label>
+          <label>
+            <span>Tags</span>
+            <input
+              value={ruleDraft.tags}
+              onChange={(event) => onRuleDraftChange({ ...ruleDraft, tags: event.target.value })}
+            />
+          </label>
+          <button
+            className="primary-button"
+            disabled={busy || !ruleDraft.title.trim() || !ruleDraft.body.trim()}
+            onClick={onCreateProjectRule}
+            type="button"
+          >
+            <Check size={16} />
+            Create Rule
+          </button>
+        </div>
+      )}
+
+      <div className="memory-layout">
+        <div className="memory-list">
+          {visibleItems.length ? (
+            visibleItems.map((item) => (
+              <button
+                className={`memory-row ${detail?.id === item.id ? "selected" : ""}`}
+                key={item.id}
+                onClick={() => onSelectDetail(item)}
+                type="button"
+              >
+                <div>
+                  <strong>{item.title}</strong>
+                  <span>{item.summary}</span>
+                </div>
+                <StatusPill label={item.type} />
+              </button>
+            ))
+          ) : (
+            <EmptyActivity label="No memory items" />
+          )}
+        </div>
+
+        <div className="memory-detail">
+          {detail ? (
+            <>
+              <div className="subsection-heading">
+                <h2>{detail.title}</h2>
+                <StatusPill label={detail.status} />
+              </div>
+              <p>{detail.summary}</p>
+              <pre>{detail.body}</pre>
+              <div className="tag-row">
+                {detail.tags.map((tag) => (
+                  <span key={tag}>{tag}</span>
+                ))}
+              </div>
+              <FieldGroup
+                title="Source Links"
+                values={detail.source_links.map(
+                  (link) => `${link.source_type}:${link.source_id} (${link.relation})`
+                )}
+              />
+              <div className="action-row">
+                <button
+                  className="command-button"
+                  disabled={busy || detail.status !== "active" || !currentSession}
+                  onClick={() => onSelect(detail)}
+                  type="button"
+                >
+                  <Check size={16} />
+                  Select Context
+                </button>
+                <button className="command-button" disabled={busy} onClick={() => onArchiveRestore(detail)} type="button">
+                  {detail.status === "active" ? <Archive size={16} /> : <RotateCcw size={16} />}
+                  {detail.status === "active" ? "Archive" : "Restore"}
+                </button>
+              </div>
+            </>
+          ) : (
+            <EmptyActivity label="No memory detail" />
+          )}
+        </div>
+      </div>
+
+      <div className="selected-memory-strip">
+        <strong>Selected Context</strong>
+        {selected?.source_context.length ? (
+          selected.source_context.map((snapshot) => (
+            <span key={snapshot.id}>
+              {snapshot.title}
+              <button onClick={() => onUnselect(snapshot.id)} title="Remove" type="button">
+                <X size={13} />
+              </button>
+            </span>
+          ))
+        ) : (
+          <small>No selected memory</small>
+        )}
+      </div>
     </section>
   );
 }
@@ -1453,6 +1958,13 @@ function formatTime(value: string) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
   return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+}
+
+function parseTags(value: string) {
+  return value
+    .split(",")
+    .map((tag) => tag.trim())
+    .filter(Boolean);
 }
 
 function statusLabel(status: string) {

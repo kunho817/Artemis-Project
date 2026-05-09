@@ -34,6 +34,23 @@ ALLOWED_BRAINSTORMING_MODES = frozenset(
 ALLOWED_BRAINSTORMING_SOURCE_TYPES = frozenset(
     {"topic", "work_package", "implementation_run", "review_result"}
 )
+ALLOWED_MEMORY_TYPES = frozenset(
+    {"decision", "session_summary", "project_rule", "failure", "work_note"}
+)
+ALLOWED_MEMORY_STATUSES = frozenset({"active", "archived", "superseded"})
+ALLOWED_MEMORY_SOURCE_TYPES = frozenset(
+    {
+        "decision_record",
+        "brainstorming_session",
+        "work_package",
+        "implementation_run",
+        "verification_run",
+        "review_result",
+        "session",
+        "manual",
+    }
+)
+SECRET_MARKERS = ("api_key", "apikey", "password", "secret", "token", "bearer ")
 DEFAULT_BRAINSTORMING_ROLES: dict[str, list[str]] = {
     "free_ideation": ["product_planner", "system_architect", "implementation_planner"],
     "architecture_debate": [
@@ -1100,6 +1117,393 @@ class ControlPlaneService:
             "approval": approval.to_dict(),
         }
 
+    def create_manual_memory_item(
+        self,
+        *,
+        project_id: str,
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        memory_type = payload.get("type", "project_rule")
+        if memory_type != "project_rule":
+            raise ValueError("Manual memory creation is limited to project_rule in MVP 5")
+        body = str(payload.get("body") or "").strip()
+        if self._contains_secret(body):
+            raise ValueError("Memory body looks like it contains a secret or credential")
+        title = str(payload.get("title") or "").strip()
+        summary = str(payload.get("summary") or "").strip()
+        if not title or not summary or not body:
+            raise ValueError("title, summary, and body are required")
+        project = self.store.get_project(project_id)
+        item = self.store.create_memory_item(
+            project_id=project["id"],
+            memory_type=memory_type,
+            title=title,
+            summary=summary,
+            body=body,
+            tags=self._normalize_tags(payload.get("tags") or ["project_rule"]),
+            importance=str(payload.get("importance") or "medium"),
+            confidence=float(payload.get("confidence") or 1.0),
+            created_by="user",
+            source_links=[
+                {
+                    "source_type": "manual",
+                    "source_id": "",
+                    "relation": "derived_from",
+                }
+            ],
+        )
+        self.store.append_event(
+            project_id=project["id"],
+            session_id=str(payload.get("session_id") or ""),
+            agent_run_id=item.id,
+            event_type="project_rule.created",
+            payload={"memory_item_id": item.id},
+        )
+        self.store.append_event(
+            project_id=project["id"],
+            session_id=str(payload.get("session_id") or ""),
+            agent_run_id=item.id,
+            event_type="memory.item.created",
+            payload={"memory_item_id": item.id, "type": memory_type},
+        )
+        return self.store.get_memory_item(item.id)
+
+    def update_memory_item(self, *, memory_item_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        current = self.store.get_memory_item(memory_item_id)
+        if "type" in payload and payload["type"] != current["type"]:
+            raise ValueError("Memory type cannot be changed")
+        if "status" in payload and payload["status"] not in ALLOWED_MEMORY_STATUSES:
+            raise ValueError("Unsupported memory status")
+        if "body" in payload and self._contains_secret(str(payload["body"])):
+            raise ValueError("Memory body looks like it contains a secret or credential")
+        updates = dict(payload)
+        if "tags" in updates:
+            updates["tags"] = self._normalize_tags(updates["tags"])
+        item = self.store.update_memory_item(memory_item_id, **updates)
+        self.store.append_event(
+            project_id=item["project_id"],
+            session_id="",
+            agent_run_id=item["id"],
+            event_type="memory.item.updated",
+            payload={"memory_item_id": item["id"]},
+        )
+        return item
+
+    def archive_memory_item(self, *, memory_item_id: str) -> dict[str, Any]:
+        item = self.store.update_memory_item(memory_item_id, status="archived")
+        self.store.append_event(
+            project_id=item["project_id"],
+            session_id="",
+            agent_run_id=item["id"],
+            event_type="memory.item.archived",
+            payload={"memory_item_id": item["id"]},
+        )
+        return item
+
+    def restore_memory_item(self, *, memory_item_id: str) -> dict[str, Any]:
+        item = self.store.update_memory_item(memory_item_id, status="active")
+        self.store.append_event(
+            project_id=item["project_id"],
+            session_id="",
+            agent_run_id=item["id"],
+            event_type="memory.item.restored",
+            payload={"memory_item_id": item["id"]},
+        )
+        return item
+
+    def promote_decision_record_to_memory(self, *, decision_record_id: str) -> dict[str, Any]:
+        record = self.store.get_decision_record(decision_record_id)
+        brief = self.store.get_decision_brief_by_brainstorming_session(
+            record["brainstorming_session_id"]
+        )
+        if brief is None or brief["status"] != "accepted":
+            raise ValueError("Only accepted DecisionRecords can be promoted to memory")
+        existing = self.store.find_memory_by_source(
+            project_id=record["project_id"],
+            memory_type="decision",
+            source_type="decision_record",
+            source_id=decision_record_id,
+        )
+        if existing is not None:
+            return existing
+        return self._create_memory_from_agent_candidate(
+            project_id=record["project_id"],
+            session_id=record["session_id"],
+            source_type="decision_record",
+            source_id=decision_record_id,
+            source_snapshot={"decision_record": record, "decision_brief": brief},
+            created_by="agent",
+            completed_event_type="decision_record.promoted_to_memory",
+        )
+
+    def create_session_memory_summary(self, *, session_id: str) -> dict[str, Any]:
+        session = self.store.get_session(session_id)
+        project = self.store.get_project(session["project_id"])
+        existing = self.store.find_memory_by_source(
+            project_id=project["id"],
+            memory_type="session_summary",
+            source_type="session",
+            source_id=session_id,
+        )
+        if existing is not None:
+            return {"status": "completed", "memory_item": existing}
+        events = self.store.list_session_events(session_id)
+        decisions = [
+            record
+            for record in self.store.list_decision_records(project["id"])
+            if record["session_id"] == session_id
+        ]
+        work_packages = self._list_session_work_packages(session_id)
+        if not events and not decisions and not work_packages:
+            return {
+                "status": "blocked",
+                "reason": "Session has no memory-worthy activity.",
+                "memory_item": None,
+            }
+        item = self._create_memory_from_agent_candidate(
+            project_id=project["id"],
+            session_id=session_id,
+            source_type="session",
+            source_id=session_id,
+            source_snapshot={
+                "session": session,
+                "events": events,
+                "decision_records": decisions,
+                "work_packages": work_packages,
+            },
+            created_by="agent",
+            completed_event_type="session_summary.created",
+        )
+        return {"status": "completed", "memory_item": item}
+
+    def get_session_memory_summary(self, *, session_id: str) -> dict[str, Any]:
+        session = self.store.get_session(session_id)
+        item = self.store.find_memory_by_source(
+            project_id=session["project_id"],
+            memory_type="session_summary",
+            source_type="session",
+            source_id=session_id,
+        )
+        return {"status": "completed" if item else "missing", "memory_item": item}
+
+    def promote_review_result_failure_memory(self, *, review_result_id: str) -> dict[str, Any]:
+        review = self.store.get_review_result_by_id(review_result_id)
+        if review["status"] not in {"needs_changes", "blocked"}:
+            raise ValueError("Only needs_changes or blocked ReviewResult can create failure memory")
+        run = self.store.get_implementation_run(review["implementation_run_id"])
+        existing = self.store.find_memory_by_source(
+            project_id=run["project_id"],
+            memory_type="failure",
+            source_type="review_result",
+            source_id=review_result_id,
+        )
+        if existing is not None:
+            return existing
+        return self._create_memory_from_agent_candidate(
+            project_id=run["project_id"],
+            session_id=run["session_id"],
+            source_type="review_result",
+            source_id=review_result_id,
+            source_snapshot={"review_result": review, "implementation_run": run},
+            created_by="agent",
+            completed_event_type="failure_memory.created",
+        )
+
+    def promote_verification_failure_memory(self, *, verification_run_id: str) -> dict[str, Any]:
+        verification = self.store.get_verification_run_by_id(verification_run_id)
+        if verification["status"] not in {"failed", "blocked"}:
+            raise ValueError("Only failed or blocked VerificationRun can create failure memory")
+        run = self.store.get_implementation_run(verification["implementation_run_id"])
+        existing = self.store.find_memory_by_source(
+            project_id=run["project_id"],
+            memory_type="failure",
+            source_type="verification_run",
+            source_id=verification_run_id,
+        )
+        if existing is not None:
+            return existing
+        return self._create_memory_from_agent_candidate(
+            project_id=run["project_id"],
+            session_id=run["session_id"],
+            source_type="verification_run",
+            source_id=verification_run_id,
+            source_snapshot={"verification_run": verification, "implementation_run": run},
+            created_by="agent",
+            completed_event_type="failure_memory.created",
+        )
+
+    def select_memory_for_session(self, *, session_id: str, memory_item_id: str) -> dict[str, Any]:
+        session = self.store.get_session(session_id)
+        item = self.store.get_memory_item(memory_item_id)
+        if item["project_id"] != session["project_id"]:
+            raise ValueError("Memory item does not belong to this session's project")
+        selected = self.store.add_selected_memory(
+            session_id=session_id,
+            memory_item_id=memory_item_id,
+        )
+        self.store.append_event(
+            project_id=session["project_id"],
+            session_id=session_id,
+            agent_run_id=session_id,
+            event_type="memory.item.selected",
+            payload={"memory_item_id": memory_item_id},
+        )
+        return selected
+
+    def unselect_memory_for_session(self, *, session_id: str, memory_item_id: str) -> None:
+        session = self.store.get_session(session_id)
+        self.store.remove_selected_memory(session_id=session_id, memory_item_id=memory_item_id)
+        self.store.append_event(
+            project_id=session["project_id"],
+            session_id=session_id,
+            agent_run_id=session_id,
+            event_type="memory.item.unselected",
+            payload={"memory_item_id": memory_item_id},
+        )
+
+    def selected_memory_context_payload(self, *, session_id: str) -> dict[str, Any]:
+        selected = self.store.list_selected_memory(session_id)
+        return {
+            "session_id": session_id,
+            "selected_memory": selected,
+            "source_context": [item["snapshot"] for item in selected],
+        }
+
+    def _create_memory_from_agent_candidate(
+        self,
+        *,
+        project_id: str,
+        session_id: str,
+        source_type: str,
+        source_id: str,
+        source_snapshot: dict[str, Any],
+        created_by: str,
+        completed_event_type: str,
+    ) -> dict[str, Any]:
+        if source_type not in ALLOWED_MEMORY_SOURCE_TYPES:
+            raise ValueError(f"Unsupported memory source_type: {source_type}")
+        project = self.store.get_project(project_id)
+        extraction = self.store.create_memory_extraction_run(
+            project_id=project_id,
+            session_id=session_id,
+            source_type=source_type,
+            source_id=source_id,
+        )
+        self.store.append_event(
+            project_id=project_id,
+            session_id=session_id,
+            agent_run_id=extraction.id,
+            event_type="memory.extraction_run.created",
+            payload={"extraction_run_id": extraction.id, "source_type": source_type},
+        )
+        self.store.update_memory_extraction_run(extraction.id, status="running")
+        result = self.agent_backend.create_memory_candidate(
+            {
+                "project_id": project_id,
+                "session_id": session_id,
+                "extraction_run_id": extraction.id,
+                "project_root": project["root_path"],
+                "source_type": source_type,
+                "source_id": source_id,
+                "source_snapshot": source_snapshot,
+            }
+        )
+        for event in result["events"]:
+            self.store.append_event(
+                project_id=project_id,
+                session_id=session_id,
+                agent_run_id=extraction.id,
+                event_type=event["type"],
+                payload=event["payload"],
+            )
+        trace_id = result.get("trace_id")
+        self.store.update_memory_extraction_run(extraction.id, trace_id=trace_id)
+        if result["status"] != "completed" or result.get("candidate") is None:
+            self.store.update_memory_extraction_run(extraction.id, status="failed")
+            self._record_trace_from_memory_extraction_run(
+                project_id=project_id,
+                session_id=session_id,
+                extraction_run_id=extraction.id,
+                trace_id=trace_id,
+                status="failed",
+            )
+            raise ValueError("; ".join(result.get("errors") or ["Memory candidate generation failed"]))
+        candidate = self.store.create_memory_candidate(
+            extraction_run_id=extraction.id,
+            candidate=result["candidate"],
+        )
+        self.store.update_memory_extraction_run(
+            extraction.id,
+            status="candidate_ready",
+            candidate_count=1,
+        )
+        memory = self.store.create_memory_item(
+            project_id=project_id,
+            memory_type=candidate.type,
+            title=candidate.title,
+            summary=candidate.summary,
+            body=candidate.body,
+            tags=candidate.tags,
+            importance=candidate.importance,
+            confidence=candidate.confidence,
+            created_by=created_by,
+            source_links=candidate.source_links,
+        )
+        self.store.update_memory_candidate_status(candidate.id, "accepted")
+        self.store.update_memory_extraction_run(
+            extraction.id,
+            status="completed",
+            created_memory_count=1,
+        )
+        self.store.append_event(
+            project_id=project_id,
+            session_id=session_id,
+            agent_run_id=extraction.id,
+            event_type="memory.candidate.accepted",
+            payload={"candidate_id": candidate.id, "memory_item_id": memory.id},
+        )
+        self.store.append_event(
+            project_id=project_id,
+            session_id=session_id,
+            agent_run_id=extraction.id,
+            event_type="memory.item.created",
+            payload={"memory_item_id": memory.id, "type": memory.type},
+        )
+        self.store.append_event(
+            project_id=project_id,
+            session_id=session_id,
+            agent_run_id=extraction.id,
+            event_type=completed_event_type,
+            payload={"memory_item_id": memory.id, "source_type": source_type, "source_id": source_id},
+        )
+        self._record_trace_from_memory_extraction_run(
+            project_id=project_id,
+            session_id=session_id,
+            extraction_run_id=extraction.id,
+            trace_id=trace_id,
+            status="completed",
+        )
+        return self.store.get_memory_item(memory.id)
+
+    def _normalize_tags(self, raw_tags: Any) -> list[str]:
+        if isinstance(raw_tags, str):
+            candidates = [raw_tags]
+        else:
+            candidates = list(raw_tags or [])
+        tags: list[str] = []
+        for tag in candidates:
+            normalized = str(tag).strip().lower().replace(" ", "-")
+            if normalized and normalized not in tags:
+                tags.append(normalized)
+        return tags or ["memory"]
+
+    def _contains_secret(self, text: str) -> bool:
+        lowered = text.lower()
+        return any(marker in lowered for marker in SECRET_MARKERS) or "sk-" in lowered
+
+    def _list_session_work_packages(self, session_id: str) -> list[dict[str, Any]]:
+        return self.store.list_work_packages_by_session(session_id)
+
     def _normalize_brainstorming_roles(self, roles: list[str], mode: str) -> list[str]:
         selected: list[str] = []
         for role in roles:
@@ -1153,6 +1557,28 @@ class ControlPlaneService:
             status=status,
             metadata={"event_count": len(self.store.list_events(brainstorming_session_id))},
             events=self.store.list_events(brainstorming_session_id),
+        )
+
+    def _record_trace_from_memory_extraction_run(
+        self,
+        *,
+        project_id: str,
+        session_id: str,
+        extraction_run_id: str,
+        trace_id: str | None,
+        status: str,
+    ) -> None:
+        if trace_id is None:
+            return
+        self.store.record_trace_summary(
+            trace_id=trace_id,
+            project_id=project_id,
+            session_id=session_id,
+            agent_run_id=extraction_run_id,
+            root_name="artemis_memory_extraction",
+            status=status,
+            metadata={"event_count": len(self.store.list_events(extraction_run_id))},
+            events=self.store.list_events(extraction_run_id),
         )
 
     def _record_trace_from_run(

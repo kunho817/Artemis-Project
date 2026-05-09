@@ -423,6 +423,150 @@ def create_app(db_path: str = "data/artemis.db", agent_backend: Any | None = Non
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
+    @app.get("/api/projects/{project_id}/memory")
+    def list_memory_items(
+        project_id: str,
+        type: str | None = None,
+        status: str | None = "active",
+        tag: str | None = None,
+        source_type: str | None = None,
+        source_id: str | None = None,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        return store.list_memory_items(
+            project_id=project_id,
+            memory_type=type,
+            status=status,
+            tag=tag,
+            source_type=source_type,
+            source_id=source_id,
+            limit=limit,
+        )
+
+    @app.post("/api/projects/{project_id}/memory")
+    def create_memory_item(project_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        from fastapi import HTTPException
+
+        try:
+            return service.create_manual_memory_item(project_id=project_id, payload=payload)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.get("/api/projects/{project_id}/memory/search")
+    def search_memory_items(
+        project_id: str,
+        q: str = "",
+        type: str | None = None,
+        tag: str | None = None,
+        status: str | None = "active",
+        source_type: str | None = None,
+        source_id: str | None = None,
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        results = store.search_memory_items(
+            project_id=project_id,
+            query=q,
+            memory_type=type,
+            status=status,
+            tag=tag,
+            source_type=source_type,
+            source_id=source_id,
+            limit=limit,
+        )
+        store.append_event(
+            project_id=project_id,
+            session_id="",
+            agent_run_id=project_id,
+            event_type="memory.search.performed",
+            payload={"query": q, "result_count": len(results)},
+        )
+        return results
+
+    @app.get("/api/projects/{project_id}/memory/decisions")
+    def list_decision_memory(project_id: str) -> list[dict[str, Any]]:
+        return store.list_memory_items(
+            project_id=project_id,
+            memory_type="decision",
+            status="active",
+        )
+
+    @app.get("/api/memory/items/{memory_item_id}")
+    def get_memory_item(memory_item_id: str) -> dict[str, Any]:
+        return store.get_memory_item(memory_item_id)
+
+    @app.patch("/api/memory/items/{memory_item_id}")
+    def update_memory_item(memory_item_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        from fastapi import HTTPException
+
+        try:
+            return service.update_memory_item(memory_item_id=memory_item_id, payload=payload)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/api/memory/items/{memory_item_id}/archive")
+    def archive_memory_item(memory_item_id: str) -> dict[str, Any]:
+        return service.archive_memory_item(memory_item_id=memory_item_id)
+
+    @app.post("/api/memory/items/{memory_item_id}/restore")
+    def restore_memory_item(memory_item_id: str) -> dict[str, Any]:
+        return service.restore_memory_item(memory_item_id=memory_item_id)
+
+    @app.post("/api/decision-records/{decision_record_id}/promote-to-memory")
+    def promote_decision_record_to_memory(decision_record_id: str) -> dict[str, Any]:
+        from fastapi import HTTPException
+
+        try:
+            return service.promote_decision_record_to_memory(decision_record_id=decision_record_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/api/sessions/{session_id}/memory-summary")
+    def create_session_memory_summary(session_id: str) -> dict[str, Any]:
+        return service.create_session_memory_summary(session_id=session_id)
+
+    @app.get("/api/sessions/{session_id}/memory-summary")
+    def get_session_memory_summary(session_id: str) -> dict[str, Any]:
+        return service.get_session_memory_summary(session_id=session_id)
+
+    @app.post("/api/review-results/{review_result_id}/promote-failure-memory")
+    def promote_review_failure_memory(review_result_id: str) -> dict[str, Any]:
+        from fastapi import HTTPException
+
+        try:
+            return service.promote_review_result_failure_memory(review_result_id=review_result_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/api/verification-runs/{verification_run_id}/promote-failure-memory")
+    def promote_verification_failure_memory(verification_run_id: str) -> dict[str, Any]:
+        from fastapi import HTTPException
+
+        try:
+            return service.promote_verification_failure_memory(verification_run_id=verification_run_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/api/sessions/{session_id}/selected-memory")
+    def select_memory(session_id: str, payload: dict[str, str]) -> dict[str, Any]:
+        from fastapi import HTTPException
+
+        try:
+            return service.select_memory_for_session(
+                session_id=session_id,
+                memory_item_id=payload["memory_item_id"],
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.get("/api/sessions/{session_id}/selected-memory")
+    def list_selected_memory(session_id: str) -> dict[str, Any]:
+        return service.selected_memory_context_payload(session_id=session_id)
+
+    @app.delete("/api/sessions/{session_id}/selected-memory/{memory_item_id}")
+    def unselect_memory(session_id: str, memory_item_id: str) -> dict[str, str]:
+        service.unselect_memory_for_session(session_id=session_id, memory_item_id=memory_item_id)
+        return {"status": "removed"}
+
     @app.get("/api/health")
     def health() -> dict[str, str]:
         return {"status": "ok"}

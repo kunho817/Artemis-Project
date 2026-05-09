@@ -20,6 +20,9 @@ from .schemas import (
     ImplementationBackendRequest,
     ImplementationPlanDraft,
     ImplementationProposalResult,
+    MemoryCandidateBackendRequest,
+    MemoryCandidateDraft,
+    MemoryCandidateRunResult,
     PatchFileDraft,
     PatchSetDraft,
     ReviewBackendRequest,
@@ -334,6 +337,77 @@ class AgentBackendService:
                 critiques=[],
                 options=[],
                 decision_brief=None,
+                events=events,
+                errors=[str(exc)],
+            )
+
+    def create_memory_candidate(
+        self,
+        request: MemoryCandidateBackendRequest,
+    ) -> MemoryCandidateRunResult:
+        trace_id = f"trace_{uuid.uuid4().hex[:16]}"
+        events = [
+            AgentBackendEvent(
+                "trace.linked",
+                {
+                    "trace_id": trace_id,
+                    "provider": "local",
+                    "extraction_run_id": request.extraction_run_id,
+                },
+            ),
+            AgentBackendEvent("memory.extraction_run.started", {"trace_id": trace_id}),
+            AgentBackendEvent(
+                "memory.extraction_run.phase_changed",
+                {"phase": "load_memory_source"},
+            ),
+        ]
+        try:
+            events.append(
+                AgentBackendEvent(
+                    "memory.extraction_run.phase_changed",
+                    {"phase": "draft_memory_candidate"},
+                )
+            )
+            candidate = _build_memory_candidate(request)
+            errors = candidate.validate()
+            if errors:
+                events.append(AgentBackendEvent("memory.extraction_run.failed", {"errors": errors}))
+                return MemoryCandidateRunResult(
+                    status="failed",
+                    trace_id=trace_id,
+                    candidate=candidate,
+                    events=events,
+                    errors=errors,
+                )
+            events.extend(
+                [
+                    AgentBackendEvent(
+                        "memory.candidate.created",
+                        {"type": candidate.type, "title": candidate.title},
+                    ),
+                    AgentBackendEvent(
+                        "memory.extraction_run.phase_changed",
+                        {"phase": "validate_memory_candidate"},
+                    ),
+                    AgentBackendEvent("memory.extraction_run.completed", {}),
+                    AgentBackendEvent(
+                        "trace.step_recorded",
+                        {"trace_id": trace_id, "step": "draft_memory_candidate"},
+                    ),
+                ]
+            )
+            return MemoryCandidateRunResult(
+                status="completed",
+                trace_id=trace_id,
+                candidate=candidate,
+                events=events,
+            )
+        except Exception as exc:  # pragma: no cover - defensive service boundary
+            events.append(AgentBackendEvent("memory.extraction_run.failed", {"error": str(exc)}))
+            return MemoryCandidateRunResult(
+                status="failed",
+                trace_id=trace_id,
+                candidate=None,
                 events=events,
                 errors=[str(exc)],
             )
@@ -678,3 +752,136 @@ def _validate_brainstorming_result(
         errors.extend(option.validate())
     errors.extend(decision_brief.validate(len(options)))
     return errors
+
+
+def _build_memory_candidate(request: MemoryCandidateBackendRequest) -> MemoryCandidateDraft:
+    snapshot = request.source_snapshot
+    source_link = {
+        "source_type": request.source_type,
+        "source_id": request.source_id,
+        "relation": "derived_from",
+    }
+    if request.source_type == "decision_record":
+        record = snapshot.get("decision_record", snapshot)
+        title = str(record.get("title") or record.get("decision") or "Decision memory")
+        decision = str(record.get("decision") or title)
+        rationale = str(record.get("rationale") or "No rationale recorded.")
+        consequences = _string_list(record.get("consequences"))
+        follow_up = _string_list(record.get("follow_up_actions"))
+        body = (
+            f"Decision: {decision}\n\n"
+            f"Rationale: {rationale}\n\n"
+            f"Consequences:\n{_bullet_list(consequences)}\n\n"
+            f"Follow-up actions:\n{_bullet_list(follow_up)}"
+        )
+        links = [source_link]
+        brainstorming_session_id = record.get("brainstorming_session_id")
+        if brainstorming_session_id:
+            links.append(
+                {
+                    "source_type": "brainstorming_session",
+                    "source_id": str(brainstorming_session_id),
+                    "relation": "supports",
+                }
+            )
+        return MemoryCandidateDraft(
+            type="decision",
+            title=f"Decision: {title}",
+            summary=decision[:260],
+            body=body,
+            tags=["decision", "adr"],
+            importance="high",
+            confidence=0.92,
+            source_links=links,
+        )
+    if request.source_type == "session":
+        session = snapshot.get("session", {})
+        event_count = len(snapshot.get("events", []))
+        decision_count = len(snapshot.get("decision_records", []))
+        work_package_count = len(snapshot.get("work_packages", []))
+        title = f"Session summary: {session.get('title', request.source_id)}"
+        body = (
+            f"Session: {session.get('title', request.source_id)}\n"
+            f"Events recorded: {event_count}\n"
+            f"Decision records: {decision_count}\n"
+            f"Work packages: {work_package_count}\n\n"
+            "Next action: review selected decisions, pending approvals, and implementation results before starting the next planning request."
+        )
+        return MemoryCandidateDraft(
+            type="session_summary",
+            title=title,
+            summary=f"{event_count} events, {decision_count} decisions, and {work_package_count} work packages were recorded.",
+            body=body,
+            tags=["session", "summary"],
+            importance="medium",
+            confidence=0.78,
+            source_links=[source_link],
+        )
+    if request.source_type == "review_result":
+        review = snapshot.get("review_result", snapshot)
+        status = str(review.get("status", "needs_changes"))
+        findings = _string_list(review.get("findings"))
+        residual = _string_list(review.get("residual_risks"))
+        recommendation = str(review.get("recommendation") or "Review failed or was blocked.")
+        return MemoryCandidateDraft(
+            type="failure",
+            title=f"Failure memory: review {status}",
+            summary=recommendation[:260],
+            body=(
+                f"Symptom: Review result ended as {status}.\n\n"
+                f"Findings:\n{_bullet_list(findings)}\n\n"
+                f"Residual risks:\n{_bullet_list(residual)}\n\n"
+                f"Recovery action: {recommendation}"
+            ),
+            tags=["failure", "review", status],
+            importance="high",
+            confidence=0.86,
+            source_links=[source_link],
+        )
+    if request.source_type == "verification_run":
+        verification = snapshot.get("verification_run", snapshot)
+        command = str(verification.get("command") or "verification")
+        status = str(verification.get("status") or "failed")
+        stderr = str(verification.get("stderr") or "")
+        stdout = str(verification.get("stdout") or "")
+        output = stderr or stdout or "No output captured."
+        return MemoryCandidateDraft(
+            type="failure",
+            title=f"Failure memory: {command or status}",
+            summary=f"Verification ended as {status}.",
+            body=(
+                f"Symptom: Verification run ended as {status}.\n\n"
+                f"Affected surface: {command or 'unknown command'}\n\n"
+                f"Observed output:\n{output[:1200]}\n\n"
+                "Prevention hint: run an allowlisted verification command and inspect failures before closing the implementation."
+            ),
+            tags=["failure", "verification", status],
+            importance="high",
+            confidence=0.84,
+            source_links=[source_link],
+        )
+    title = str(snapshot.get("title") or request.source_id)
+    return MemoryCandidateDraft(
+        type="work_note",
+        title=f"Work note: {title}",
+        summary=f"Memory note extracted from {request.source_type}.",
+        body=f"Source {request.source_type}:{request.source_id} should be reviewed before related planning work.",
+        tags=["work_note", request.source_type],
+        importance="medium",
+        confidence=0.7,
+        source_links=[source_link],
+    )
+
+
+def _string_list(value: object) -> list[str]:
+    if isinstance(value, list):
+        return [str(item) for item in value if str(item).strip()]
+    if value:
+        return [str(value)]
+    return []
+
+
+def _bullet_list(values: list[str]) -> str:
+    if not values:
+        return "- None recorded"
+    return "\n".join(f"- {value}" for value in values)

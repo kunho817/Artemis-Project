@@ -5,6 +5,7 @@ from __future__ import annotations
 from contextlib import contextmanager
 from pathlib import Path
 import json
+import re
 import sqlite3
 from typing import Any, Iterator
 
@@ -21,9 +22,13 @@ from .models import (
     Event,
     ImplementationPlan,
     ImplementationRun,
+    MemoryCandidate,
+    MemoryExtractionRun,
+    MemorySourceLink,
     PatchFile,
     PatchSet,
     Project,
+    ProjectMemoryItem,
     ReviewResult,
     Session,
     Trace,
@@ -293,6 +298,76 @@ class SQLiteStore:
                   follow_up_actions TEXT NOT NULL,
                   linked_work_package_id TEXT,
                   created_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS memory_extraction_runs (
+                  id TEXT PRIMARY KEY,
+                  project_id TEXT NOT NULL,
+                  session_id TEXT NOT NULL,
+                  source_type TEXT NOT NULL,
+                  source_id TEXT NOT NULL,
+                  status TEXT NOT NULL,
+                  candidate_count INTEGER NOT NULL,
+                  created_memory_count INTEGER NOT NULL,
+                  trace_id TEXT,
+                  created_at TEXT NOT NULL,
+                  updated_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS memory_candidates (
+                  id TEXT PRIMARY KEY,
+                  extraction_run_id TEXT NOT NULL,
+                  type TEXT NOT NULL,
+                  title TEXT NOT NULL,
+                  summary TEXT NOT NULL,
+                  body TEXT NOT NULL,
+                  tags TEXT NOT NULL,
+                  importance TEXT NOT NULL,
+                  confidence REAL NOT NULL,
+                  source_links TEXT NOT NULL,
+                  status TEXT NOT NULL,
+                  created_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS project_memory_items (
+                  id TEXT PRIMARY KEY,
+                  project_id TEXT NOT NULL,
+                  type TEXT NOT NULL,
+                  title TEXT NOT NULL,
+                  summary TEXT NOT NULL,
+                  body TEXT NOT NULL,
+                  tags TEXT NOT NULL,
+                  status TEXT NOT NULL,
+                  importance TEXT NOT NULL,
+                  confidence REAL NOT NULL,
+                  created_by TEXT NOT NULL,
+                  source_count INTEGER NOT NULL,
+                  last_used_at TEXT,
+                  created_at TEXT NOT NULL,
+                  updated_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS memory_source_links (
+                  id TEXT PRIMARY KEY,
+                  memory_item_id TEXT NOT NULL,
+                  source_type TEXT NOT NULL,
+                  source_id TEXT NOT NULL,
+                  relation TEXT NOT NULL,
+                  created_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS selected_memory_context (
+                  session_id TEXT NOT NULL,
+                  memory_item_id TEXT NOT NULL,
+                  snapshot TEXT NOT NULL,
+                  created_at TEXT NOT NULL,
+                  PRIMARY KEY (session_id, memory_item_id)
+                );
+                CREATE VIRTUAL TABLE IF NOT EXISTS memory_items_fts USING fts5(
+                  memory_item_id UNINDEXED,
+                  project_id UNINDEXED,
+                  type UNINDEXED,
+                  status UNINDEXED,
+                  title,
+                  summary,
+                  body,
+                  tags,
+                  source_labels
                 );
                 """
             )
@@ -719,6 +794,7 @@ class SQLiteStore:
                 "agent_run.phase_changed",
                 "implementation_run.phase_changed",
                 "brainstorming_session.phase_changed",
+                "memory.extraction_run.phase_changed",
             }
         ]
         for index, event in enumerate(phase_events, start=1):
@@ -840,6 +916,18 @@ class SQLiteStore:
             data[key] = json.loads(data[key])
         data["approval_required"] = bool(data["approval_required"])
         return data
+
+    def list_work_packages_by_session(self, session_id: str) -> list[dict[str, Any]]:
+        with self._connect() as db:
+            rows = db.execute(
+                """
+                SELECT id FROM work_packages
+                WHERE session_id=?
+                ORDER BY created_at DESC
+                """,
+                (session_id,),
+            ).fetchall()
+        return [self.get_work_package(row["id"]) for row in rows]
 
     def create_implementation_run(
         self,
@@ -1192,6 +1280,606 @@ class SQLiteStore:
         data["findings"] = json.loads(data["findings"])
         data["residual_risks"] = json.loads(data["residual_risks"])
         return data
+
+    def get_verification_run_by_id(self, verification_run_id: str) -> dict[str, Any]:
+        with self._connect() as db:
+            row = db.execute(
+                "SELECT * FROM verification_runs WHERE id=?",
+                (verification_run_id,),
+            ).fetchone()
+        if row is None:
+            raise KeyError(verification_run_id)
+        return dict(row)
+
+    def create_memory_extraction_run(
+        self,
+        *,
+        project_id: str,
+        session_id: str,
+        source_type: str,
+        source_id: str,
+        trace_id: str | None = None,
+    ) -> MemoryExtractionRun:
+        now = utc_now()
+        item = MemoryExtractionRun(
+            id=new_id("memrun"),
+            project_id=project_id,
+            session_id=session_id,
+            source_type=source_type,  # type: ignore[arg-type]
+            source_id=source_id,
+            status="queued",
+            candidate_count=0,
+            created_memory_count=0,
+            trace_id=trace_id,
+            created_at=now,
+            updated_at=now,
+        )
+        with self._connect() as db:
+            db.execute(
+                "INSERT INTO memory_extraction_runs VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    item.id,
+                    item.project_id,
+                    item.session_id,
+                    item.source_type,
+                    item.source_id,
+                    item.status,
+                    item.candidate_count,
+                    item.created_memory_count,
+                    item.trace_id,
+                    item.created_at,
+                    item.updated_at,
+                ),
+            )
+        return item
+
+    def update_memory_extraction_run(
+        self,
+        extraction_run_id: str,
+        *,
+        status: str | None = None,
+        candidate_count: int | None = None,
+        created_memory_count: int | None = None,
+        trace_id: str | None = None,
+    ) -> None:
+        updates: dict[str, Any] = {"updated_at": utc_now()}
+        if status is not None:
+            updates["status"] = status
+        if candidate_count is not None:
+            updates["candidate_count"] = candidate_count
+        if created_memory_count is not None:
+            updates["created_memory_count"] = created_memory_count
+        if trace_id is not None:
+            updates["trace_id"] = trace_id
+        assignments = ", ".join(f"{key}=?" for key in updates)
+        with self._connect() as db:
+            db.execute(
+                f"UPDATE memory_extraction_runs SET {assignments} WHERE id=?",
+                (*updates.values(), extraction_run_id),
+            )
+
+    def get_memory_extraction_run(self, extraction_run_id: str) -> dict[str, Any]:
+        with self._connect() as db:
+            row = db.execute(
+                "SELECT * FROM memory_extraction_runs WHERE id=?",
+                (extraction_run_id,),
+            ).fetchone()
+        if row is None:
+            raise KeyError(extraction_run_id)
+        return dict(row)
+
+    def create_memory_candidate(
+        self,
+        *,
+        extraction_run_id: str,
+        candidate: dict[str, Any],
+    ) -> MemoryCandidate:
+        if not candidate.get("source_links"):
+            raise ValueError("MemoryCandidate requires at least one source link")
+        item = MemoryCandidate(
+            id=new_id("memcand"),
+            extraction_run_id=extraction_run_id,
+            type=candidate["type"],
+            title=candidate["title"],
+            summary=candidate["summary"],
+            body=candidate["body"],
+            tags=list(candidate.get("tags") or []),
+            importance=candidate.get("importance", "medium"),
+            confidence=float(candidate.get("confidence", 0.7)),
+            source_links=list(candidate["source_links"]),
+            status="pending",
+            created_at=utc_now(),
+        )
+        with self._connect() as db:
+            db.execute(
+                "INSERT INTO memory_candidates VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    item.id,
+                    item.extraction_run_id,
+                    item.type,
+                    item.title,
+                    item.summary,
+                    item.body,
+                    json.dumps(item.tags, ensure_ascii=False),
+                    item.importance,
+                    item.confidence,
+                    json.dumps(item.source_links, ensure_ascii=False),
+                    item.status,
+                    item.created_at,
+                ),
+            )
+        return item
+
+    def update_memory_candidate_status(self, candidate_id: str, status: str) -> None:
+        with self._connect() as db:
+            db.execute(
+                "UPDATE memory_candidates SET status=? WHERE id=?",
+                (status, candidate_id),
+            )
+
+    def get_memory_candidate(self, candidate_id: str) -> dict[str, Any]:
+        with self._connect() as db:
+            row = db.execute("SELECT * FROM memory_candidates WHERE id=?", (candidate_id,)).fetchone()
+        if row is None:
+            raise KeyError(candidate_id)
+        return self._decode_memory_candidate(dict(row))
+
+    def create_memory_item(
+        self,
+        *,
+        project_id: str,
+        memory_type: str,
+        title: str,
+        summary: str,
+        body: str,
+        tags: list[str],
+        importance: str,
+        confidence: float,
+        created_by: str,
+        source_links: list[dict[str, Any]],
+    ) -> ProjectMemoryItem:
+        if not source_links:
+            raise ValueError("ProjectMemoryItem requires at least one source link")
+        now = utc_now()
+        item = ProjectMemoryItem(
+            id=new_id("mem"),
+            project_id=project_id,
+            type=memory_type,  # type: ignore[arg-type]
+            title=title,
+            summary=summary,
+            body=body,
+            tags=list(tags),
+            status="active",
+            importance=importance,
+            confidence=float(confidence),
+            created_by=created_by,  # type: ignore[arg-type]
+            source_count=len(source_links),
+            last_used_at=None,
+            created_at=now,
+            updated_at=now,
+        )
+        links = [
+            MemorySourceLink(
+                id=new_id("memsrc"),
+                memory_item_id=item.id,
+                source_type=link["source_type"],
+                source_id=link.get("source_id") or item.id,
+                relation=link.get("relation", "derived_from"),
+                created_at=now,
+            )
+            for link in source_links
+        ]
+        with self._connect() as db:
+            db.execute(
+                "INSERT INTO project_memory_items VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    item.id,
+                    item.project_id,
+                    item.type,
+                    item.title,
+                    item.summary,
+                    item.body,
+                    json.dumps(item.tags, ensure_ascii=False),
+                    item.status,
+                    item.importance,
+                    item.confidence,
+                    item.created_by,
+                    item.source_count,
+                    item.last_used_at,
+                    item.created_at,
+                    item.updated_at,
+                ),
+            )
+            db.executemany(
+                "INSERT INTO memory_source_links VALUES (?, ?, ?, ?, ?, ?)",
+                [
+                    (
+                        link.id,
+                        link.memory_item_id,
+                        link.source_type,
+                        link.source_id,
+                        link.relation,
+                        link.created_at,
+                    )
+                    for link in links
+                ],
+            )
+            self._upsert_memory_index(db, item.id)
+        return item
+
+    def update_memory_item(self, memory_item_id: str, **updates: Any) -> dict[str, Any]:
+        allowed = {"title", "summary", "body", "tags", "status", "importance", "confidence"}
+        normalized: dict[str, Any] = {"updated_at": utc_now()}
+        for key, value in updates.items():
+            if key not in allowed or value is None:
+                continue
+            normalized[key] = json.dumps(value, ensure_ascii=False) if key == "tags" else value
+        if len(normalized) == 1:
+            return self.get_memory_item(memory_item_id)
+        assignments = ", ".join(f"{key}=?" for key in normalized)
+        with self._connect() as db:
+            db.execute(
+                f"UPDATE project_memory_items SET {assignments} WHERE id=?",
+                (*normalized.values(), memory_item_id),
+            )
+            self._upsert_memory_index(db, memory_item_id)
+        return self.get_memory_item(memory_item_id)
+
+    def get_memory_item(self, memory_item_id: str) -> dict[str, Any]:
+        with self._connect() as db:
+            row = db.execute(
+                "SELECT * FROM project_memory_items WHERE id=?",
+                (memory_item_id,),
+            ).fetchone()
+        if row is None:
+            raise KeyError(memory_item_id)
+        item = self._decode_memory_item(dict(row))
+        item["source_links"] = self.list_memory_source_links(memory_item_id)
+        return item
+
+    def list_memory_source_links(self, memory_item_id: str) -> list[dict[str, Any]]:
+        with self._connect() as db:
+            rows = db.execute(
+                """
+                SELECT * FROM memory_source_links
+                WHERE memory_item_id=?
+                ORDER BY created_at ASC, id ASC
+                """,
+                (memory_item_id,),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def find_memory_by_source(
+        self,
+        *,
+        project_id: str,
+        memory_type: str,
+        source_type: str,
+        source_id: str,
+        status: str = "active",
+    ) -> dict[str, Any] | None:
+        with self._connect() as db:
+            row = db.execute(
+                """
+                SELECT m.id
+                FROM project_memory_items m
+                JOIN memory_source_links s ON s.memory_item_id=m.id
+                WHERE m.project_id=? AND m.type=? AND m.status=?
+                  AND s.source_type=? AND s.source_id=?
+                ORDER BY m.created_at DESC
+                LIMIT 1
+                """,
+                (project_id, memory_type, status, source_type, source_id),
+            ).fetchone()
+        return self.get_memory_item(row["id"]) if row else None
+
+    def list_memory_items(
+        self,
+        *,
+        project_id: str,
+        memory_type: str | None = None,
+        status: str | None = "active",
+        tag: str | None = None,
+        source_type: str | None = None,
+        source_id: str | None = None,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        clauses = ["m.project_id=?"]
+        params: list[Any] = [project_id]
+        joins = ""
+        if memory_type:
+            clauses.append("m.type=?")
+            params.append(memory_type)
+        if status:
+            clauses.append("m.status=?")
+            params.append(status)
+        if tag:
+            clauses.append("m.tags LIKE ?")
+            params.append(f"%{tag}%")
+        if source_type or source_id:
+            joins = "JOIN memory_source_links s ON s.memory_item_id=m.id"
+            if source_type:
+                clauses.append("s.source_type=?")
+                params.append(source_type)
+            if source_id:
+                clauses.append("s.source_id=?")
+                params.append(source_id)
+        params.append(max(1, min(limit, 200)))
+        with self._connect() as db:
+            rows = db.execute(
+                f"""
+                SELECT DISTINCT m.*
+                FROM project_memory_items m
+                {joins}
+                WHERE {" AND ".join(clauses)}
+                ORDER BY m.updated_at DESC, m.created_at DESC
+                LIMIT ?
+                """,
+                params,
+            ).fetchall()
+        return [self.get_memory_item(row["id"]) for row in rows]
+
+    def search_memory_items(
+        self,
+        *,
+        project_id: str,
+        query: str = "",
+        memory_type: str | None = None,
+        status: str | None = "active",
+        tag: str | None = None,
+        source_type: str | None = None,
+        source_id: str | None = None,
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        query = query.strip()
+        if not query:
+            items = self.list_memory_items(
+                project_id=project_id,
+                memory_type=memory_type,
+                status=status,
+                tag=tag,
+                source_type=source_type,
+                source_id=source_id,
+                limit=limit,
+            )
+            return [self._memory_search_result(item, query, 0.0) for item in items]
+
+        tokens = [token for token in re.findall(r"[A-Za-z0-9_]+", query) if token]
+        if not tokens:
+            return []
+        fts_query = " OR ".join(tokens)
+        clauses = ["memory_items_fts.project_id=?", "memory_items_fts MATCH ?"]
+        params: list[Any] = [project_id, fts_query]
+        if memory_type:
+            clauses.append("m.type=?")
+            params.append(memory_type)
+        if status:
+            clauses.append("m.status=?")
+            params.append(status)
+        if tag:
+            clauses.append("m.tags LIKE ?")
+            params.append(f"%{tag}%")
+        if source_type or source_id:
+            if source_type:
+                clauses.append(
+                    "EXISTS (SELECT 1 FROM memory_source_links s WHERE s.memory_item_id=m.id AND s.source_type=?)"
+                )
+                params.append(source_type)
+            if source_id:
+                clauses.append(
+                    "EXISTS (SELECT 1 FROM memory_source_links s WHERE s.memory_item_id=m.id AND s.source_id=?)"
+                )
+                params.append(source_id)
+        params.append(max(1, min(limit, 200)))
+        try:
+            with self._connect() as db:
+                rows = db.execute(
+                    f"""
+                    SELECT m.*, bm25(memory_items_fts) AS score
+                    FROM memory_items_fts
+                    JOIN project_memory_items m ON m.id=memory_items_fts.memory_item_id
+                    WHERE {" AND ".join(clauses)}
+                    ORDER BY CASE WHEN m.status='active' THEN 0 ELSE 1 END,
+                             score ASC,
+                             m.updated_at DESC
+                    LIMIT ?
+                    """,
+                    params,
+                ).fetchall()
+        except sqlite3.OperationalError:
+            return self._fallback_memory_search(
+                project_id=project_id,
+                query=query,
+                memory_type=memory_type,
+                status=status,
+                tag=tag,
+                source_type=source_type,
+                source_id=source_id,
+                limit=limit,
+            )
+        return [
+            self._memory_search_result(
+                {**self._decode_memory_item(dict(row)), "source_links": self.list_memory_source_links(row["id"])},
+                query,
+                float(row["score"]),
+            )
+            for row in rows
+        ]
+
+    def add_selected_memory(self, *, session_id: str, memory_item_id: str) -> dict[str, Any]:
+        item = self.get_memory_item(memory_item_id)
+        if item["status"] != "active":
+            raise ValueError("Archived or superseded memory cannot be selected")
+        snapshot = {
+            "id": item["id"],
+            "type": item["type"],
+            "title": item["title"],
+            "summary": item["summary"],
+            "body": item["body"],
+            "tags": item["tags"],
+            "source_links": item["source_links"],
+        }
+        now = utc_now()
+        with self._connect() as db:
+            db.execute(
+                """
+                INSERT OR REPLACE INTO selected_memory_context
+                VALUES (?, ?, ?, ?)
+                """,
+                (session_id, memory_item_id, json.dumps(snapshot, ensure_ascii=False), now),
+            )
+            db.execute(
+                "UPDATE project_memory_items SET last_used_at=?, updated_at=? WHERE id=?",
+                (now, now, memory_item_id),
+            )
+            self._upsert_memory_index(db, memory_item_id)
+        selected = {"session_id": session_id, "memory_item_id": memory_item_id, "snapshot": snapshot, "created_at": now}
+        return selected
+
+    def list_selected_memory(self, session_id: str) -> list[dict[str, Any]]:
+        with self._connect() as db:
+            rows = db.execute(
+                """
+                SELECT * FROM selected_memory_context
+                WHERE session_id=?
+                ORDER BY created_at DESC
+                """,
+                (session_id,),
+            ).fetchall()
+        selected: list[dict[str, Any]] = []
+        for row in rows:
+            item = dict(row)
+            item["snapshot"] = json.loads(item["snapshot"])
+            selected.append(item)
+        return selected
+
+    def remove_selected_memory(self, *, session_id: str, memory_item_id: str) -> None:
+        with self._connect() as db:
+            db.execute(
+                "DELETE FROM selected_memory_context WHERE session_id=? AND memory_item_id=?",
+                (session_id, memory_item_id),
+            )
+
+    def list_session_events(self, session_id: str) -> list[dict[str, Any]]:
+        if not self.event_log_path.exists():
+            return []
+        events: list[dict[str, Any]] = []
+        with self.event_log_path.open("r", encoding="utf-8") as fh:
+            for line in fh:
+                event = json.loads(line)
+                if event.get("session_id") == session_id:
+                    events.append(event)
+        return events
+
+    def _upsert_memory_index(self, db: sqlite3.Connection, memory_item_id: str) -> None:
+        row = db.execute(
+            "SELECT * FROM project_memory_items WHERE id=?",
+            (memory_item_id,),
+        ).fetchone()
+        if row is None:
+            return
+        item = self._decode_memory_item(dict(row))
+        source_rows = db.execute(
+            "SELECT source_type, source_id, relation FROM memory_source_links WHERE memory_item_id=?",
+            (memory_item_id,),
+        ).fetchall()
+        source_labels = " ".join(
+            f"{row['source_type']} {row['source_id']} {row['relation']}" for row in source_rows
+        )
+        db.execute("DELETE FROM memory_items_fts WHERE memory_item_id=?", (memory_item_id,))
+        db.execute(
+            """
+            INSERT INTO memory_items_fts (
+              memory_item_id,
+              project_id,
+              type,
+              status,
+              title,
+              summary,
+              body,
+              tags,
+              source_labels
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                item["id"],
+                item["project_id"],
+                item["type"],
+                item["status"],
+                item["title"],
+                item["summary"],
+                item["body"],
+                " ".join(item["tags"]),
+                source_labels,
+            ),
+        )
+
+    def _decode_memory_item(self, data: dict[str, Any]) -> dict[str, Any]:
+        data["tags"] = json.loads(data["tags"])
+        data["confidence"] = float(data["confidence"])
+        return data
+
+    def _decode_memory_candidate(self, data: dict[str, Any]) -> dict[str, Any]:
+        data["tags"] = json.loads(data["tags"])
+        data["source_links"] = json.loads(data["source_links"])
+        data["confidence"] = float(data["confidence"])
+        return data
+
+    def _memory_search_result(
+        self,
+        item: dict[str, Any],
+        query: str,
+        score: float,
+    ) -> dict[str, Any]:
+        lowered = query.lower()
+        matched_fields = [
+            field
+            for field in ("title", "summary", "body")
+            if lowered and lowered in str(item.get(field, "")).lower()
+        ]
+        if lowered and any(lowered in tag.lower() for tag in item.get("tags", [])):
+            matched_fields.append("tags")
+        snippet_source = item["summary"] or item["body"]
+        return {
+            "item": item,
+            "score": score,
+            "matched_fields": matched_fields,
+            "source_links": item.get("source_links", []),
+            "snippet": snippet_source[:220],
+        }
+
+    def _fallback_memory_search(
+        self,
+        *,
+        project_id: str,
+        query: str,
+        memory_type: str | None,
+        status: str | None,
+        tag: str | None,
+        source_type: str | None,
+        source_id: str | None,
+        limit: int,
+    ) -> list[dict[str, Any]]:
+        candidates = self.list_memory_items(
+            project_id=project_id,
+            memory_type=memory_type,
+            status=status,
+            tag=tag,
+            source_type=source_type,
+            source_id=source_id,
+            limit=200,
+        )
+        lowered = query.lower()
+        results = [
+            item
+            for item in candidates
+            if lowered in item["title"].lower()
+            or lowered in item["summary"].lower()
+            or lowered in item["body"].lower()
+            or any(lowered in tag_value.lower() for tag_value in item["tags"])
+        ][:limit]
+        return [self._memory_search_result(item, query, 1.0) for item in results]
 
     def create_brainstorming_session(
         self,

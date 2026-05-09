@@ -46,6 +46,29 @@ BrainstormingSessionStatus = Literal[
     "canceled",
 ]
 DecisionBriefStatus = Literal["pending", "accepted", "rejected"]
+MemoryType = Literal["decision", "session_summary", "project_rule", "failure", "work_note"]
+MemoryStatus = Literal["active", "archived", "superseded"]
+MemoryCreatedBy = Literal["user", "system", "agent"]
+MemorySourceType = Literal[
+    "decision_record",
+    "brainstorming_session",
+    "work_package",
+    "implementation_run",
+    "verification_run",
+    "review_result",
+    "session",
+    "manual",
+]
+MemoryRelation = Literal["derived_from", "supports", "contradicts", "supersedes", "follows_up"]
+MemoryExtractionStatus = Literal[
+    "queued",
+    "running",
+    "candidate_ready",
+    "completed",
+    "failed",
+    "canceled",
+]
+MemoryCandidateStatus = Literal["pending", "accepted", "rejected"]
 
 
 def utc_now() -> str:
@@ -401,6 +424,78 @@ class DecisionRecord:
     consequences: list[str]
     follow_up_actions: list[str]
     linked_work_package_id: str | None
+    created_at: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
+class ProjectMemoryItem:
+    id: str
+    project_id: str
+    type: MemoryType
+    title: str
+    summary: str
+    body: str
+    tags: list[str]
+    status: MemoryStatus
+    importance: str
+    confidence: float
+    created_by: MemoryCreatedBy
+    source_count: int
+    last_used_at: str | None
+    created_at: str
+    updated_at: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
+class MemorySourceLink:
+    id: str
+    memory_item_id: str
+    source_type: MemorySourceType
+    source_id: str
+    relation: MemoryRelation
+    created_at: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
+class MemoryExtractionRun:
+    id: str
+    project_id: str
+    session_id: str
+    source_type: MemorySourceType
+    source_id: str
+    status: MemoryExtractionStatus
+    candidate_count: int
+    created_memory_count: int
+    trace_id: str | None
+    created_at: str
+    updated_at: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
+class MemoryCandidate:
+    id: str
+    extraction_run_id: str
+    type: MemoryType
+    title: str
+    summary: str
+    body: str
+    tags: list[str]
+    importance: str
+    confidence: float
+    source_links: list[dict[str, Any]]
+    status: MemoryCandidateStatus
     created_at: str
 
     def to_dict(self) -> dict[str, Any]:

@@ -319,11 +319,178 @@ textarea:focus {
   margin-top: 16px;
 }
 
+.memory-panel {
+  margin-top: 16px;
+}
+
 .brainstorming-compose {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 220px 200px;
   gap: 12px;
   align-items: end;
+}
+
+.memory-toolbar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 180px 160px auto;
+  gap: 12px;
+  align-items: end;
+}
+
+.memory-tabs,
+.memory-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.memory-tabs .tab-button {
+  flex: 0 1 auto;
+}
+
+.project-rule-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 12px;
+  align-items: end;
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid #d7dfdb;
+}
+
+.project-rule-form label:nth-child(3) {
+  grid-column: 1 / -1;
+}
+
+.memory-layout {
+  display: grid;
+  grid-template-columns: minmax(260px, 0.8fr) minmax(0, 1.2fr);
+  gap: 14px;
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid #d7dfdb;
+}
+
+.memory-list {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+}
+
+.memory-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  min-height: 58px;
+  padding: 10px;
+  color: #26302c;
+  background: #fbfdfc;
+  border: 1px solid #d7dfdb;
+  border-radius: 8px;
+  text-align: left;
+}
+
+.memory-row.selected {
+  border-color: #31795f;
+  background: #edf7f1;
+}
+
+.memory-row strong,
+.memory-row span {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.memory-row span {
+  color: #60706a;
+  font-size: 12px;
+  margin-top: 3px;
+}
+
+.memory-detail {
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid #d7dfdb;
+  border-radius: 8px;
+  background: #fbfdfc;
+}
+
+.memory-detail h2 {
+  margin: 0;
+  font-size: 17px;
+  line-height: 1.2;
+}
+
+.memory-detail p {
+  margin: 0 0 10px;
+  color: #465550;
+  line-height: 1.45;
+}
+
+.memory-detail pre {
+  max-height: 240px;
+  margin: 0;
+  overflow: auto;
+  padding: 10px;
+  color: #1f3a2f;
+  background: #eef4f0;
+  border-radius: 7px;
+  font-size: 12px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+}
+
+.tag-row,
+.selected-memory-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.tag-row span,
+.selected-memory-strip > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 26px;
+  padding: 0 9px;
+  border-radius: 999px;
+  color: #2d4f41;
+  background: #e7eee9;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.selected-memory-strip {
+  align-items: center;
+  padding-top: 12px;
+  border-top: 1px solid #d7dfdb;
+}
+
+.selected-memory-strip strong {
+  margin-right: 4px;
+  font-size: 13px;
+}
+
+.selected-memory-strip small {
+  color: #60706a;
+}
+
+.selected-memory-strip button {
+  display: inline-grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  color: #3e4c47;
+  background: transparent;
 }
 
 .brainstorming-compose textarea {
@@ -591,6 +758,10 @@ textarea:focus {
 .status-pill.approved,
 .status-pill.applied,
 .status-pill.accepted,
+.status-pill.active,
+.status-pill.decision,
+.status-pill.project_rule,
+.status-pill.session_summary,
 .status-pill.supportive,
 .status-pill.pass,
 .status-pill.passed,
@@ -625,6 +796,8 @@ textarea:focus {
 .status-pill.opposed,
 .status-pill.blocked,
 .status-pill.needs_changes,
+.status-pill.archived,
+.status-pill.failure,
 .status-badge.offline {
   color: #a23421;
   background: #fff0ec;
@@ -788,7 +961,10 @@ textarea:focus {
   }
 
   .brainstorming-compose,
-  .brainstorming-grid {
+  .brainstorming-grid,
+  .memory-toolbar,
+  .memory-layout,
+  .project-rule-form {
     grid-template-columns: 1fr;
   }
 

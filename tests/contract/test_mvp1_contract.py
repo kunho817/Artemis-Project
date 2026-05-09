@@ -12,6 +12,7 @@ from services.agent_backend.app.schemas import (
     BrainstormingContributionDraft,
     BrainstormingOptionDraft,
     DecisionBriefDraft,
+    MemoryCandidateDraft,
     RiskHint,
     WorkPackageCandidateRequest,
     WorkPackageDraft,
@@ -568,6 +569,204 @@ class MVP1ContractTests(unittest.TestCase):
                 source_result["brainstorming_session"]["source_id"],
                 converted["work_package"]["id"],
             )
+
+    def test_mvp5_memory_schema_manual_search_and_selected_context(self) -> None:
+        candidate = MemoryCandidateDraft(
+            type="project_rule",
+            title="GUI calls Control Plane only",
+            summary="The GUI must use Control Plane APIs.",
+            body="All GUI actions go through Control Plane APIs.",
+            tags=["architecture", "gui"],
+            importance="high",
+            confidence=1.0,
+            source_links=[
+                {
+                    "source_type": "manual",
+                    "source_id": "manual-input",
+                    "relation": "derived_from",
+                }
+            ],
+        )
+        self.assertEqual(candidate.validate(), [])
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            project_root = root / "project"
+            project_root.mkdir()
+            store = SQLiteStore(root / "artemis.db", root / "events.jsonl")
+            service = ControlPlaneService(store, agent_backend=InProcessAgentBackendClient())
+            project = service.open_project(name="test", root_path=str(project_root))
+            session = service.create_session(project_id=project["id"], title="MVP5 memory")
+
+            item = service.create_manual_memory_item(
+                project_id=project["id"],
+                payload={
+                    "type": "project_rule",
+                    "title": "GUI calls Control Plane only",
+                    "summary": "The GUI must use Control Plane APIs.",
+                    "body": "All GUI actions go through Control Plane APIs.",
+                    "tags": ["architecture", "gui", "control-plane"],
+                    "importance": "high",
+                    "session_id": session["id"],
+                },
+            )
+            self.assertEqual(item["type"], "project_rule")
+            self.assertEqual(item["status"], "active")
+            self.assertEqual(item["source_links"][0]["source_type"], "manual")
+
+            results = store.search_memory_items(project_id=project["id"], query="Control Plane")
+            self.assertEqual(results[0]["item"]["id"], item["id"])
+            self.assertIn("source_links", results[0])
+
+            selected = service.select_memory_for_session(
+                session_id=session["id"],
+                memory_item_id=item["id"],
+            )
+            self.assertEqual(selected["snapshot"]["id"], item["id"])
+            context_payload = service.selected_memory_context_payload(session_id=session["id"])
+            self.assertEqual(context_payload["source_context"][0]["id"], item["id"])
+
+            service.unselect_memory_for_session(
+                session_id=session["id"],
+                memory_item_id=item["id"],
+            )
+            self.assertEqual(service.selected_memory_context_payload(session_id=session["id"])["source_context"], [])
+
+            archived = service.archive_memory_item(memory_item_id=item["id"])
+            self.assertEqual(archived["status"], "archived")
+            self.assertEqual(
+                store.search_memory_items(project_id=project["id"], query="Control Plane"),
+                [],
+            )
+            with self.assertRaises(ValueError):
+                service.select_memory_for_session(
+                    session_id=session["id"],
+                    memory_item_id=item["id"],
+                )
+            restored = service.restore_memory_item(memory_item_id=item["id"])
+            self.assertEqual(restored["status"], "active")
+
+            with self.assertRaises(ValueError):
+                service.create_manual_memory_item(
+                    project_id=project["id"],
+                    payload={
+                        "type": "project_rule",
+                        "title": "Bad",
+                        "summary": "Contains secret marker",
+                        "body": "password should not be stored",
+                    },
+                )
+
+    def test_mvp5_decision_session_and_failure_memory_contract(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            project_root = root / "project"
+            project_root.mkdir()
+            (project_root / "README.md").write_text("Artemis MVP 5 project", encoding="utf-8")
+            store = SQLiteStore(root / "artemis.db", root / "events.jsonl")
+            service = ControlPlaneService(store, agent_backend=InProcessAgentBackendClient())
+            project = service.open_project(name="test", root_path=str(project_root))
+            session = service.create_session(project_id=project["id"], title="MVP5 contract")
+
+            brainstorming = service.create_brainstorming_session(
+                project=project,
+                session=session,
+                topic="Decide the MVP 5 Memory slice.",
+            )
+            accepted = service.resolve_decision_brief(
+                brainstorming_session_id=brainstorming["brainstorming_session"]["id"],
+                decision_brief_id=brainstorming["decision_brief"]["id"],
+                status="accepted",
+                note="Promote this decision to memory.",
+            )
+            record = accepted["decision_record"]
+            decision_memory = service.promote_decision_record_to_memory(
+                decision_record_id=record["id"],
+            )
+            duplicate = service.promote_decision_record_to_memory(
+                decision_record_id=record["id"],
+            )
+            self.assertEqual(decision_memory["id"], duplicate["id"])
+            self.assertEqual(decision_memory["type"], "decision")
+            self.assertEqual(
+                store.find_memory_by_source(
+                    project_id=project["id"],
+                    memory_type="decision",
+                    source_type="decision_record",
+                    source_id=record["id"],
+                )["id"],
+                decision_memory["id"],
+            )
+
+            summary = service.create_session_memory_summary(session_id=session["id"])
+            self.assertEqual(summary["status"], "completed")
+            self.assertEqual(summary["memory_item"]["type"], "session_summary")
+
+            work_package_result = service.create_work_package_from_request(
+                project=project,
+                session=session,
+                user_request="Create an MVP 5 failure memory Work Package.",
+            )
+            service.resolve_approval(
+                approval_id=work_package_result["approval_id"],
+                status="approved",
+            )
+            implementation_run = store.create_implementation_run(
+                project_id=project["id"],
+                session_id=session["id"],
+                work_package_id=work_package_result["work_package_id"],
+            )
+            review = store.create_review_result(
+                implementation_run_id=implementation_run.id,
+                review={
+                    "status": "needs_changes",
+                    "findings": ["Verification failed."],
+                    "residual_risks": ["Regression risk remains."],
+                    "recommendation": "Create a follow-up fix before closing.",
+                },
+            )
+            failure = service.promote_review_result_failure_memory(review_result_id=review.id)
+            self.assertEqual(failure["type"], "failure")
+            self.assertEqual(failure["source_links"][0]["source_type"], "review_result")
+
+            passed = store.create_review_result(
+                implementation_run_id=implementation_run.id,
+                review={
+                    "status": "pass",
+                    "findings": ["All checks passed."],
+                    "residual_risks": [],
+                    "recommendation": "No failure memory required.",
+                },
+            )
+            with self.assertRaises(ValueError):
+                service.promote_review_result_failure_memory(review_result_id=passed.id)
+
+            verification = store.create_verification_run(
+                implementation_run_id=implementation_run.id,
+                command="python -m unittest discover -s tests",
+                status="failed",
+                exit_code=1,
+                stdout="",
+                stderr="failure",
+            )
+            verification_failure = service.promote_verification_failure_memory(
+                verification_run_id=verification.id,
+            )
+            self.assertEqual(verification_failure["type"], "failure")
+
+            failure_results = store.search_memory_items(
+                project_id=project["id"],
+                query="failure",
+                memory_type="failure",
+            )
+            self.assertGreaterEqual(len(failure_results), 1)
+
+            extraction_events = [
+                event
+                for event in store.list_session_events(session["id"])
+                if event["type"] == "memory.item.created"
+            ]
+            self.assertGreaterEqual(len(extraction_events), 3)
 
 
 if __name__ == "__main__":
