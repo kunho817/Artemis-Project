@@ -21,6 +21,7 @@ D:\Artemis_Project\
 │   ├── artemis_mvp2.md
 │   ├── artemis_mvp3.md
 │   ├── artemis_mvp4.md
+│   ├── artemis_mvp5.md
 │   ├── architecture.md
 │   ├── configuration.md
 │   ├── getting-started.md
@@ -139,6 +140,7 @@ Each mapping can be overridden with `ARTEMIS_GLM_MODEL_<ROLE>`.
 - [x] MVP 4 verification passed: `.venv` compileall, full unittest, FastAPI smoke, GUI build, npm audit, and `scripts/smoke_mvp4_gui.py`.
 - [x] MVP 4 verification rerun passed: `.venv` compileall, full unittest, FastAPI smoke, GUI build, npm audit, and `scripts/smoke_mvp4_gui.py`.
 - [x] MVP 4 planning-side revalidation passed: Brainstorming Room and Decision Record structure, API/GUI boundaries, safety policy, contracts, FastAPI smoke, GUI build/audit, and GUI e2e smoke were rechecked.
+- [x] MVP 5 Memory / Decision Log design document created at `docs/artemis_mvp5.md`.
 
 ### Pending
 
@@ -168,6 +170,7 @@ Each mapping can be overridden with `ARTEMIS_GLM_MODEL_<ROLE>`.
 | #55 | 2026-05-09 | MVP 4 implementation session completed the Brainstorming Room vertical slice. Added Agent Backend brainstorming execution, Control Plane Brainstorming/Decision storage and APIs, GUI Brainstorming Room, DecisionBrief accept/reject, accepted DecisionRecord to pending-approval Work Package conversion, backend contracts, and `scripts/smoke_mvp4_gui.py`; verification passed with compileall, full unittest, FastAPI smoke, GUI build, npm audit, and MVP 4 GUI e2e smoke. |
 | #56 | 2026-05-09 | MVP 4 verification rerun completed. Rechecked Brainstorming Room and Decision Record implementation coverage against `docs/artemis_mvp4.md`; `.venv` compileall, full unittest, FastAPI smoke, GUI build, npm audit, and `scripts/smoke_mvp4_gui.py` passed. |
 | #57 | 2026-05-09 | Planning-side MVP 4 revalidation completed. Rechecked `docs/artemis_mvp4.md` completion conditions against Control Plane, Agent Backend, GUI, contract tests, and smoke scripts; compileall, full unittest, FastAPI smoke, GUI build, npm audit, and MVP 4 GUI e2e smoke passed again. |
+| #58 | 2026-05-09 | Planning session created MVP 5 design document. MVP 5 scope fixed as local-first Memory / Decision Log: ProjectMemoryItem, source-linked memory, DecisionRecord promotion, Project Rules, Session Summary, Failure Memory, SQLite/FTS search, selected memory context, and GUI Memory View, with vector DB, external embeddings, automatic RAG, hidden context injection, file writes, and command execution excluded. |
 
 ## Session Rules
 
