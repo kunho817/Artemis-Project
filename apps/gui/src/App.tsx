@@ -19,6 +19,9 @@ import type {
   AgentRun,
   AgentRunResult,
   BackendStatus,
+  BrainstormingMode,
+  BrainstormingResult,
+  BrainstormingSourceType,
   EventRecord,
   ImplementationRunResult,
   Project,
@@ -75,6 +78,48 @@ const IMPLEMENTATION_SSE_EVENT_TYPES = [
   "artifact.created",
   "trace.step_recorded"
 ];
+const BRAINSTORMING_SSE_EVENT_TYPES = [
+  "brainstorming_session.created",
+  "brainstorming_session.started",
+  "brainstorming_session.phase_changed",
+  "brainstorming_session.completed",
+  "brainstorming_session.failed",
+  "brainstorming_session.canceled",
+  "brainstorming.context_collected",
+  "brainstorming.roles_selected",
+  "brainstorming.role_started",
+  "brainstorming.role_completed",
+  "brainstorming.role_failed",
+  "brainstorming.critique_created",
+  "brainstorming.option_created",
+  "brainstorming.decision_brief_created",
+  "brainstorming.validation_passed",
+  "brainstorming.validation_failed",
+  "decision_record.accepted",
+  "decision_record.rejected",
+  "decision_record.created",
+  "work_package.conversion_requested",
+  "work_package.conversion_completed",
+  "work_package.pending_approval",
+  "artifact.created",
+  "trace.linked",
+  "trace.step_recorded"
+];
+const BRAINSTORMING_TERMINAL_STATES = new Set([
+  "awaiting_decision",
+  "accepted",
+  "rejected",
+  "converted",
+  "failed",
+  "canceled"
+]);
+const BRAINSTORMING_ROLES = [
+  "product_planner",
+  "system_architect",
+  "implementation_planner",
+  "risk_reviewer",
+  "devil_advocate"
+];
 
 export function App() {
   const [backendStatus, setBackendStatus] = useState<BackendStatus>("checking");
@@ -95,16 +140,32 @@ export function App() {
     null
   );
   const [implementationEvents, setImplementationEvents] = useState<EventRecord[]>([]);
+  const [brainstormingTopic, setBrainstormingTopic] = useState(
+    "Review MVP 4 Brainstorming Room scope and conversion path."
+  );
+  const [brainstormingMode, setBrainstormingMode] =
+    useState<BrainstormingMode>("architecture_debate");
+  const [brainstormingSourceType, setBrainstormingSourceType] =
+    useState<BrainstormingSourceType>("topic");
+  const [selectedBrainstormingRoles, setSelectedBrainstormingRoles] = useState<string[]>([
+    "product_planner",
+    "system_architect",
+    "implementation_planner",
+    "risk_reviewer"
+  ]);
+  const [brainstormingResult, setBrainstormingResult] = useState<BrainstormingResult | null>(null);
+  const [brainstormingEvents, setBrainstormingEvents] = useState<EventRecord[]>([]);
   const [activeTab, setActiveTab] = useState<
-    "timeline" | "trace" | "artifacts" | "implementation"
+    "timeline" | "trace" | "artifacts" | "implementation" | "brainstorming"
   >("timeline");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const lastEventIdRef = useRef<string | undefined>();
   const lastImplementationEventIdRef = useRef<string | undefined>();
+  const lastBrainstormingEventIdRef = useRef<string | undefined>();
 
   const currentStatus = agentRun?.status ?? "idle";
-  const selectedTrace = implementationResult?.trace ?? result?.trace ?? null;
+  const selectedTrace = brainstormingResult?.trace ?? implementationResult?.trace ?? result?.trace ?? null;
   const selectedArtifacts = result?.artifacts ?? [];
 
   const refreshBackend = useCallback(async () => {
@@ -153,8 +214,11 @@ export function App() {
     setResult(null);
     setImplementationResult(null);
     setImplementationEvents([]);
+    setBrainstormingResult(null);
+    setBrainstormingEvents([]);
     lastEventIdRef.current = undefined;
     lastImplementationEventIdRef.current = undefined;
+    lastBrainstormingEventIdRef.current = undefined;
   }, [currentProject?.id]);
 
   useEffect(() => {
@@ -266,6 +330,64 @@ export function App() {
       source?.close();
     };
   }, [implementationResult?.implementation_run.id]);
+
+  useEffect(() => {
+    const brainstormingSessionId = brainstormingResult?.brainstorming_session.id;
+    if (!brainstormingSessionId) return;
+    let canceled = false;
+    let source: EventSource | null = null;
+
+    const mergeBrainstormingEvents = (nextEvents: EventRecord[]) => {
+      if (!nextEvents.length) return;
+      setBrainstormingEvents((previous) => mergeEventRecords(previous, nextEvents));
+      lastBrainstormingEventIdRef.current = nextEvents[nextEvents.length - 1].id;
+    };
+
+    const refreshBrainstorming = async () => {
+      const session = await controlPlaneApi.getBrainstormingSession(brainstormingSessionId);
+      if (canceled) return;
+      if (BRAINSTORMING_TERMINAL_STATES.has(session.status)) {
+        const nextResult = await controlPlaneApi.getBrainstormingResult(brainstormingSessionId);
+        if (!canceled) setBrainstormingResult(nextResult);
+      }
+      if (!source) {
+        const nextEvents = await controlPlaneApi.listBrainstormingEvents(
+          brainstormingSessionId,
+          lastBrainstormingEventIdRef.current
+        );
+        if (!canceled) mergeBrainstormingEvents(nextEvents);
+      }
+    };
+
+    if ("EventSource" in window) {
+      source = new EventSource(controlPlaneApi.brainstormingEventStreamUrl(brainstormingSessionId));
+      const handleSse = (message: MessageEvent<string>) => {
+        try {
+          mergeBrainstormingEvents([JSON.parse(message.data) as EventRecord]);
+        } catch (err) {
+          setError(errorMessage(err));
+        }
+      };
+      for (const type of BRAINSTORMING_SSE_EVENT_TYPES) {
+        source.addEventListener(type, handleSse as EventListener);
+      }
+      source.onerror = () => {
+        source?.close();
+        source = null;
+      };
+    }
+
+    const interval = window.setInterval(() => {
+      void refreshBrainstorming().catch((err) => setError(errorMessage(err)));
+    }, 900);
+    void refreshBrainstorming().catch((err) => setError(errorMessage(err)));
+
+    return () => {
+      canceled = true;
+      window.clearInterval(interval);
+      source?.close();
+    };
+  }, [brainstormingResult?.brainstorming_session.id]);
 
   const openProject = async (event: FormEvent) => {
     event.preventDefault();
@@ -421,6 +543,114 @@ export function App() {
     }
   };
 
+  const startBrainstorming = async () => {
+    if (!currentProject || !brainstormingTopic.trim()) return;
+    setBusy(true);
+    setError(null);
+    setBrainstormingEvents([]);
+    setBrainstormingResult(null);
+    lastBrainstormingEventIdRef.current = undefined;
+    try {
+      const session = currentSession ?? (await createSession());
+      if (!session) return;
+      const sourceId =
+        brainstormingSourceType === "work_package" ? result?.work_package?.id ?? null : null;
+      const queued = await controlPlaneApi.createBrainstormingSession({
+        projectId: currentProject.id,
+        sessionId: session.id,
+        topic: brainstormingTopic.trim(),
+        mode: brainstormingMode,
+        sourceType: sourceId ? "work_package" : "topic",
+        sourceId,
+        roles: selectedBrainstormingRoles
+      });
+      setBrainstormingResult({
+        brainstorming_session: {
+          id: queued.brainstorming_session_id,
+          project_id: queued.project_id,
+          session_id: queued.session_id,
+          source_type: sourceId ? "work_package" : "topic",
+          source_id: sourceId,
+          topic: brainstormingTopic.trim(),
+          mode: brainstormingMode,
+          status: queued.status,
+          current_phase: null,
+          selected_roles: selectedBrainstormingRoles,
+          trace_id: null,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString()
+        },
+        contributions: [],
+        critiques: [],
+        options: [],
+        decision_brief: null,
+        decision_record: null,
+        trace: null,
+        events: [],
+        artifacts: []
+      });
+      setActiveTab("brainstorming");
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const resolveDecisionBrief = async (status: "accept" | "reject") => {
+    const brief = brainstormingResult?.decision_brief;
+    const brainstormingSessionId = brainstormingResult?.brainstorming_session.id;
+    if (!brief || !brainstormingSessionId) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const nextResult = await controlPlaneApi.resolveDecisionBrief(
+        brainstormingSessionId,
+        brief.id,
+        status
+      );
+      const nextEvents = await controlPlaneApi.listBrainstormingEvents(brainstormingSessionId);
+      setBrainstormingResult(nextResult);
+      setBrainstormingEvents(nextEvents);
+      lastBrainstormingEventIdRef.current = nextEvents[nextEvents.length - 1]?.id;
+      setActiveTab("brainstorming");
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const convertDecisionRecord = async () => {
+    const record = brainstormingResult?.decision_record;
+    if (!record) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await controlPlaneApi.convertDecisionRecord(record.id);
+      const nextResult = await controlPlaneApi.getBrainstormingResult(record.brainstorming_session_id);
+      const nextEvents = await controlPlaneApi.listBrainstormingEvents(record.brainstorming_session_id);
+      setBrainstormingResult(nextResult);
+      setBrainstormingEvents(nextEvents);
+      lastBrainstormingEventIdRef.current = nextEvents[nextEvents.length - 1]?.id;
+      setActiveTab("brainstorming");
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const toggleBrainstormingRole = (role: string) => {
+    setSelectedBrainstormingRoles((previous) => {
+      if (previous.includes(role)) {
+        return previous.filter((item) => item !== role);
+      }
+      if (previous.length >= 6) return previous;
+      return [...previous, role];
+    });
+  };
+
   const projectOptions = useMemo(
     () =>
       projects.map((project) => (
@@ -556,6 +786,23 @@ export function App() {
           <ApprovalPanel result={result} busy={busy} onResolve={resolveApproval} />
         </section>
 
+        <BrainstormingPanel
+          busy={busy}
+          mode={brainstormingMode}
+          result={brainstormingResult}
+          roles={selectedBrainstormingRoles}
+          sourceType={brainstormingSourceType}
+          topic={brainstormingTopic}
+          workPackage={result?.work_package ?? null}
+          onConvert={convertDecisionRecord}
+          onModeChange={setBrainstormingMode}
+          onResolveDecision={resolveDecisionBrief}
+          onSourceTypeChange={setBrainstormingSourceType}
+          onStart={startBrainstorming}
+          onToggleRole={toggleBrainstormingRole}
+          onTopicChange={setBrainstormingTopic}
+        />
+
         <ImplementationPanel
           busy={busy}
           result={implementationResult}
@@ -587,12 +834,20 @@ export function App() {
             <GitPullRequest size={15} />
             Impl
           </TabButton>
+          <TabButton
+            active={activeTab === "brainstorming"}
+            onClick={() => setActiveTab("brainstorming")}
+          >
+            <Activity size={15} />
+            Brain
+          </TabButton>
         </div>
 
         {activeTab === "timeline" && <Timeline events={events} />}
         {activeTab === "trace" && <TracePanel trace={selectedTrace} />}
         {activeTab === "artifacts" && <ArtifactsPanel artifacts={selectedArtifacts} />}
         {activeTab === "implementation" && <Timeline events={implementationEvents} />}
+        {activeTab === "brainstorming" && <Timeline events={brainstormingEvents} />}
       </aside>
     </div>
   );
@@ -678,6 +933,238 @@ function ApprovalPanel({
         </>
       ) : (
         <span className="muted">No approval request</span>
+      )}
+    </section>
+  );
+}
+
+function BrainstormingPanel({
+  busy,
+  mode,
+  result,
+  roles,
+  sourceType,
+  topic,
+  workPackage,
+  onConvert,
+  onModeChange,
+  onResolveDecision,
+  onSourceTypeChange,
+  onStart,
+  onToggleRole,
+  onTopicChange
+}: {
+  busy: boolean;
+  mode: BrainstormingMode;
+  result: BrainstormingResult | null;
+  roles: string[];
+  sourceType: BrainstormingSourceType;
+  topic: string;
+  workPackage: WorkPackage | null;
+  onConvert: () => void;
+  onModeChange: (mode: BrainstormingMode) => void;
+  onResolveDecision: (status: "accept" | "reject") => void;
+  onSourceTypeChange: (sourceType: BrainstormingSourceType) => void;
+  onStart: () => void;
+  onToggleRole: (role: string) => void;
+  onTopicChange: (topic: string) => void;
+}) {
+  const session = result?.brainstorming_session;
+  const brief = result?.decision_brief;
+  const record = result?.decision_record;
+  const canUseWorkPackage = !!workPackage;
+  const sourceReady = sourceType === "topic" || canUseWorkPackage;
+  const canConvert = !!record && !record.linked_work_package_id;
+
+  return (
+    <section className="panel brainstorming-panel">
+      <div className="panel-title">
+        <Activity size={16} />
+        <span>Brainstorming Room</span>
+        {session && <StatusPill label={session.status} />}
+      </div>
+
+      <div className="brainstorming-compose">
+        <label className="wide-field">
+          <span>Topic</span>
+          <textarea
+            value={topic}
+            onChange={(event) => onTopicChange(event.target.value)}
+            placeholder="Frame the decision or design topic."
+          />
+        </label>
+        <label>
+          <span>Mode</span>
+          <select
+            value={mode}
+            onChange={(event) => onModeChange(event.target.value as BrainstormingMode)}
+          >
+            <option value="architecture_debate">architecture_debate</option>
+            <option value="implementation_strategy">implementation_strategy</option>
+            <option value="risk_review">risk_review</option>
+            <option value="product_planning">product_planning</option>
+            <option value="free_ideation">free_ideation</option>
+          </select>
+        </label>
+        <label>
+          <span>Source</span>
+          <select
+            value={sourceType}
+            onChange={(event) => onSourceTypeChange(event.target.value as BrainstormingSourceType)}
+          >
+            <option value="topic">topic</option>
+            <option value="work_package" disabled={!canUseWorkPackage}>
+              current_work_package
+            </option>
+          </select>
+        </label>
+      </div>
+
+      <div className="role-selector">
+        {BRAINSTORMING_ROLES.map((role) => (
+          <label className="check-chip" key={role}>
+            <input
+              checked={roles.includes(role)}
+              onChange={() => onToggleRole(role)}
+              type="checkbox"
+            />
+            <span>{role}</span>
+          </label>
+        ))}
+      </div>
+
+      <div className="action-row">
+        <button
+          className="primary-button"
+          disabled={busy || !topic.trim() || !sourceReady || roles.length === 0}
+          onClick={onStart}
+          type="button"
+        >
+          <Play size={16} />
+          Start Brainstorming
+        </button>
+        {session && <span className="run-id">{session.id} - {session.current_phase ?? session.status}</span>}
+      </div>
+
+      {result && (
+        <div className="brainstorming-grid">
+          <div className="brainstorming-section">
+            <div className="subsection-heading">
+              <h2>Decision Brief</h2>
+              {brief && <StatusPill label={brief.status} />}
+            </div>
+            {brief ? (
+              <>
+                <p>{brief.recommendation}</p>
+                <p>{brief.rationale}</p>
+                <FieldGroup title="Tradeoffs" values={brief.tradeoffs} />
+                <FieldGroup title="Risks" values={brief.risks} />
+                <FieldGroup title="Follow Up" values={brief.follow_up_actions} />
+                <div className="action-row">
+                  <button
+                    className="approve-button"
+                    disabled={busy || brief.status !== "pending"}
+                    onClick={() => onResolveDecision("accept")}
+                    type="button"
+                  >
+                    <Check size={16} />
+                    Accept Decision
+                  </button>
+                  <button
+                    className="reject-button"
+                    disabled={busy || brief.status !== "pending"}
+                    onClick={() => onResolveDecision("reject")}
+                    type="button"
+                  >
+                    <X size={16} />
+                    Reject Decision
+                  </button>
+                  <button
+                    className="command-button"
+                    disabled={busy || !canConvert}
+                    onClick={onConvert}
+                    type="button"
+                  >
+                    <FileText size={16} />
+                    Convert to Work Package
+                  </button>
+                </div>
+              </>
+            ) : (
+              <span className="muted">No DecisionBrief yet</span>
+            )}
+          </div>
+
+          <div className="brainstorming-section">
+            <h2>Options</h2>
+            <div className="option-list">
+              {result.options.map((option) => (
+                <article
+                  className={`option-card ${
+                    brief?.selected_option_id === option.id ? "selected" : ""
+                  }`}
+                  key={option.id}
+                >
+                  <div>
+                    <strong>{option.title}</strong>
+                    <span>{Math.round(option.score * 100)}%</span>
+                  </div>
+                  <p>{option.summary}</p>
+                  <FieldGroup title="Benefits" values={option.benefits} />
+                  <FieldGroup title="Costs" values={option.costs} />
+                </article>
+              ))}
+            </div>
+          </div>
+
+          <div className="brainstorming-section">
+            <h2>Contributions</h2>
+            <div className="contribution-list">
+              {result.contributions.map((contribution) => (
+                <article className="contribution-card" key={contribution.id}>
+                  <div>
+                    <strong>{contribution.role}</strong>
+                    <StatusPill label={contribution.stance} />
+                  </div>
+                  <p>{contribution.summary}</p>
+                  <FieldGroup title="Arguments" values={contribution.arguments} />
+                  <FieldGroup title="Concerns" values={contribution.concerns} />
+                </article>
+              ))}
+            </div>
+          </div>
+
+          <div className="brainstorming-section">
+            <h2>Critiques</h2>
+            <div className="contribution-list">
+              {result.critiques.map((critique) => (
+                <article className="contribution-card" key={critique.id}>
+                  <div>
+                    <strong>{critique.critic_role}</strong>
+                    <span className="muted">{critique.target_role}</span>
+                  </div>
+                  <FieldGroup title="Weak Assumptions" values={critique.weak_assumptions} />
+                  <FieldGroup title="Suggested Revisions" values={critique.suggested_revisions} />
+                </article>
+              ))}
+            </div>
+          </div>
+
+          {record && (
+            <div className="brainstorming-section decision-record-card">
+              <div className="subsection-heading">
+                <h2>Decision Record</h2>
+                {record.linked_work_package_id && <StatusPill label="converted" />}
+              </div>
+              <p>{record.decision}</p>
+              <FieldGroup title="Consequences" values={record.consequences} />
+              <FieldGroup title="Follow Up" values={record.follow_up_actions} />
+              {record.linked_work_package_id && (
+                <span className="run-id">Work Package {record.linked_work_package_id}</span>
+              )}
+            </div>
+          )}
+        </div>
       )}
     </section>
   );

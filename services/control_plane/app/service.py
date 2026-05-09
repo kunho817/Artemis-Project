@@ -22,6 +22,46 @@ ALLOWED_VERIFICATION_COMMANDS = frozenset(
         "npm audit --omit=dev",
     }
 )
+ALLOWED_BRAINSTORMING_MODES = frozenset(
+    {
+        "free_ideation",
+        "architecture_debate",
+        "implementation_strategy",
+        "risk_review",
+        "product_planning",
+    }
+)
+ALLOWED_BRAINSTORMING_SOURCE_TYPES = frozenset(
+    {"topic", "work_package", "implementation_run", "review_result"}
+)
+DEFAULT_BRAINSTORMING_ROLES: dict[str, list[str]] = {
+    "free_ideation": ["product_planner", "system_architect", "implementation_planner"],
+    "architecture_debate": [
+        "product_planner",
+        "system_architect",
+        "implementation_planner",
+        "risk_reviewer",
+        "devil_advocate",
+    ],
+    "implementation_strategy": [
+        "system_architect",
+        "implementation_planner",
+        "risk_reviewer",
+        "product_planner",
+    ],
+    "risk_review": [
+        "risk_reviewer",
+        "system_architect",
+        "implementation_planner",
+        "devil_advocate",
+    ],
+    "product_planning": [
+        "product_planner",
+        "system_architect",
+        "implementation_planner",
+        "risk_reviewer",
+    ],
+}
 
 
 class ControlPlaneService:
@@ -690,6 +730,430 @@ class ControlPlaneService:
             status=final_status,
         )
         return stored.to_dict()
+
+    def start_brainstorming_session(
+        self,
+        *,
+        project: dict[str, Any],
+        session: dict[str, Any],
+        topic: str,
+        mode: str = "architecture_debate",
+        source_type: str = "topic",
+        source_id: str | None = None,
+        roles: list[str] | None = None,
+    ) -> dict[str, Any]:
+        topic = " ".join(topic.strip().split())
+        if not topic:
+            raise ValueError("Brainstorming topic is required")
+        if mode not in ALLOWED_BRAINSTORMING_MODES:
+            raise ValueError(f"Unsupported brainstorming mode: {mode}")
+        if source_type not in ALLOWED_BRAINSTORMING_SOURCE_TYPES:
+            raise ValueError(f"Unsupported brainstorming source_type: {source_type}")
+        self._source_context_for_brainstorming(source_type=source_type, source_id=source_id)
+        selected_roles = self._normalize_brainstorming_roles(roles or [], mode)
+        item = self.store.create_brainstorming_session(
+            project_id=project["id"],
+            session_id=session["id"],
+            source_type=source_type,
+            source_id=source_id,
+            topic=topic,
+            mode=mode,
+            selected_roles=selected_roles,
+        )
+        self.store.append_event(
+            project_id=project["id"],
+            session_id=session["id"],
+            agent_run_id=item.id,
+            event_type="brainstorming_session.created",
+            payload={
+                "brainstorming_session_id": item.id,
+                "mode": mode,
+                "source_type": source_type,
+                "roles": selected_roles,
+            },
+        )
+        return {
+            "project_id": project["id"],
+            "session_id": session["id"],
+            "brainstorming_session_id": item.id,
+            "status": "queued",
+            "events_url": f"/api/brainstorming-sessions/{item.id}/events/stream",
+        }
+
+    def execute_brainstorming_session(
+        self,
+        *,
+        project: dict[str, Any],
+        session: dict[str, Any],
+        brainstorming_session_id: str,
+    ) -> dict[str, Any]:
+        try:
+            return self._execute_brainstorming_session(
+                project=project,
+                session=session,
+                brainstorming_session_id=brainstorming_session_id,
+            )
+        except Exception as exc:  # pragma: no cover - defensive background task path
+            self.store.update_brainstorming_session(
+                brainstorming_session_id,
+                status="failed",
+                current_phase="failed",
+            )
+            self.store.append_event(
+                project_id=project["id"],
+                session_id=session["id"],
+                agent_run_id=brainstorming_session_id,
+                event_type="brainstorming_session.failed",
+                payload={"error": str(exc)},
+            )
+            return {
+                "brainstorming_session_id": brainstorming_session_id,
+                "status": "failed",
+                "errors": [str(exc)],
+            }
+
+    def _execute_brainstorming_session(
+        self,
+        *,
+        project: dict[str, Any],
+        session: dict[str, Any],
+        brainstorming_session_id: str,
+    ) -> dict[str, Any]:
+        brainstorming_session = self.store.get_brainstorming_session(brainstorming_session_id)
+        self.store.update_brainstorming_session(
+            brainstorming_session_id,
+            status="running",
+            current_phase="agent_backend",
+        )
+        source_context = self._source_context_for_brainstorming(
+            source_type=brainstorming_session["source_type"],
+            source_id=brainstorming_session["source_id"],
+        )
+        result = self.agent_backend.run_brainstorming(
+            {
+                "project_id": project["id"],
+                "session_id": session["id"],
+                "brainstorming_session_id": brainstorming_session_id,
+                "project_root": project["root_path"],
+                "topic": brainstorming_session["topic"],
+                "mode": brainstorming_session["mode"],
+                "source_type": brainstorming_session["source_type"],
+                "source_id": brainstorming_session["source_id"],
+                "roles": brainstorming_session["selected_roles"],
+                "source_context": source_context,
+            }
+        )
+        for event in result["events"]:
+            self.store.append_event(
+                project_id=project["id"],
+                session_id=session["id"],
+                agent_run_id=brainstorming_session_id,
+                event_type=event["type"],
+                payload=event["payload"],
+            )
+
+        trace_id = result.get("trace_id")
+        if result["status"] != "completed" or result.get("decision_brief") is None:
+            self.store.update_brainstorming_session(
+                brainstorming_session_id,
+                status="failed",
+                current_phase="failed",
+                trace_id=trace_id,
+            )
+            self._record_trace_from_brainstorming_session(
+                project=project,
+                session=session,
+                brainstorming_session_id=brainstorming_session_id,
+                trace_id=trace_id,
+                status="failed",
+            )
+            return self.get_brainstorming_result(brainstorming_session_id)
+
+        stored_result = self.store.create_brainstorming_result(
+            brainstorming_session_id=brainstorming_session_id,
+            contributions=result["contributions"],
+            critiques=result["critiques"],
+            options=result["options"],
+            decision_brief=result["decision_brief"],
+        )
+        brief = stored_result["decision_brief"]
+        self._create_artifact_and_event(
+            project_id=project["id"],
+            session_id=session["id"],
+            source_agent_run_id=brainstorming_session_id,
+            artifact_type="brainstorming_result",
+            title=brainstorming_session["topic"],
+            payload={
+                "contribution_count": len(stored_result["contributions"]),
+                "option_count": len(stored_result["options"]),
+                "decision_brief_id": brief["id"] if brief else None,
+            },
+        )
+        self._create_artifact_and_event(
+            project_id=project["id"],
+            session_id=session["id"],
+            source_agent_run_id=brainstorming_session_id,
+            artifact_type="decision_brief",
+            title=brief["recommendation"] if brief else "Decision Brief",
+            payload=brief or {},
+        )
+        self.store.update_brainstorming_session(
+            brainstorming_session_id,
+            status="awaiting_decision",
+            current_phase="awaiting_decision",
+            trace_id=trace_id,
+        )
+        self.store.append_event(
+            project_id=project["id"],
+            session_id=session["id"],
+            agent_run_id=brainstorming_session_id,
+            event_type="brainstorming_session.completed",
+            payload={"brainstorming_session_id": brainstorming_session_id},
+        )
+        self._record_trace_from_brainstorming_session(
+            project=project,
+            session=session,
+            brainstorming_session_id=brainstorming_session_id,
+            trace_id=trace_id,
+            status="awaiting_decision",
+        )
+        return self.get_brainstorming_result(brainstorming_session_id)
+
+    def create_brainstorming_session(
+        self,
+        *,
+        project: dict[str, Any],
+        session: dict[str, Any],
+        topic: str,
+        mode: str = "architecture_debate",
+        source_type: str = "topic",
+        source_id: str | None = None,
+        roles: list[str] | None = None,
+    ) -> dict[str, Any]:
+        queued = self.start_brainstorming_session(
+            project=project,
+            session=session,
+            topic=topic,
+            mode=mode,
+            source_type=source_type,
+            source_id=source_id,
+            roles=roles,
+        )
+        return self.execute_brainstorming_session(
+            project=project,
+            session=session,
+            brainstorming_session_id=queued["brainstorming_session_id"],
+        )
+
+    def get_brainstorming_result(self, brainstorming_session_id: str) -> dict[str, Any]:
+        result = self.store.get_brainstorming_result(brainstorming_session_id)
+        try:
+            trace = self.store.get_trace_summary(brainstorming_session_id)
+        except KeyError:
+            trace = None
+        result["trace"] = trace
+        result["events"] = self.store.list_events(brainstorming_session_id)
+        result["artifacts"] = self.store.list_artifacts(brainstorming_session_id)
+        return result
+
+    def resolve_decision_brief(
+        self,
+        *,
+        brainstorming_session_id: str,
+        decision_brief_id: str,
+        status: str,
+        note: str | None = None,
+    ) -> dict[str, Any]:
+        if status not in {"accepted", "rejected"}:
+            raise ValueError("DecisionBrief status must be accepted or rejected")
+        brainstorming_session = self.store.get_brainstorming_session(brainstorming_session_id)
+        brief = self.store.get_decision_brief(decision_brief_id)
+        if brief["brainstorming_session_id"] != brainstorming_session_id:
+            raise ValueError("DecisionBrief does not belong to this BrainstormingSession")
+        if brief["status"] != "pending":
+            raise ValueError("DecisionBrief has already been resolved")
+
+        self.store.update_decision_brief_status(decision_brief_id, status)
+        session_status = "accepted" if status == "accepted" else "rejected"
+        self.store.update_brainstorming_session(
+            brainstorming_session_id,
+            status=session_status,
+            current_phase=session_status,
+        )
+        if status == "rejected":
+            self.store.append_event(
+                project_id=brainstorming_session["project_id"],
+                session_id=brainstorming_session["session_id"],
+                agent_run_id=brainstorming_session_id,
+                event_type="decision_record.rejected",
+                payload={"decision_brief_id": decision_brief_id, "reason": note or ""},
+            )
+            return self.get_brainstorming_result(brainstorming_session_id)
+
+        title = brief["work_package_candidate"].get("title") or brief["recommendation"]
+        record = self.store.create_decision_record(
+            project_id=brainstorming_session["project_id"],
+            session_id=brainstorming_session["session_id"],
+            brainstorming_session_id=brainstorming_session_id,
+            title=title,
+            decision=brief["recommendation"],
+            rationale=f"{brief['rationale']}\n\nAcceptance note: {note or 'Accepted.'}",
+            consequences=[*brief["tradeoffs"], *brief["risks"]],
+            follow_up_actions=brief["follow_up_actions"],
+        )
+        self.store.append_event(
+            project_id=brainstorming_session["project_id"],
+            session_id=brainstorming_session["session_id"],
+            agent_run_id=brainstorming_session_id,
+            event_type="decision_record.accepted",
+            payload={"decision_brief_id": decision_brief_id},
+        )
+        self.store.append_event(
+            project_id=brainstorming_session["project_id"],
+            session_id=brainstorming_session["session_id"],
+            agent_run_id=brainstorming_session_id,
+            event_type="decision_record.created",
+            payload={"decision_record_id": record.id},
+        )
+        return self.get_brainstorming_result(brainstorming_session_id)
+
+    def convert_decision_record_to_work_package(
+        self,
+        *,
+        decision_record_id: str,
+    ) -> dict[str, Any]:
+        record = self.store.get_decision_record(decision_record_id)
+        if record["linked_work_package_id"]:
+            return {
+                "decision_record": record,
+                "work_package": self.store.get_work_package(record["linked_work_package_id"]),
+                "approval": self.store.get_approval_for_target(
+                    target_type="work_package",
+                    target_id=record["linked_work_package_id"],
+                ),
+            }
+        brief = self.store.get_decision_brief_by_brainstorming_session(
+            record["brainstorming_session_id"]
+        )
+        if brief is None or brief["status"] != "accepted":
+            raise ValueError("Only an accepted DecisionRecord can be converted")
+
+        self.store.append_event(
+            project_id=record["project_id"],
+            session_id=record["session_id"],
+            agent_run_id=record["brainstorming_session_id"],
+            event_type="work_package.conversion_requested",
+            payload={"decision_record_id": decision_record_id},
+        )
+        candidate = dict(brief["work_package_candidate"])
+        candidate["approval_required"] = True
+        package = self.store.create_work_package(
+            project_id=record["project_id"],
+            session_id=record["session_id"],
+            source_agent_run_id=record["brainstorming_session_id"],
+            draft=candidate,
+        )
+        approval = self.store.create_approval_request(
+            project_id=record["project_id"],
+            session_id=record["session_id"],
+            target_type="work_package",
+            target_id=package.id,
+            reason="MVP 4 converted an accepted DecisionRecord into a Work Package candidate.",
+            risk_level=package.risks[0]["level"] if package.risks else "medium",
+        )
+        self.store.update_decision_record_linked_work_package(decision_record_id, package.id)
+        self.store.update_brainstorming_session(
+            record["brainstorming_session_id"],
+            status="converted",
+            current_phase="converted",
+        )
+        self.store.append_event(
+            project_id=record["project_id"],
+            session_id=record["session_id"],
+            agent_run_id=record["brainstorming_session_id"],
+            event_type="work_package.conversion_completed",
+            payload={
+                "decision_record_id": decision_record_id,
+                "work_package_id": package.id,
+                "approval_id": approval.id,
+            },
+        )
+        self.store.append_event(
+            project_id=record["project_id"],
+            session_id=record["session_id"],
+            agent_run_id=record["brainstorming_session_id"],
+            event_type="work_package.pending_approval",
+            payload={"work_package_id": package.id},
+        )
+        self._record_trace_from_brainstorming_session(
+            project=self.store.get_project(record["project_id"]),
+            session=self.store.get_session(record["session_id"]),
+            brainstorming_session_id=record["brainstorming_session_id"],
+            trace_id=self.store.get_brainstorming_session(record["brainstorming_session_id"])[
+                "trace_id"
+            ],
+            status="converted",
+        )
+        return {
+            "decision_record": self.store.get_decision_record(decision_record_id),
+            "work_package": package.to_dict(),
+            "approval": approval.to_dict(),
+        }
+
+    def _normalize_brainstorming_roles(self, roles: list[str], mode: str) -> list[str]:
+        selected: list[str] = []
+        for role in roles:
+            normalized = role.strip().lower().replace("-", "_")
+            if normalized and normalized not in selected:
+                selected.append(normalized)
+        if not selected:
+            selected = list(DEFAULT_BRAINSTORMING_ROLES[mode])
+        if len(selected) > 6:
+            raise ValueError("Brainstorming role count cannot exceed 6")
+        return selected
+
+    def _source_context_for_brainstorming(
+        self,
+        *,
+        source_type: str,
+        source_id: str | None,
+    ) -> dict[str, Any]:
+        if source_type == "topic":
+            return {}
+        if not source_id:
+            raise ValueError(f"source_id is required for source_type {source_type}")
+        try:
+            if source_type == "work_package":
+                return {"work_package": self.store.get_work_package(source_id)}
+            if source_type == "implementation_run":
+                return {"implementation_run": self.store.get_implementation_run(source_id)}
+            if source_type == "review_result":
+                return {"review_result": self.store.get_review_result_by_id(source_id)}
+        except KeyError as exc:
+            raise ValueError(f"Unknown brainstorming source: {source_type}:{source_id}") from exc
+        raise ValueError(f"Unsupported brainstorming source_type: {source_type}")
+
+    def _record_trace_from_brainstorming_session(
+        self,
+        *,
+        project: dict[str, Any],
+        session: dict[str, Any],
+        brainstorming_session_id: str,
+        trace_id: str | None,
+        status: str,
+    ) -> None:
+        if trace_id is None:
+            return
+        self.store.record_trace_summary(
+            trace_id=trace_id,
+            project_id=project["id"],
+            session_id=session["id"],
+            agent_run_id=brainstorming_session_id,
+            root_name="artemis_brainstorming_session",
+            status=status,
+            metadata={"event_count": len(self.store.list_events(brainstorming_session_id))},
+            events=self.store.list_events(brainstorming_session_id),
+        )
 
     def _record_trace_from_run(
         self,

@@ -7,7 +7,15 @@ import unittest
 
 from services.agent_backend.app.config import model_for_role
 from services.agent_backend.app.graph import MVP1GraphRunner, build_langgraph
-from services.agent_backend.app.schemas import AgentBackendRequest, RiskHint, WorkPackageDraft
+from services.agent_backend.app.schemas import (
+    AgentBackendRequest,
+    BrainstormingContributionDraft,
+    BrainstormingOptionDraft,
+    DecisionBriefDraft,
+    RiskHint,
+    WorkPackageCandidateRequest,
+    WorkPackageDraft,
+)
 from services.agent_backend.app.tools import ReadOnlyToolRouter, ToolPermissionError
 from services.control_plane.app.agent_client import InProcessAgentBackendClient
 from services.control_plane.app.service import ControlPlaneService
@@ -403,6 +411,163 @@ class MVP1ContractTests(unittest.TestCase):
                 command="git reset --hard",
             )
             self.assertEqual(verification["status"], "blocked")
+
+    def test_mvp4_brainstorming_schema_validation(self) -> None:
+        contribution = BrainstormingContributionDraft(
+            role="system_architect",
+            stance="cautious",
+            summary="Review boundaries.",
+            arguments=["Control Plane owns state."],
+            concerns=["Scope could grow."],
+            suggested_actions=["Keep structured outputs."],
+            referenced_artifacts=["docs/artemis_mvp4.md"],
+        )
+        option = BrainstormingOptionDraft(
+            title="Staged slice",
+            summary="Ship the vertical slice.",
+            benefits=["Covers completion criteria."],
+            costs=["Adds API surface."],
+            risks=["May need later LLM replacement."],
+            required_work=["Add contracts."],
+            verification_hint="Run smoke.",
+            score=0.9,
+        )
+        brief = DecisionBriefDraft(
+            recommendation="Choose the staged slice.",
+            selected_option_index=0,
+            rationale="It satisfies MVP4.",
+            tradeoffs=["Deterministic now, LLM later."],
+            risks=["Scope can expand."],
+            open_questions=["Which source should default?"],
+            follow_up_actions=["Add GUI smoke."],
+            work_package_candidate=WorkPackageCandidateRequest(
+                title="Convert decision",
+                goal="Create a Work Package candidate.",
+                background="Decision accepted.",
+                scope=["Convert accepted decision."],
+                out_of_scope=["Run implementation."],
+                related_files=["docs/artemis_mvp4.md"],
+                required_agents=["Architect"],
+                implementation_steps=["Review decision."],
+                verification=["contract test"],
+                risks=[{"level": "medium", "description": "Needs review."}],
+                completion_criteria=["Pending approval."],
+            ),
+        )
+
+        self.assertEqual(contribution.validate(), [])
+        self.assertEqual(option.validate(), [])
+        self.assertEqual(brief.validate(1), [])
+
+    def test_mvp4_brainstorming_decision_and_conversion_contract(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            project_root = root / "project"
+            project_root.mkdir()
+            (project_root / "README.md").write_text("Artemis MVP 4 project", encoding="utf-8")
+            (project_root / "docs").mkdir()
+            (project_root / "docs" / "artemis_mvp4.md").write_text(
+                "Brainstorming Room and Decision Record",
+                encoding="utf-8",
+            )
+
+            store = SQLiteStore(root / "artemis.db", root / "events.jsonl")
+            service = ControlPlaneService(store, agent_backend=InProcessAgentBackendClient())
+            project = service.open_project(name="test", root_path=str(project_root))
+            session = service.create_session(project_id=project["id"], title="MVP4 test")
+
+            with self.assertRaises(ValueError):
+                service.start_brainstorming_session(
+                    project=project,
+                    session=session,
+                    topic="Too many roles",
+                    roles=[f"role_{index}" for index in range(7)],
+                )
+            with self.assertRaises(ValueError):
+                service.start_brainstorming_session(
+                    project=project,
+                    session=session,
+                    topic="Bad source",
+                    source_type="work_package",
+                    source_id="missing",
+                )
+
+            result = service.create_brainstorming_session(
+                project=project,
+                session=session,
+                topic="Review MVP 4 Brainstorming Room scope",
+                roles=[],
+            )
+            brain = result["brainstorming_session"]
+            self.assertEqual(brain["status"], "awaiting_decision")
+            self.assertEqual(brain["mode"], "architecture_debate")
+            self.assertIn("devil_advocate", brain["selected_roles"])
+            self.assertGreaterEqual(len(result["contributions"]), 4)
+            self.assertGreaterEqual(len(result["critiques"]), 4)
+            self.assertGreaterEqual(len(result["options"]), 3)
+            self.assertEqual(result["decision_brief"]["status"], "pending")
+            self.assertIsNotNone(result["trace"])
+
+            event_types = {event["type"] for event in result["events"]}
+            self.assertIn("brainstorming.roles_selected", event_types)
+            self.assertIn("brainstorming.decision_brief_created", event_types)
+            self.assertIn("brainstorming.validation_passed", event_types)
+
+            rejected = service.create_brainstorming_session(
+                project=project,
+                session=session,
+                topic="Reject this decision",
+            )
+            rejected = service.resolve_decision_brief(
+                brainstorming_session_id=rejected["brainstorming_session"]["id"],
+                decision_brief_id=rejected["decision_brief"]["id"],
+                status="rejected",
+                note="Too broad.",
+            )
+            self.assertEqual(rejected["decision_brief"]["status"], "rejected")
+            self.assertIsNone(rejected["decision_record"])
+
+            accepted = service.resolve_decision_brief(
+                brainstorming_session_id=brain["id"],
+                decision_brief_id=result["decision_brief"]["id"],
+                status="accepted",
+                note="Use the staged API-first path.",
+            )
+            record = accepted["decision_record"]
+            self.assertIsNotNone(record)
+            self.assertEqual(accepted["decision_brief"]["status"], "accepted")
+            self.assertIsNone(record["linked_work_package_id"])
+
+            converted = service.convert_decision_record_to_work_package(
+                decision_record_id=record["id"],
+            )
+            self.assertEqual(converted["work_package"]["status"], "pending_approval")
+            self.assertEqual(converted["work_package"]["approval_status"], "pending")
+            self.assertEqual(converted["approval"]["target_type"], "work_package")
+
+            final_result = service.get_brainstorming_result(brain["id"])
+            final_events = {event["type"] for event in final_result["events"]}
+            self.assertEqual(final_result["brainstorming_session"]["status"], "converted")
+            self.assertEqual(
+                final_result["decision_record"]["linked_work_package_id"],
+                converted["work_package"]["id"],
+            )
+            self.assertIn("decision_record.created", final_events)
+            self.assertIn("work_package.conversion_completed", final_events)
+
+            source_result = service.create_brainstorming_session(
+                project=project,
+                session=session,
+                topic="Review converted Work Package as a source",
+                mode="implementation_strategy",
+                source_type="work_package",
+                source_id=converted["work_package"]["id"],
+            )
+            self.assertEqual(source_result["brainstorming_session"]["source_type"], "work_package")
+            self.assertEqual(
+                source_result["brainstorming_session"]["source_id"],
+                converted["work_package"]["id"],
+            )
 
 
 if __name__ == "__main__":

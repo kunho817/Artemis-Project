@@ -21,6 +21,7 @@ body {
 
 button,
 input,
+select,
 textarea {
   font: inherit;
 }
@@ -164,6 +165,7 @@ label {
 }
 
 input,
+select,
 textarea {
   width: 100%;
   border: 1px solid #b9c6c0;
@@ -178,6 +180,11 @@ input {
   padding: 0 10px;
 }
 
+select {
+  height: 36px;
+  padding: 0 9px;
+}
+
 textarea {
   min-height: 118px;
   resize: vertical;
@@ -186,6 +193,7 @@ textarea {
 }
 
 input:focus,
+select:focus,
 textarea:focus {
   border-color: #31795f;
   box-shadow: 0 0 0 3px rgba(49, 121, 95, 0.14);
@@ -305,6 +313,123 @@ textarea:focus {
 
 .implementation-panel {
   margin-top: 16px;
+}
+
+.brainstorming-panel {
+  margin-top: 16px;
+}
+
+.brainstorming-compose {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 220px 200px;
+  gap: 12px;
+  align-items: end;
+}
+
+.brainstorming-compose textarea {
+  min-height: 84px;
+}
+
+.wide-field {
+  min-width: 0;
+}
+
+.role-selector {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.check-chip {
+  display: inline-flex;
+  grid-auto-flow: column;
+  align-items: center;
+  gap: 7px;
+  min-height: 32px;
+  padding: 0 10px;
+  border: 1px solid #cad8d0;
+  border-radius: 999px;
+  background: #f6faf8;
+  color: #34413c;
+}
+
+.check-chip input {
+  width: 14px;
+  height: 14px;
+  padding: 0;
+}
+
+.check-chip span {
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.brainstorming-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 0.8fr);
+  gap: 14px;
+  margin-top: 16px;
+}
+
+.brainstorming-section {
+  min-width: 0;
+  padding-top: 14px;
+  border-top: 1px solid #d7dfdb;
+}
+
+.brainstorming-section h2 {
+  margin: 0 0 8px;
+  font-size: 15px;
+  line-height: 1.2;
+}
+
+.brainstorming-section p {
+  margin: 0 0 10px;
+  color: #465550;
+  line-height: 1.45;
+}
+
+.option-list,
+.contribution-list {
+  display: grid;
+  gap: 10px;
+}
+
+.option-card,
+.contribution-card,
+.decision-record-card {
+  display: grid;
+  gap: 8px;
+  padding: 11px;
+  border: 1px solid #d7dfdb;
+  border-radius: 8px;
+  background: #fbfdfc;
+}
+
+.option-card.selected {
+  border-color: #31795f;
+  background: #edf7f1;
+}
+
+.option-card > div,
+.contribution-card > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+}
+
+.option-card strong,
+.contribution-card strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.option-card > div > span {
+  color: #31795f;
+  font-size: 12px;
+  font-weight: 900;
 }
 
 .implementation-toolbar,
@@ -465,6 +590,8 @@ textarea:focus {
 .status-pill.completed,
 .status-pill.approved,
 .status-pill.applied,
+.status-pill.accepted,
+.status-pill.supportive,
 .status-pill.pass,
 .status-pill.passed,
 .status-badge.online {
@@ -481,6 +608,9 @@ textarea:focus {
 .status-pill.verifying,
 .status-pill.reviewing,
 .status-pill.not_run,
+.status-pill.awaiting_decision,
+.status-pill.exploratory,
+.status-pill.cautious,
 .status-pill.running,
 .status-pill.queued,
 .status-badge.checking {
@@ -492,6 +622,7 @@ textarea:focus {
 .risk-pill.critical,
 .status-pill.failed,
 .status-pill.rejected,
+.status-pill.opposed,
 .status-pill.blocked,
 .status-pill.needs_changes,
 .status-badge.offline {
@@ -653,6 +784,11 @@ textarea:focus {
   }
 
   .detail-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .brainstorming-compose,
+  .brainstorming-grid {
     grid-template-columns: 1fr;
   }
 

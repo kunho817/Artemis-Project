@@ -79,6 +79,13 @@ DEFAULT_ROLE_MODELS: dict[str, str] = {
     "context_collector": "glm-4.7",
     "validator": "glm-4.6",
     "qa": "glm-4.7",
+    "brainstorming_moderator": "glm-5.1",
+    "brainstorming_architect": "glm-5.1",
+    "brainstorming_system_architect": "glm-5.1",
+    "brainstorming_product_planner": "glm-5",
+    "brainstorming_implementation_planner": "glm-5",
+    "brainstorming_risk_reviewer": "glm-4.6",
+    "brainstorming_devil_advocate": "glm-4.7",
 }
 
 

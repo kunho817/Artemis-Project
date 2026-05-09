@@ -12,6 +12,14 @@ from .storage import SQLiteStore
 
 TERMINAL_AGENT_RUN_STATES = {"completed", "failed", "canceled"}
 TERMINAL_IMPLEMENTATION_RUN_STATES = {"completed", "failed", "canceled"}
+TERMINAL_BRAINSTORMING_STATES = {
+    "awaiting_decision",
+    "accepted",
+    "rejected",
+    "converted",
+    "failed",
+    "canceled",
+}
 
 
 def create_app(db_path: str = "data/artemis.db", agent_backend: Any | None = None) -> object:
@@ -272,6 +280,148 @@ def create_app(db_path: str = "data/artemis.db", agent_backend: Any | None = Non
     @app.get("/api/implementation-runs/{implementation_run_id}/trace")
     def get_implementation_trace(implementation_run_id: str) -> dict[str, Any]:
         return store.get_trace_summary(implementation_run_id)
+
+    @app.post("/api/brainstorming-sessions")
+    def create_brainstorming_session(
+        payload: dict[str, Any],
+        background_tasks: BackgroundTasks,
+    ) -> dict[str, Any]:
+        from fastapi import HTTPException
+
+        try:
+            project = store.get_project(payload["project_id"])
+            session = store.get_session(payload["session_id"])
+            queued = service.start_brainstorming_session(
+                project=project,
+                session=session,
+                topic=payload["topic"],
+                mode=payload.get("mode", "architecture_debate"),
+                source_type=payload.get("source_type", "topic"),
+                source_id=payload.get("source_id"),
+                roles=payload.get("roles") or [],
+            )
+            background_tasks.add_task(
+                service.execute_brainstorming_session,
+                project=project,
+                session=session,
+                brainstorming_session_id=queued["brainstorming_session_id"],
+            )
+            return queued
+        except (KeyError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.get("/api/brainstorming-sessions/{brainstorming_session_id}")
+    def get_brainstorming_session(brainstorming_session_id: str) -> dict[str, Any]:
+        return store.get_brainstorming_session(brainstorming_session_id)
+
+    @app.get("/api/brainstorming-sessions/{brainstorming_session_id}/result")
+    def get_brainstorming_result(brainstorming_session_id: str) -> dict[str, Any]:
+        return service.get_brainstorming_result(brainstorming_session_id)
+
+    @app.get("/api/brainstorming-sessions/{brainstorming_session_id}/events")
+    def get_brainstorming_events(
+        brainstorming_session_id: str,
+        after: str | None = None,
+    ) -> list[dict[str, Any]]:
+        return store.list_events(brainstorming_session_id, after=after)
+
+    @app.get("/api/brainstorming-sessions/{brainstorming_session_id}/events/stream")
+    def stream_brainstorming_events(brainstorming_session_id: str) -> object:
+        async def event_generator() -> Any:
+            last_event_id: str | None = None
+            while True:
+                events = store.list_events(brainstorming_session_id, after=last_event_id)
+                for event in events:
+                    last_event_id = event["id"]
+                    yield (
+                        f"id: {event['id']}\n"
+                        f"event: {event['type']}\n"
+                        f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+                    )
+
+                try:
+                    run = store.get_brainstorming_session(brainstorming_session_id)
+                except KeyError:
+                    run = None
+                if run is not None and run["status"] in TERMINAL_BRAINSTORMING_STATES and not events:
+                    break
+                await asyncio.sleep(0.5)
+
+        return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+    @app.post("/api/brainstorming-sessions/{brainstorming_session_id}/cancel")
+    def cancel_brainstorming_session(brainstorming_session_id: str) -> dict[str, Any]:
+        run = store.get_brainstorming_session(brainstorming_session_id)
+        store.update_brainstorming_session(
+            brainstorming_session_id,
+            status="canceled",
+            current_phase="canceled",
+        )
+        store.append_event(
+            project_id=run["project_id"],
+            session_id=run["session_id"],
+            agent_run_id=brainstorming_session_id,
+            event_type="brainstorming_session.canceled",
+            payload={"brainstorming_session_id": brainstorming_session_id},
+        )
+        return store.get_brainstorming_session(brainstorming_session_id)
+
+    @app.get("/api/brainstorming-sessions/{brainstorming_session_id}/trace")
+    def get_brainstorming_trace(brainstorming_session_id: str) -> dict[str, Any]:
+        return store.get_trace_summary(brainstorming_session_id)
+
+    @app.post("/api/brainstorming-sessions/{brainstorming_session_id}/decision/accept")
+    def accept_decision(
+        brainstorming_session_id: str,
+        payload: dict[str, str],
+    ) -> dict[str, Any]:
+        from fastapi import HTTPException
+
+        try:
+            return service.resolve_decision_brief(
+                brainstorming_session_id=brainstorming_session_id,
+                decision_brief_id=payload["decision_brief_id"],
+                status="accepted",
+                note=payload.get("note"),
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/api/brainstorming-sessions/{brainstorming_session_id}/decision/reject")
+    def reject_decision(
+        brainstorming_session_id: str,
+        payload: dict[str, str],
+    ) -> dict[str, Any]:
+        from fastapi import HTTPException
+
+        try:
+            return service.resolve_decision_brief(
+                brainstorming_session_id=brainstorming_session_id,
+                decision_brief_id=payload["decision_brief_id"],
+                status="rejected",
+                note=payload.get("reason"),
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.get("/api/decision-records/{decision_record_id}")
+    def get_decision_record(decision_record_id: str) -> dict[str, Any]:
+        return store.get_decision_record(decision_record_id)
+
+    @app.get("/api/projects/{project_id}/decision-records")
+    def list_decision_records(project_id: str) -> list[dict[str, Any]]:
+        return store.list_decision_records(project_id)
+
+    @app.post("/api/decision-records/{decision_record_id}/convert-to-work-package")
+    def convert_decision_record(decision_record_id: str) -> dict[str, Any]:
+        from fastapi import HTTPException
+
+        try:
+            return service.convert_decision_record_to_work_package(
+                decision_record_id=decision_record_id,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     @app.get("/api/health")
     def health() -> dict[str, str]:

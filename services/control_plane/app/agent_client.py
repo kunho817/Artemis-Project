@@ -23,6 +23,9 @@ class AgentBackendClient(Protocol):
     def create_review_result(self, payload: dict[str, Any]) -> dict[str, Any]:
         """Create a ReviewResult from verification output."""
 
+    def run_brainstorming(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Run a structured Brainstorming workflow."""
+
 
 class HTTPAgentBackendClient:
     def __init__(self, base_url: str | None = None, timeout_seconds: float = 120.0) -> None:
@@ -45,6 +48,9 @@ class HTTPAgentBackendClient:
 
     def create_review_result(self, payload: dict[str, Any]) -> dict[str, Any]:
         return self._post("/internal/review-results", payload)
+
+    def run_brainstorming(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return self._post("/internal/brainstorming-sessions", payload)
 
     def _post(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
         body = json.dumps(payload).encode("utf-8")
@@ -84,3 +90,10 @@ class InProcessAgentBackendClient:
 
         service = self._service or AgentBackendService()
         return service.create_review_result(ReviewBackendRequest(**payload)).to_dict()
+
+    def run_brainstorming(self, payload: dict[str, Any]) -> dict[str, Any]:
+        from services.agent_backend.app.schemas import BrainstormingBackendRequest
+        from services.agent_backend.app.service import AgentBackendService
+
+        service = self._service or AgentBackendService()
+        return service.run_brainstorming(BrainstormingBackendRequest(**payload)).to_dict()

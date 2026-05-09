@@ -27,6 +27,25 @@ PatchSetStatus = Literal["proposed", "pending_approval", "approved", "applied", 
 PatchOperation = Literal["create", "update", "delete"]
 VerificationStatus = Literal["not_run", "running", "passed", "failed", "blocked"]
 ReviewStatus = Literal["pass", "needs_changes", "blocked"]
+BrainstormingSourceType = Literal["topic", "work_package", "implementation_run", "review_result"]
+BrainstormingMode = Literal[
+    "free_ideation",
+    "architecture_debate",
+    "implementation_strategy",
+    "risk_review",
+    "product_planning",
+]
+BrainstormingSessionStatus = Literal[
+    "queued",
+    "running",
+    "awaiting_decision",
+    "accepted",
+    "rejected",
+    "converted",
+    "failed",
+    "canceled",
+]
+DecisionBriefStatus = Literal["pending", "accepted", "rejected"]
 
 
 def utc_now() -> str:
@@ -274,6 +293,114 @@ class ReviewResult:
     findings: list[str]
     residual_risks: list[str]
     recommendation: str
+    created_at: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
+class BrainstormingSession:
+    id: str
+    project_id: str
+    session_id: str
+    source_type: BrainstormingSourceType
+    source_id: str | None
+    topic: str
+    mode: BrainstormingMode
+    status: BrainstormingSessionStatus
+    current_phase: str | None
+    selected_roles: list[str]
+    trace_id: str | None
+    created_at: str
+    updated_at: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
+class BrainstormingContribution:
+    id: str
+    brainstorming_session_id: str
+    role: str
+    stance: str
+    summary: str
+    arguments: list[str]
+    concerns: list[str]
+    suggested_actions: list[str]
+    referenced_artifacts: list[str]
+    created_at: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
+class BrainstormingCritique:
+    id: str
+    brainstorming_session_id: str
+    critic_role: str
+    target_role: str
+    weak_assumptions: list[str]
+    missing_context: list[str]
+    risks: list[str]
+    suggested_revisions: list[str]
+    created_at: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
+class BrainstormingOption:
+    id: str
+    brainstorming_session_id: str
+    title: str
+    summary: str
+    benefits: list[str]
+    costs: list[str]
+    risks: list[str]
+    required_work: list[str]
+    verification_hint: str
+    score: float
+    created_at: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
+class DecisionBrief:
+    id: str
+    brainstorming_session_id: str
+    recommendation: str
+    selected_option_id: str
+    rationale: str
+    tradeoffs: list[str]
+    risks: list[str]
+    open_questions: list[str]
+    follow_up_actions: list[str]
+    work_package_candidate: dict[str, Any]
+    status: DecisionBriefStatus
+    created_at: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
+class DecisionRecord:
+    id: str
+    project_id: str
+    session_id: str
+    brainstorming_session_id: str
+    title: str
+    decision: str
+    rationale: str
+    consequences: list[str]
+    follow_up_actions: list[str]
+    linked_work_package_id: str | None
     created_at: str
 
     def to_dict(self) -> dict[str, Any]:

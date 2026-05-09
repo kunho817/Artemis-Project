@@ -2,6 +2,12 @@ import type {
   AgentRun,
   AgentRunResult,
   Artifact,
+  BrainstormingMode,
+  BrainstormingResult,
+  BrainstormingSession,
+  BrainstormingSessionResponse,
+  BrainstormingSourceType,
+  DecisionConversionResult,
   EventRecord,
   ImplementationRun,
   ImplementationRunResult,
@@ -141,12 +147,76 @@ export class ControlPlaneApi {
     });
   }
 
+  async createBrainstormingSession(payload: {
+    projectId: string;
+    sessionId: string;
+    topic: string;
+    mode: BrainstormingMode;
+    sourceType: BrainstormingSourceType;
+    sourceId?: string | null;
+    roles: string[];
+  }): Promise<BrainstormingSessionResponse> {
+    return this.request("/api/brainstorming-sessions", {
+      method: "POST",
+      body: {
+        project_id: payload.projectId,
+        session_id: payload.sessionId,
+        topic: payload.topic,
+        mode: payload.mode,
+        source_type: payload.sourceType,
+        source_id: payload.sourceId ?? null,
+        roles: payload.roles
+      }
+    });
+  }
+
+  async getBrainstormingSession(brainstormingSessionId: string): Promise<BrainstormingSession> {
+    return this.request(`/api/brainstorming-sessions/${brainstormingSessionId}`);
+  }
+
+  async getBrainstormingResult(brainstormingSessionId: string): Promise<BrainstormingResult> {
+    return this.request(`/api/brainstorming-sessions/${brainstormingSessionId}/result`);
+  }
+
+  async listBrainstormingEvents(
+    brainstormingSessionId: string,
+    after?: string
+  ): Promise<EventRecord[]> {
+    const suffix = after ? `?after=${encodeURIComponent(after)}` : "";
+    return this.request(`/api/brainstorming-sessions/${brainstormingSessionId}/events${suffix}`);
+  }
+
+  async resolveDecisionBrief(
+    brainstormingSessionId: string,
+    decisionBriefId: string,
+    status: "accept" | "reject"
+  ): Promise<BrainstormingResult> {
+    return this.request(`/api/brainstorming-sessions/${brainstormingSessionId}/decision/${status}`, {
+      method: "POST",
+      body:
+        status === "accept"
+          ? { decision_brief_id: decisionBriefId, note: "Accepted from GUI." }
+          : { decision_brief_id: decisionBriefId, reason: "Rejected from GUI." }
+    });
+  }
+
+  async convertDecisionRecord(decisionRecordId: string): Promise<DecisionConversionResult> {
+    return this.request(`/api/decision-records/${decisionRecordId}/convert-to-work-package`, {
+      method: "POST",
+      body: {}
+    });
+  }
+
   eventStreamUrl(agentRunId: string): string {
     return `${this.baseUrl}/api/agent-runs/${agentRunId}/events/stream`;
   }
 
   implementationEventStreamUrl(implementationRunId: string): string {
     return `${this.baseUrl}/api/implementation-runs/${implementationRunId}/events/stream`;
+  }
+
+  brainstormingEventStreamUrl(brainstormingSessionId: string): string {
+    return `${this.baseUrl}/api/brainstorming-sessions/${brainstormingSessionId}/events/stream`;
   }
 
   private async request<T>(path: string, init: { method?: string; body?: unknown } = {}): Promise<T> {

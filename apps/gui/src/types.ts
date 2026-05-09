@@ -219,3 +219,126 @@ export type ImplementationRunResult = {
   trace: TraceSummary | null;
   events: EventRecord[];
 };
+
+export type BrainstormingMode =
+  | "free_ideation"
+  | "architecture_debate"
+  | "implementation_strategy"
+  | "risk_review"
+  | "product_planning";
+
+export type BrainstormingSourceType =
+  | "topic"
+  | "work_package"
+  | "implementation_run"
+  | "review_result";
+
+export type BrainstormingSession = {
+  id: string;
+  project_id: string;
+  session_id: string;
+  source_type: BrainstormingSourceType;
+  source_id: string | null;
+  topic: string;
+  mode: BrainstormingMode;
+  status: string;
+  current_phase: string | null;
+  selected_roles: string[];
+  trace_id: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type BrainstormingContribution = {
+  id: string;
+  brainstorming_session_id: string;
+  role: string;
+  stance: string;
+  summary: string;
+  arguments: string[];
+  concerns: string[];
+  suggested_actions: string[];
+  referenced_artifacts: string[];
+  created_at: string;
+};
+
+export type BrainstormingCritique = {
+  id: string;
+  brainstorming_session_id: string;
+  critic_role: string;
+  target_role: string;
+  weak_assumptions: string[];
+  missing_context: string[];
+  risks: string[];
+  suggested_revisions: string[];
+  created_at: string;
+};
+
+export type BrainstormingOption = {
+  id: string;
+  brainstorming_session_id: string;
+  title: string;
+  summary: string;
+  benefits: string[];
+  costs: string[];
+  risks: string[];
+  required_work: string[];
+  verification_hint: string;
+  score: number;
+  created_at: string;
+};
+
+export type DecisionBrief = {
+  id: string;
+  brainstorming_session_id: string;
+  recommendation: string;
+  selected_option_id: string;
+  rationale: string;
+  tradeoffs: string[];
+  risks: string[];
+  open_questions: string[];
+  follow_up_actions: string[];
+  work_package_candidate: Record<string, unknown>;
+  status: "pending" | "accepted" | "rejected";
+  created_at: string;
+};
+
+export type DecisionRecord = {
+  id: string;
+  project_id: string;
+  session_id: string;
+  brainstorming_session_id: string;
+  title: string;
+  decision: string;
+  rationale: string;
+  consequences: string[];
+  follow_up_actions: string[];
+  linked_work_package_id: string | null;
+  created_at: string;
+};
+
+export type BrainstormingSessionResponse = {
+  project_id: string;
+  session_id: string;
+  brainstorming_session_id: string;
+  status: string;
+  events_url: string;
+};
+
+export type BrainstormingResult = {
+  brainstorming_session: BrainstormingSession;
+  contributions: BrainstormingContribution[];
+  critiques: BrainstormingCritique[];
+  options: BrainstormingOption[];
+  decision_brief: DecisionBrief | null;
+  decision_record: DecisionRecord | null;
+  trace: TraceSummary | null;
+  events: EventRecord[];
+  artifacts: Artifact[];
+};
+
+export type DecisionConversionResult = {
+  decision_record: DecisionRecord;
+  work_package: WorkPackage;
+  approval: Approval | null;
+};

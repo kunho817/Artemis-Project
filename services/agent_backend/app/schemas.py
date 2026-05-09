@@ -17,6 +17,15 @@ Intent = Literal[
 ]
 
 RiskLevel = Literal["low", "medium", "high", "critical"]
+BrainstormingMode = Literal[
+    "free_ideation",
+    "architecture_debate",
+    "implementation_strategy",
+    "risk_review",
+    "product_planning",
+]
+BrainstormingSourceType = Literal["topic", "work_package", "implementation_run", "review_result"]
+BrainstormingStance = Literal["supportive", "cautious", "opposed", "exploratory"]
 
 
 @dataclass
@@ -235,3 +244,156 @@ class ReviewResultDraft:
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
+
+
+@dataclass
+class BrainstormingBackendRequest:
+    project_id: str
+    session_id: str
+    brainstorming_session_id: str
+    project_root: str
+    topic: str
+    mode: BrainstormingMode
+    source_type: BrainstormingSourceType
+    source_id: str | None
+    roles: list[str]
+    source_context: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class BrainstormingContributionDraft:
+    role: str
+    stance: BrainstormingStance
+    summary: str
+    arguments: list[str]
+    concerns: list[str]
+    suggested_actions: list[str]
+    referenced_artifacts: list[str]
+
+    def validate(self) -> list[str]:
+        errors: list[str] = []
+        if not self.role.strip():
+            errors.append("role is required")
+        if self.stance not in {"supportive", "cautious", "opposed", "exploratory"}:
+            errors.append("stance is invalid")
+        for field_name in ("summary",):
+            if not getattr(self, field_name).strip():
+                errors.append(f"{field_name} is required")
+        for field_name in ("arguments", "concerns", "suggested_actions"):
+            if not getattr(self, field_name):
+                errors.append(f"{field_name} must be non-empty")
+        return errors
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
+class BrainstormingCritiqueDraft:
+    critic_role: str
+    target_role: str
+    weak_assumptions: list[str]
+    missing_context: list[str]
+    risks: list[str]
+    suggested_revisions: list[str]
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
+class BrainstormingOptionDraft:
+    title: str
+    summary: str
+    benefits: list[str]
+    costs: list[str]
+    risks: list[str]
+    required_work: list[str]
+    verification_hint: str
+    score: float
+
+    def validate(self) -> list[str]:
+        errors: list[str] = []
+        if not self.title.strip():
+            errors.append("title is required")
+        if not self.summary.strip():
+            errors.append("summary is required")
+        for field_name in ("benefits", "costs", "risks", "required_work"):
+            if not getattr(self, field_name):
+                errors.append(f"{field_name} must be non-empty")
+        if not 0.0 <= self.score <= 1.0:
+            errors.append("score must be between 0.0 and 1.0")
+        return errors
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
+class WorkPackageCandidateRequest:
+    title: str
+    goal: str
+    background: str
+    scope: list[str]
+    out_of_scope: list[str]
+    related_files: list[str]
+    required_agents: list[str]
+    implementation_steps: list[str]
+    verification: list[str]
+    risks: list[dict[str, Any]]
+    completion_criteria: list[str]
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
+class DecisionBriefDraft:
+    recommendation: str
+    selected_option_index: int
+    rationale: str
+    tradeoffs: list[str]
+    risks: list[str]
+    open_questions: list[str]
+    follow_up_actions: list[str]
+    work_package_candidate: WorkPackageCandidateRequest
+
+    def validate(self, option_count: int) -> list[str]:
+        errors: list[str] = []
+        if not self.recommendation.strip():
+            errors.append("recommendation is required")
+        if not 0 <= self.selected_option_index < option_count:
+            errors.append("selected_option_index points outside options")
+        for field_name in ("tradeoffs", "risks", "follow_up_actions"):
+            if not getattr(self, field_name):
+                errors.append(f"{field_name} must be non-empty")
+        return errors
+
+    def to_dict(self) -> dict[str, Any]:
+        data = asdict(self)
+        data["work_package_candidate"] = self.work_package_candidate.to_dict()
+        return data
+
+
+@dataclass
+class BrainstormingRunResult:
+    status: Literal["completed", "failed"]
+    trace_id: str
+    contributions: list[BrainstormingContributionDraft]
+    critiques: list[BrainstormingCritiqueDraft]
+    options: list[BrainstormingOptionDraft]
+    decision_brief: DecisionBriefDraft | None
+    events: list[AgentBackendEvent]
+    errors: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "status": self.status,
+            "trace_id": self.trace_id,
+            "contributions": [item.to_dict() for item in self.contributions],
+            "critiques": [item.to_dict() for item in self.critiques],
+            "options": [item.to_dict() for item in self.options],
+            "decision_brief": self.decision_brief.to_dict() if self.decision_brief else None,
+            "events": [event.to_dict() for event in self.events],
+            "errors": list(self.errors),
+        }

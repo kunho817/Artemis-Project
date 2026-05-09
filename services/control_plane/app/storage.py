@@ -12,6 +12,12 @@ from .models import (
     AgentRun,
     ApprovalRequest,
     Artifact,
+    BrainstormingContribution,
+    BrainstormingCritique,
+    BrainstormingOption,
+    BrainstormingSession,
+    DecisionBrief,
+    DecisionRecord,
     Event,
     ImplementationPlan,
     ImplementationRun,
@@ -208,6 +214,84 @@ class SQLiteStore:
                   findings TEXT NOT NULL,
                   residual_risks TEXT NOT NULL,
                   recommendation TEXT NOT NULL,
+                  created_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS brainstorming_sessions (
+                  id TEXT PRIMARY KEY,
+                  project_id TEXT NOT NULL,
+                  session_id TEXT NOT NULL,
+                  source_type TEXT NOT NULL,
+                  source_id TEXT,
+                  topic TEXT NOT NULL,
+                  mode TEXT NOT NULL,
+                  status TEXT NOT NULL,
+                  current_phase TEXT,
+                  selected_roles TEXT NOT NULL,
+                  trace_id TEXT,
+                  created_at TEXT NOT NULL,
+                  updated_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS brainstorming_contributions (
+                  id TEXT PRIMARY KEY,
+                  brainstorming_session_id TEXT NOT NULL,
+                  role TEXT NOT NULL,
+                  stance TEXT NOT NULL,
+                  summary TEXT NOT NULL,
+                  arguments TEXT NOT NULL,
+                  concerns TEXT NOT NULL,
+                  suggested_actions TEXT NOT NULL,
+                  referenced_artifacts TEXT NOT NULL,
+                  created_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS brainstorming_critiques (
+                  id TEXT PRIMARY KEY,
+                  brainstorming_session_id TEXT NOT NULL,
+                  critic_role TEXT NOT NULL,
+                  target_role TEXT NOT NULL,
+                  weak_assumptions TEXT NOT NULL,
+                  missing_context TEXT NOT NULL,
+                  risks TEXT NOT NULL,
+                  suggested_revisions TEXT NOT NULL,
+                  created_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS brainstorming_options (
+                  id TEXT PRIMARY KEY,
+                  brainstorming_session_id TEXT NOT NULL,
+                  title TEXT NOT NULL,
+                  summary TEXT NOT NULL,
+                  benefits TEXT NOT NULL,
+                  costs TEXT NOT NULL,
+                  risks TEXT NOT NULL,
+                  required_work TEXT NOT NULL,
+                  verification_hint TEXT NOT NULL,
+                  score REAL NOT NULL,
+                  created_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS decision_briefs (
+                  id TEXT PRIMARY KEY,
+                  brainstorming_session_id TEXT NOT NULL,
+                  recommendation TEXT NOT NULL,
+                  selected_option_id TEXT NOT NULL,
+                  rationale TEXT NOT NULL,
+                  tradeoffs TEXT NOT NULL,
+                  risks TEXT NOT NULL,
+                  open_questions TEXT NOT NULL,
+                  follow_up_actions TEXT NOT NULL,
+                  work_package_candidate TEXT NOT NULL,
+                  status TEXT NOT NULL,
+                  created_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS decision_records (
+                  id TEXT PRIMARY KEY,
+                  project_id TEXT NOT NULL,
+                  session_id TEXT NOT NULL,
+                  brainstorming_session_id TEXT NOT NULL,
+                  title TEXT NOT NULL,
+                  decision TEXT NOT NULL,
+                  rationale TEXT NOT NULL,
+                  consequences TEXT NOT NULL,
+                  follow_up_actions TEXT NOT NULL,
+                  linked_work_package_id TEXT,
                   created_at TEXT NOT NULL
                 );
                 """
@@ -630,7 +714,12 @@ class SQLiteStore:
         phase_events = [
             event
             for event in events
-            if event["type"] in {"agent_run.phase_changed", "implementation_run.phase_changed"}
+            if event["type"]
+            in {
+                "agent_run.phase_changed",
+                "implementation_run.phase_changed",
+                "brainstorming_session.phase_changed",
+            }
         ]
         for index, event in enumerate(phase_events, start=1):
             phase = str(event.get("payload", {}).get("phase", f"phase_{index}"))
@@ -1089,4 +1178,450 @@ class SQLiteStore:
         data = dict(row)
         data["findings"] = json.loads(data["findings"])
         data["residual_risks"] = json.loads(data["residual_risks"])
+        return data
+
+    def get_review_result_by_id(self, review_result_id: str) -> dict[str, Any]:
+        with self._connect() as db:
+            row = db.execute(
+                "SELECT * FROM review_results WHERE id=?",
+                (review_result_id,),
+            ).fetchone()
+        if row is None:
+            raise KeyError(review_result_id)
+        data = dict(row)
+        data["findings"] = json.loads(data["findings"])
+        data["residual_risks"] = json.loads(data["residual_risks"])
+        return data
+
+    def create_brainstorming_session(
+        self,
+        *,
+        project_id: str,
+        session_id: str,
+        source_type: str,
+        source_id: str | None,
+        topic: str,
+        mode: str,
+        selected_roles: list[str],
+    ) -> BrainstormingSession:
+        now = utc_now()
+        item = BrainstormingSession(
+            id=new_id("brain"),
+            project_id=project_id,
+            session_id=session_id,
+            source_type=source_type,  # type: ignore[arg-type]
+            source_id=source_id,
+            topic=topic,
+            mode=mode,  # type: ignore[arg-type]
+            status="queued",
+            current_phase=None,
+            selected_roles=list(selected_roles),
+            trace_id=None,
+            created_at=now,
+            updated_at=now,
+        )
+        with self._connect() as db:
+            db.execute(
+                "INSERT INTO brainstorming_sessions VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    item.id,
+                    item.project_id,
+                    item.session_id,
+                    item.source_type,
+                    item.source_id,
+                    item.topic,
+                    item.mode,
+                    item.status,
+                    item.current_phase,
+                    json.dumps(item.selected_roles, ensure_ascii=False),
+                    item.trace_id,
+                    item.created_at,
+                    item.updated_at,
+                ),
+            )
+        return item
+
+    def update_brainstorming_session(
+        self,
+        brainstorming_session_id: str,
+        *,
+        status: str | None = None,
+        current_phase: str | None = None,
+        trace_id: str | None = None,
+    ) -> None:
+        updates: dict[str, Any] = {"updated_at": utc_now()}
+        if status is not None:
+            updates["status"] = status
+        if current_phase is not None:
+            updates["current_phase"] = current_phase
+        if trace_id is not None:
+            updates["trace_id"] = trace_id
+        assignments = ", ".join(f"{key}=?" for key in updates)
+        with self._connect() as db:
+            db.execute(
+                f"UPDATE brainstorming_sessions SET {assignments} WHERE id=?",
+                (*updates.values(), brainstorming_session_id),
+            )
+
+    def get_brainstorming_session(self, brainstorming_session_id: str) -> dict[str, Any]:
+        with self._connect() as db:
+            row = db.execute(
+                "SELECT * FROM brainstorming_sessions WHERE id=?",
+                (brainstorming_session_id,),
+            ).fetchone()
+        if row is None:
+            raise KeyError(brainstorming_session_id)
+        data = dict(row)
+        data["selected_roles"] = json.loads(data["selected_roles"])
+        return data
+
+    def create_brainstorming_result(
+        self,
+        *,
+        brainstorming_session_id: str,
+        contributions: list[dict[str, Any]],
+        critiques: list[dict[str, Any]],
+        options: list[dict[str, Any]],
+        decision_brief: dict[str, Any],
+    ) -> dict[str, Any]:
+        now = utc_now()
+        contribution_items = [
+            BrainstormingContribution(
+                id=new_id("contrib"),
+                brainstorming_session_id=brainstorming_session_id,
+                role=item["role"],
+                stance=item["stance"],
+                summary=item["summary"],
+                arguments=list(item["arguments"]),
+                concerns=list(item["concerns"]),
+                suggested_actions=list(item["suggested_actions"]),
+                referenced_artifacts=list(item["referenced_artifacts"]),
+                created_at=now,
+            )
+            for item in contributions
+        ]
+        critique_items = [
+            BrainstormingCritique(
+                id=new_id("critique"),
+                brainstorming_session_id=brainstorming_session_id,
+                critic_role=item["critic_role"],
+                target_role=item["target_role"],
+                weak_assumptions=list(item["weak_assumptions"]),
+                missing_context=list(item["missing_context"]),
+                risks=list(item["risks"]),
+                suggested_revisions=list(item["suggested_revisions"]),
+                created_at=now,
+            )
+            for item in critiques
+        ]
+        option_items = [
+            BrainstormingOption(
+                id=new_id("option"),
+                brainstorming_session_id=brainstorming_session_id,
+                title=item["title"],
+                summary=item["summary"],
+                benefits=list(item["benefits"]),
+                costs=list(item["costs"]),
+                risks=list(item["risks"]),
+                required_work=list(item["required_work"]),
+                verification_hint=item["verification_hint"],
+                score=float(item["score"]),
+                created_at=now,
+            )
+            for item in options
+        ]
+        selected_index = int(decision_brief.get("selected_option_index", 0))
+        selected_index = min(max(selected_index, 0), max(len(option_items) - 1, 0))
+        selected_option_id = option_items[selected_index].id if option_items else ""
+        brief_item = DecisionBrief(
+            id=new_id("brief"),
+            brainstorming_session_id=brainstorming_session_id,
+            recommendation=decision_brief["recommendation"],
+            selected_option_id=selected_option_id,
+            rationale=decision_brief["rationale"],
+            tradeoffs=list(decision_brief["tradeoffs"]),
+            risks=list(decision_brief["risks"]),
+            open_questions=list(decision_brief["open_questions"]),
+            follow_up_actions=list(decision_brief["follow_up_actions"]),
+            work_package_candidate=dict(decision_brief["work_package_candidate"]),
+            status="pending",
+            created_at=now,
+        )
+        with self._connect() as db:
+            db.executemany(
+                "INSERT INTO brainstorming_contributions VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                [
+                    (
+                        item.id,
+                        item.brainstorming_session_id,
+                        item.role,
+                        item.stance,
+                        item.summary,
+                        json.dumps(item.arguments, ensure_ascii=False),
+                        json.dumps(item.concerns, ensure_ascii=False),
+                        json.dumps(item.suggested_actions, ensure_ascii=False),
+                        json.dumps(item.referenced_artifacts, ensure_ascii=False),
+                        item.created_at,
+                    )
+                    for item in contribution_items
+                ],
+            )
+            db.executemany(
+                "INSERT INTO brainstorming_critiques VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                [
+                    (
+                        item.id,
+                        item.brainstorming_session_id,
+                        item.critic_role,
+                        item.target_role,
+                        json.dumps(item.weak_assumptions, ensure_ascii=False),
+                        json.dumps(item.missing_context, ensure_ascii=False),
+                        json.dumps(item.risks, ensure_ascii=False),
+                        json.dumps(item.suggested_revisions, ensure_ascii=False),
+                        item.created_at,
+                    )
+                    for item in critique_items
+                ],
+            )
+            db.executemany(
+                "INSERT INTO brainstorming_options VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                [
+                    (
+                        item.id,
+                        item.brainstorming_session_id,
+                        item.title,
+                        item.summary,
+                        json.dumps(item.benefits, ensure_ascii=False),
+                        json.dumps(item.costs, ensure_ascii=False),
+                        json.dumps(item.risks, ensure_ascii=False),
+                        json.dumps(item.required_work, ensure_ascii=False),
+                        item.verification_hint,
+                        item.score,
+                        item.created_at,
+                    )
+                    for item in option_items
+                ],
+            )
+            db.execute(
+                "INSERT INTO decision_briefs VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    brief_item.id,
+                    brief_item.brainstorming_session_id,
+                    brief_item.recommendation,
+                    brief_item.selected_option_id,
+                    brief_item.rationale,
+                    json.dumps(brief_item.tradeoffs, ensure_ascii=False),
+                    json.dumps(brief_item.risks, ensure_ascii=False),
+                    json.dumps(brief_item.open_questions, ensure_ascii=False),
+                    json.dumps(brief_item.follow_up_actions, ensure_ascii=False),
+                    json.dumps(brief_item.work_package_candidate, ensure_ascii=False),
+                    brief_item.status,
+                    brief_item.created_at,
+                ),
+            )
+        return self.get_brainstorming_result(brainstorming_session_id)
+
+    def list_brainstorming_contributions(
+        self,
+        brainstorming_session_id: str,
+    ) -> list[dict[str, Any]]:
+        with self._connect() as db:
+            rows = db.execute(
+                """
+                SELECT * FROM brainstorming_contributions
+                WHERE brainstorming_session_id=?
+                ORDER BY created_at ASC, id ASC
+                """,
+                (brainstorming_session_id,),
+            ).fetchall()
+        return [self._decode_brainstorming_row(dict(row), "arguments", "concerns", "suggested_actions", "referenced_artifacts") for row in rows]
+
+    def list_brainstorming_critiques(
+        self,
+        brainstorming_session_id: str,
+    ) -> list[dict[str, Any]]:
+        with self._connect() as db:
+            rows = db.execute(
+                """
+                SELECT * FROM brainstorming_critiques
+                WHERE brainstorming_session_id=?
+                ORDER BY created_at ASC, id ASC
+                """,
+                (brainstorming_session_id,),
+            ).fetchall()
+        return [self._decode_brainstorming_row(dict(row), "weak_assumptions", "missing_context", "risks", "suggested_revisions") for row in rows]
+
+    def list_brainstorming_options(
+        self,
+        brainstorming_session_id: str,
+    ) -> list[dict[str, Any]]:
+        with self._connect() as db:
+            rows = db.execute(
+                """
+                SELECT * FROM brainstorming_options
+                WHERE brainstorming_session_id=?
+                ORDER BY score DESC, created_at ASC
+                """,
+                (brainstorming_session_id,),
+            ).fetchall()
+        return [self._decode_brainstorming_row(dict(row), "benefits", "costs", "risks", "required_work") for row in rows]
+
+    def get_decision_brief(self, decision_brief_id: str) -> dict[str, Any]:
+        with self._connect() as db:
+            row = db.execute(
+                "SELECT * FROM decision_briefs WHERE id=?",
+                (decision_brief_id,),
+            ).fetchone()
+        if row is None:
+            raise KeyError(decision_brief_id)
+        return self._decode_decision_brief(dict(row))
+
+    def get_decision_brief_by_brainstorming_session(
+        self,
+        brainstorming_session_id: str,
+    ) -> dict[str, Any] | None:
+        with self._connect() as db:
+            row = db.execute(
+                """
+                SELECT * FROM decision_briefs
+                WHERE brainstorming_session_id=?
+                ORDER BY created_at DESC
+                LIMIT 1
+                """,
+                (brainstorming_session_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return self._decode_decision_brief(dict(row))
+
+    def update_decision_brief_status(self, decision_brief_id: str, status: str) -> None:
+        with self._connect() as db:
+            db.execute(
+                "UPDATE decision_briefs SET status=? WHERE id=?",
+                (status, decision_brief_id),
+            )
+
+    def create_decision_record(
+        self,
+        *,
+        project_id: str,
+        session_id: str,
+        brainstorming_session_id: str,
+        title: str,
+        decision: str,
+        rationale: str,
+        consequences: list[str],
+        follow_up_actions: list[str],
+    ) -> DecisionRecord:
+        item = DecisionRecord(
+            id=new_id("decision"),
+            project_id=project_id,
+            session_id=session_id,
+            brainstorming_session_id=brainstorming_session_id,
+            title=title,
+            decision=decision,
+            rationale=rationale,
+            consequences=list(consequences),
+            follow_up_actions=list(follow_up_actions),
+            linked_work_package_id=None,
+            created_at=utc_now(),
+        )
+        with self._connect() as db:
+            db.execute(
+                "INSERT INTO decision_records VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    item.id,
+                    item.project_id,
+                    item.session_id,
+                    item.brainstorming_session_id,
+                    item.title,
+                    item.decision,
+                    item.rationale,
+                    json.dumps(item.consequences, ensure_ascii=False),
+                    json.dumps(item.follow_up_actions, ensure_ascii=False),
+                    item.linked_work_package_id,
+                    item.created_at,
+                ),
+            )
+        return item
+
+    def update_decision_record_linked_work_package(
+        self,
+        decision_record_id: str,
+        work_package_id: str,
+    ) -> None:
+        with self._connect() as db:
+            db.execute(
+                "UPDATE decision_records SET linked_work_package_id=? WHERE id=?",
+                (work_package_id, decision_record_id),
+            )
+
+    def get_decision_record(self, decision_record_id: str) -> dict[str, Any]:
+        with self._connect() as db:
+            row = db.execute(
+                "SELECT * FROM decision_records WHERE id=?",
+                (decision_record_id,),
+            ).fetchone()
+        if row is None:
+            raise KeyError(decision_record_id)
+        return self._decode_decision_record(dict(row))
+
+    def get_decision_record_by_brainstorming_session(
+        self,
+        brainstorming_session_id: str,
+    ) -> dict[str, Any] | None:
+        with self._connect() as db:
+            row = db.execute(
+                """
+                SELECT * FROM decision_records
+                WHERE brainstorming_session_id=?
+                ORDER BY created_at DESC
+                LIMIT 1
+                """,
+                (brainstorming_session_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return self._decode_decision_record(dict(row))
+
+    def list_decision_records(self, project_id: str) -> list[dict[str, Any]]:
+        with self._connect() as db:
+            rows = db.execute(
+                """
+                SELECT * FROM decision_records
+                WHERE project_id=?
+                ORDER BY created_at DESC
+                """,
+                (project_id,),
+            ).fetchall()
+        return [self._decode_decision_record(dict(row)) for row in rows]
+
+    def get_brainstorming_result(self, brainstorming_session_id: str) -> dict[str, Any]:
+        return {
+            "brainstorming_session": self.get_brainstorming_session(brainstorming_session_id),
+            "contributions": self.list_brainstorming_contributions(brainstorming_session_id),
+            "critiques": self.list_brainstorming_critiques(brainstorming_session_id),
+            "options": self.list_brainstorming_options(brainstorming_session_id),
+            "decision_brief": self.get_decision_brief_by_brainstorming_session(
+                brainstorming_session_id
+            ),
+            "decision_record": self.get_decision_record_by_brainstorming_session(
+                brainstorming_session_id
+            ),
+        }
+
+    def _decode_brainstorming_row(self, data: dict[str, Any], *json_fields: str) -> dict[str, Any]:
+        for field_name in json_fields:
+            data[field_name] = json.loads(data[field_name])
+        return data
+
+    def _decode_decision_brief(self, data: dict[str, Any]) -> dict[str, Any]:
+        for key in ("tradeoffs", "risks", "open_questions", "follow_up_actions"):
+            data[key] = json.loads(data[key])
+        data["work_package_candidate"] = json.loads(data["work_package_candidate"])
+        return data
+
+    def _decode_decision_record(self, data: dict[str, Any]) -> dict[str, Any]:
+        data["consequences"] = json.loads(data["consequences"])
+        data["follow_up_actions"] = json.loads(data["follow_up_actions"])
         return data

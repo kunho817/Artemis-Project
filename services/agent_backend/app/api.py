@@ -2,7 +2,12 @@
 
 from __future__ import annotations
 
-from .schemas import AgentBackendRequest, ImplementationBackendRequest, ReviewBackendRequest
+from .schemas import (
+    AgentBackendRequest,
+    BrainstormingBackendRequest,
+    ImplementationBackendRequest,
+    ReviewBackendRequest,
+)
 from .service import AgentBackendService
 
 
@@ -34,6 +39,13 @@ def create_app() -> object:
     def create_review_result(payload: dict[str, object]) -> dict[str, object]:
         request = ReviewBackendRequest(**payload)
         return service.create_review_result(request).to_dict()
+
+    @app.post("/internal/brainstorming-sessions")
+    def run_brainstorming(payload: dict[str, object]) -> dict[str, object]:
+        request = BrainstormingBackendRequest(**payload)
+        result = service.run_brainstorming(request).to_dict()
+        runs[request.brainstorming_session_id] = result
+        return result
 
     @app.get("/internal/agent-runs/{agent_run_id}")
     def get_agent_run(agent_run_id: str) -> dict[str, object]:
