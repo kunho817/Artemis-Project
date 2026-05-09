@@ -137,6 +137,7 @@ Each mapping can be overridden with `ARTEMIS_GLM_MODEL_<ROLE>`.
 - [x] MVP 4 Brainstorming Room + Decision Record design document created at `docs/artemis_mvp4.md`.
 - [x] MVP 4 Brainstorming Room vertical slice added: BrainstormingSession, structured contributions/critiques/options, DecisionBrief accept/reject, DecisionRecord, Work Package conversion, event/trace view, backend contracts, and GUI smoke.
 - [x] MVP 4 verification passed: `.venv` compileall, full unittest, FastAPI smoke, GUI build, npm audit, and `scripts/smoke_mvp4_gui.py`.
+- [x] MVP 4 verification rerun passed: `.venv` compileall, full unittest, FastAPI smoke, GUI build, npm audit, and `scripts/smoke_mvp4_gui.py`.
 
 ### Pending
 
@@ -164,6 +165,7 @@ Each mapping can be overridden with `ARTEMIS_GLM_MODEL_<ROLE>`.
 | #53 | 2026-05-09 | Planning-side MVP 3 revalidation completed. Rechecked `docs/artemis_mvp3.md` completion conditions against Control Plane, Agent Backend, GUI, contract tests, and smoke scripts; compileall, full unittest, FastAPI smoke, GUI build, npm audit, and GUI e2e smoke passed again. |
 | #54 | 2026-05-09 | Planning session created MVP 4 design document. MVP 4 scope fixed as Brainstorming Room plus Decision Record: topic/source-based BrainstormingSession, role contributions, cross critique, options/tradeoffs, DecisionBrief accept/reject, accepted DecisionRecord, and optional conversion to a pending-approval WorkPackage, with project file writes, command execution, patch retry loop, and full Memory/RAG excluded. |
 | #55 | 2026-05-09 | MVP 4 implementation session completed the Brainstorming Room vertical slice. Added Agent Backend brainstorming execution, Control Plane Brainstorming/Decision storage and APIs, GUI Brainstorming Room, DecisionBrief accept/reject, accepted DecisionRecord to pending-approval Work Package conversion, backend contracts, and `scripts/smoke_mvp4_gui.py`; verification passed with compileall, full unittest, FastAPI smoke, GUI build, npm audit, and MVP 4 GUI e2e smoke. |
+| #56 | 2026-05-09 | MVP 4 verification rerun completed. Rechecked Brainstorming Room and Decision Record implementation coverage against `docs/artemis_mvp4.md`; `.venv` compileall, full unittest, FastAPI smoke, GUI build, npm audit, and `scripts/smoke_mvp4_gui.py` passed. |
 
 ## Session Rules
 
