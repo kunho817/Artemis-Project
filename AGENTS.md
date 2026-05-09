@@ -20,6 +20,7 @@ D:\Artemis_Project\
 │   ├── artemis_mvp1.md
 │   ├── artemis_mvp2.md
 │   ├── artemis_mvp3.md
+│   ├── artemis_mvp4.md
 │   ├── architecture.md
 │   ├── configuration.md
 │   ├── getting-started.md
@@ -133,6 +134,7 @@ Each mapping can be overridden with `ARTEMIS_GLM_MODEL_<ROLE>`.
 - [x] MVP 3 GUI smoke script added at `scripts/smoke_mvp3_gui.py`.
 - [x] MVP 3 verification rerun passed: `.venv` compileall, full unittest, FastAPI smoke, GUI build, npm audit, and `scripts/smoke_mvp3_gui.py`.
 - [x] MVP 3 planning-side revalidation passed: implementation pipeline structure, safety policy, backend contracts, FastAPI smoke, GUI build/audit, and GUI e2e smoke were rechecked.
+- [x] MVP 4 Brainstorming Room + Decision Record design document created at `docs/artemis_mvp4.md`.
 
 ### Pending
 
@@ -158,6 +160,7 @@ Each mapping can be overridden with `ARTEMIS_GLM_MODEL_<ROLE>`.
 | #51 | 2026-05-09 | MVP 3 implementation session completed the first Implementation Pipeline slice. Added Agent Backend implementation proposal/review contracts, Control Plane storage/API/service support for ImplementationRun/PatchSet/VerificationRun/ReviewResult, policy-gated patch apply and verification command execution, GUI Diff Viewer and implementation timeline, reject approval e2e, local/dev CORS policy, backend contract tests, and MVP 3 GUI smoke. Verification passed: compileall, full unittest, FastAPI smoke, GUI build, npm audit, and `scripts/smoke_mvp3_gui.py`. |
 | #52 | 2026-05-09 | MVP 3 verification rerun completed. Passed `.venv` compileall, full unittest, FastAPI smoke, GUI build, npm audit, and `scripts/smoke_mvp3_gui.py`; no implementation fixes were needed. |
 | #53 | 2026-05-09 | Planning-side MVP 3 revalidation completed. Rechecked `docs/artemis_mvp3.md` completion conditions against Control Plane, Agent Backend, GUI, contract tests, and smoke scripts; compileall, full unittest, FastAPI smoke, GUI build, npm audit, and GUI e2e smoke passed again. |
+| #54 | 2026-05-09 | Planning session created MVP 4 design document. MVP 4 scope fixed as Brainstorming Room plus Decision Record: topic/source-based BrainstormingSession, role contributions, cross critique, options/tradeoffs, DecisionBrief accept/reject, accepted DecisionRecord, and optional conversion to a pending-approval WorkPackage, with project file writes, command execution, patch retry loop, and full Memory/RAG excluded. |
 
 ## Session Rules
 
