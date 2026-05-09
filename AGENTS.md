@@ -131,6 +131,7 @@ Each mapping can be overridden with `ARTEMIS_GLM_MODEL_<ROLE>`.
 - [x] MVP 3 cleanup completed: GUI session resets on project change, Work Package reject approval e2e added, and CORS now uses local/dev policy instead of wildcard.
 - [x] MVP 3 Implementation Pipeline vertical slice added: ImplementationRun, ImplementationPlan, PatchSet/Diff Viewer, patch approval/apply, VerificationRun, ReviewResult, implementation event/trace view, backend contracts, and GUI e2e smoke.
 - [x] MVP 3 GUI smoke script added at `scripts/smoke_mvp3_gui.py`.
+- [x] MVP 3 verification rerun passed: `.venv` compileall, full unittest, FastAPI smoke, GUI build, npm audit, and `scripts/smoke_mvp3_gui.py`.
 
 ### Pending
 
@@ -154,6 +155,7 @@ Each mapping can be overridden with `ARTEMIS_GLM_MODEL_<ROLE>`.
 | #49 | 2026-05-08 | MVP 2 verification session added Playwright GUI e2e smoke covering project open, session creation, Work Package request, event timeline, trace/artifact tabs, and approval. Full contract, compile, FastAPI smoke, GUI build, npm audit, and GUI e2e smoke passed. |
 | #50 | 2026-05-09 | Planning session created MVP 3 design document. MVP 3 scope fixed as approved WorkPackage → ImplementationRun → Implementation Plan → Patch Proposal → Diff Viewer → patch approval/apply → VerificationRun → ReviewResult, with git commit/push, package install, DB migration, deployment, and autonomous retry loop excluded. |
 | #51 | 2026-05-09 | MVP 3 implementation session completed the first Implementation Pipeline slice. Added Agent Backend implementation proposal/review contracts, Control Plane storage/API/service support for ImplementationRun/PatchSet/VerificationRun/ReviewResult, policy-gated patch apply and verification command execution, GUI Diff Viewer and implementation timeline, reject approval e2e, local/dev CORS policy, backend contract tests, and MVP 3 GUI smoke. Verification passed: compileall, full unittest, FastAPI smoke, GUI build, npm audit, and `scripts/smoke_mvp3_gui.py`. |
+| #52 | 2026-05-09 | MVP 3 verification rerun completed. Passed `.venv` compileall, full unittest, FastAPI smoke, GUI build, npm audit, and `scripts/smoke_mvp3_gui.py`; no implementation fixes were needed. |
 
 ## Session Rules
 
