@@ -150,6 +150,7 @@ Each mapping can be overridden with `ARTEMIS_GLM_MODEL_<ROLE>`.
 - [x] MVP 6 selected memory boundary fixed: selected memory snapshots may be attached only through explicit RiskScan/request context, never through hidden automatic injection.
 - [x] MVP 6 Risk Radar / Quality Center vertical slice added: RiskScanRun, RiskFinding, QualitySignal, ProjectHealthSnapshot, ArchitectureMapSnapshot lite, explicit selected memory source context, finding status management, finding-to-WorkPackage conversion, backend contracts, and GUI e2e smoke.
 - [x] MVP 6 verification passed: `.venv` compileall, full unittest, FastAPI smoke, GUI build, npm audit, and `scripts/smoke_mvp6_gui.py`.
+- [x] MVP 6 verification rerun passed: implementation coverage, selected-memory RiskScan boundary, backend contracts, FastAPI smoke, GUI build/audit, and MVP 6 GUI e2e smoke were rechecked.
 
 ### Pending
 
@@ -185,6 +186,7 @@ Each mapping can be overridden with `ARTEMIS_GLM_MODEL_<ROLE>`.
 | #61 | 2026-05-09 | Planning-side MVP 5 revalidation completed. Rechecked `docs/artemis_mvp5.md` completion conditions against Control Plane, Agent Backend, GUI, contract tests, and smoke scripts; selected memory currently remains an explicit context API rather than automatic request injection; compileall, full unittest, FastAPI smoke, GUI build, npm audit, and MVP 5 GUI e2e smoke passed again. |
 | #62 | 2026-05-09 | Planning session created MVP 6 design document. MVP 6 scope fixed as Risk Radar / Quality Center: RiskScanRun, RiskFinding, QualitySignal, ProjectHealthSnapshot, ArchitectureMapSnapshot lite, explicit selected memory attachment to RiskScan source context, finding status management, finding-to-WorkPackage conversion, GUI Risk Radar/Quality Center, and read-only repository/memory/execution signal analysis, with hidden automatic RAG, command execution, file writes, patch generation, test execution, CI integration, and external scanners excluded. |
 | #63 | 2026-05-10 | MVP 6 implementation session completed the Risk Radar / Quality Center vertical slice. Added Agent Backend RiskAnalysisCandidate generation, Control Plane RiskScan/Finding/Quality/Health/Architecture Map storage and APIs, explicit selected-memory scan context with archived/superseded blocking, finding accept/dismiss/mitigate and conversion to pending-approval Work Package, GUI Risk Radar and Quality Center, backend contracts, and `scripts/smoke_mvp6_gui.py`; verification passed with compileall, full unittest, FastAPI smoke, GUI build, npm audit, and MVP 6 GUI e2e smoke. |
+| #64 | 2026-05-10 | MVP 6 verification rerun completed. Rechecked Risk Radar / Quality Center completion conditions against `docs/artemis_mvp6.md`; `.venv` compileall, full unittest, FastAPI smoke, GUI build, npm audit, and `scripts/smoke_mvp6_gui.py` passed again. |
 
 ## Session Rules
 
