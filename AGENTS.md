@@ -23,6 +23,7 @@ D:\Artemis_Project\
 │   ├── artemis_mvp4.md
 │   ├── artemis_mvp5.md
 │   ├── artemis_mvp6.md
+│   ├── artemis_alpha_plan.md
 │   ├── architecture.md
 │   ├── configuration.md
 │   ├── getting-started.md
@@ -153,9 +154,11 @@ Each mapping can be overridden with `ARTEMIS_GLM_MODEL_<ROLE>`.
 - [x] MVP 6 verification rerun passed: implementation coverage, selected-memory RiskScan boundary, backend contracts, FastAPI smoke, GUI build/audit, and MVP 6 GUI e2e smoke were rechecked.
 - [x] MVP 6 planning-side revalidation passed: Risk Radar / Quality Center structure, explicit selected-memory RiskScan boundary, API/GUI boundaries, read-only analysis policy, backend contracts, FastAPI smoke, GUI build/audit, and GUI e2e smoke were rechecked.
 - [x] Central planning document updated so `docs/artemis_planning.md` treats MVP 1 through MVP 6 as completed baseline work as of 2026-05-10.
+- [x] Alpha 0.1 stabilization plan created at `docs/artemis_alpha_plan.md`.
 
 ### Pending
 
+- [ ] Execute Alpha 0.1 stabilization plan: docs refresh, dogfooding runbook, LLM structured output paths, checkpointing, migrations, Command Center UX, and verification matrix.
 - [ ] Replace deterministic Work Package fallback with LLM-generated structured output where appropriate.
 - [ ] Replace deterministic MVP 3 implementation proposal/log patch with LLM-generated structured PatchSet output when policy and review gates are ready.
 - [ ] Add real LangGraph checkpointing after MVP 1 contracts stabilize.
@@ -191,6 +194,7 @@ Each mapping can be overridden with `ARTEMIS_GLM_MODEL_<ROLE>`.
 | #64 | 2026-05-10 | MVP 6 verification rerun completed. Rechecked Risk Radar / Quality Center completion conditions against `docs/artemis_mvp6.md`; `.venv` compileall, full unittest, FastAPI smoke, GUI build, npm audit, and `scripts/smoke_mvp6_gui.py` passed again. |
 | #65 | 2026-05-10 | Planning-side MVP 6 revalidation completed. Rechecked `docs/artemis_mvp6.md` completion conditions against Control Plane, Agent Backend, GUI, contract tests, and smoke scripts; RiskScan selected-memory attachment remains explicit-only and RiskScan analysis remains read-only; compileall, full unittest, FastAPI smoke, GUI build, npm audit, and MVP 6 GUI e2e smoke passed again. |
 | #66 | 2026-05-10 | Central planning document refresh completed. Updated `docs/artemis_planning.md` to mark MVP 1 through MVP 6 as completed baseline work, add a current implementation status section, annotate the MVP roadmap with completion criteria, and replace the old bootstrap task list with post-MVP6 follow-up priorities. |
+| #67 | 2026-05-10 | Alpha 0.1 stabilization planning completed. Created `docs/artemis_alpha_plan.md` to define the post-MVP baseline hardening scope: baseline freeze, dogfooding, LLM structured WorkPackage and PatchSet paths, LangGraph checkpointing, SQLite migrations, Command Center UX, verification matrix, documentation refresh, and Alpha completion criteria. |
 
 ## Session Rules
 
