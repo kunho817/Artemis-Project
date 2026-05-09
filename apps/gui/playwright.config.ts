@@ -7,6 +7,7 @@ const controlPlaneUrl = process.env.VITE_CONTROL_PLANE_URL ?? "http://127.0.0.1:
 export default defineConfig({
   testDir: "./tests",
   timeout: 45_000,
+  workers: 1,
   expect: {
     timeout: 15_000
   },

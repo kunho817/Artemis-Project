@@ -3,8 +3,10 @@ import {
   Check,
   CircleAlert,
   CircleDot,
+  Code2,
   FileText,
   FolderOpen,
+  GitPullRequest,
   Play,
   RefreshCw,
   Send,
@@ -18,8 +20,10 @@ import type {
   AgentRunResult,
   BackendStatus,
   EventRecord,
+  ImplementationRunResult,
   Project,
-  Session
+  Session,
+  WorkPackage
 } from "./types";
 
 const DEFAULT_PROJECT_ROOT = import.meta.env.VITE_DEFAULT_PROJECT_ROOT ?? "D:\\Artemis_Project";
@@ -45,6 +49,32 @@ const SSE_EVENT_TYPES = [
   "artifact.created",
   "trace.linked"
 ];
+const IMPLEMENTATION_SSE_EVENT_TYPES = [
+  "implementation_run.created",
+  "implementation_run.started",
+  "implementation_run.phase_changed",
+  "implementation_run.completed",
+  "implementation_run.failed",
+  "implementation_run.canceled",
+  "implementation_plan.created",
+  "patch_set.proposed",
+  "patch_set.validation_passed",
+  "patch_set.validation_failed",
+  "patch_set.pending_approval",
+  "patch_set.approved",
+  "patch_set.rejected",
+  "patch_set.apply_started",
+  "patch_set.applied",
+  "patch_set.apply_failed",
+  "verification.started",
+  "verification.completed",
+  "verification.failed",
+  "verification.blocked",
+  "review.started",
+  "review.completed",
+  "artifact.created",
+  "trace.step_recorded"
+];
 
 export function App() {
   const [backendStatus, setBackendStatus] = useState<BackendStatus>("checking");
@@ -61,13 +91,20 @@ export function App() {
   const [agentRun, setAgentRun] = useState<AgentRun | null>(null);
   const [events, setEvents] = useState<EventRecord[]>([]);
   const [result, setResult] = useState<AgentRunResult | null>(null);
-  const [activeTab, setActiveTab] = useState<"timeline" | "trace" | "artifacts">("timeline");
+  const [implementationResult, setImplementationResult] = useState<ImplementationRunResult | null>(
+    null
+  );
+  const [implementationEvents, setImplementationEvents] = useState<EventRecord[]>([]);
+  const [activeTab, setActiveTab] = useState<
+    "timeline" | "trace" | "artifacts" | "implementation"
+  >("timeline");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const lastEventIdRef = useRef<string | undefined>();
+  const lastImplementationEventIdRef = useRef<string | undefined>();
 
   const currentStatus = agentRun?.status ?? "idle";
-  const selectedTrace = result?.trace ?? null;
+  const selectedTrace = implementationResult?.trace ?? result?.trace ?? null;
   const selectedArtifacts = result?.artifacts ?? [];
 
   const refreshBackend = useCallback(async () => {
@@ -102,13 +139,23 @@ export function App() {
       .then((loadedSessions) => {
         if (canceled) return;
         setSessions(loadedSessions);
-        setCurrentSession((existing) => existing ?? loadedSessions[0] ?? null);
+        setCurrentSession(loadedSessions[0] ?? null);
       })
       .catch((err) => setError(errorMessage(err)));
     return () => {
       canceled = true;
     };
   }, [currentProject]);
+
+  useEffect(() => {
+    setAgentRun(null);
+    setEvents([]);
+    setResult(null);
+    setImplementationResult(null);
+    setImplementationEvents([]);
+    lastEventIdRef.current = undefined;
+    lastImplementationEventIdRef.current = undefined;
+  }, [currentProject?.id]);
 
   useEffect(() => {
     if (!agentRun?.id) return;
@@ -165,6 +212,61 @@ export function App() {
     };
   }, [agentRun?.id]);
 
+  useEffect(() => {
+    const implementationRunId = implementationResult?.implementation_run.id;
+    if (!implementationRunId) return;
+    let canceled = false;
+    let source: EventSource | null = null;
+
+    const mergeImplementationEvents = (nextEvents: EventRecord[]) => {
+      if (!nextEvents.length) return;
+      setImplementationEvents((previous) => mergeEventRecords(previous, nextEvents));
+      lastImplementationEventIdRef.current = nextEvents[nextEvents.length - 1].id;
+    };
+
+    const refreshImplementationRun = async () => {
+      const nextResult = await controlPlaneApi.getImplementationRunResult(implementationRunId);
+      if (canceled) return;
+      setImplementationResult(nextResult);
+      if (!source) {
+        const nextEvents = await controlPlaneApi.listImplementationEvents(
+          implementationRunId,
+          lastImplementationEventIdRef.current
+        );
+        if (!canceled) mergeImplementationEvents(nextEvents);
+      }
+    };
+
+    if ("EventSource" in window) {
+      source = new EventSource(controlPlaneApi.implementationEventStreamUrl(implementationRunId));
+      const handleSse = (message: MessageEvent<string>) => {
+        try {
+          mergeImplementationEvents([JSON.parse(message.data) as EventRecord]);
+        } catch (err) {
+          setError(errorMessage(err));
+        }
+      };
+      for (const type of IMPLEMENTATION_SSE_EVENT_TYPES) {
+        source.addEventListener(type, handleSse as EventListener);
+      }
+      source.onerror = () => {
+        source?.close();
+        source = null;
+      };
+    }
+
+    const interval = window.setInterval(() => {
+      void refreshImplementationRun().catch((err) => setError(errorMessage(err)));
+    }, 900);
+    void refreshImplementationRun().catch((err) => setError(errorMessage(err)));
+
+    return () => {
+      canceled = true;
+      window.clearInterval(interval);
+      source?.close();
+    };
+  }, [implementationResult?.implementation_run.id]);
+
   const openProject = async (event: FormEvent) => {
     event.preventDefault();
     setBusy(true);
@@ -205,7 +307,10 @@ export function App() {
     setError(null);
     setEvents([]);
     setResult(null);
+    setImplementationResult(null);
+    setImplementationEvents([]);
     lastEventIdRef.current = undefined;
+    lastImplementationEventIdRef.current = undefined;
 
     try {
       const session = currentSession ?? (await createSession());
@@ -245,6 +350,70 @@ export function App() {
       const nextEvents = await controlPlaneApi.listEvents(result.agent_run.id);
       setResult(nextResult);
       setEvents(nextEvents);
+      if (status === "reject") {
+        setImplementationResult(null);
+        setImplementationEvents([]);
+      }
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const startImplementation = async () => {
+    const workPackage = result?.work_package;
+    if (!workPackage || workPackage.status !== "approved") return;
+    setBusy(true);
+    setError(null);
+    setImplementationEvents([]);
+    lastImplementationEventIdRef.current = undefined;
+    try {
+      const nextResult = await controlPlaneApi.createImplementationRun(workPackage.id);
+      setImplementationResult(nextResult);
+      setImplementationEvents(nextResult.events);
+      lastImplementationEventIdRef.current =
+        nextResult.events[nextResult.events.length - 1]?.id ?? undefined;
+      setActiveTab("implementation");
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const resolvePatchSet = async (status: "approve" | "reject") => {
+    const patchSet = implementationResult?.patch_set;
+    if (!patchSet) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await controlPlaneApi.resolvePatchSet(patchSet.id, status);
+      const nextResult = await controlPlaneApi.getImplementationRunResult(patchSet.implementation_run_id);
+      const nextEvents = await controlPlaneApi.listImplementationEvents(patchSet.implementation_run_id);
+      setImplementationResult(nextResult);
+      setImplementationEvents(nextEvents);
+      lastImplementationEventIdRef.current = nextEvents[nextEvents.length - 1]?.id;
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const applyPatchSet = async () => {
+    const patchSet = implementationResult?.patch_set;
+    if (!patchSet) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await controlPlaneApi.applyPatchSet(patchSet.id);
+      const nextResult = await controlPlaneApi.getImplementationRunResult(patchSet.implementation_run_id);
+      const nextEvents = await controlPlaneApi.listImplementationEvents(patchSet.implementation_run_id);
+      setImplementationResult(nextResult);
+      setImplementationEvents(nextEvents);
+      lastImplementationEventIdRef.current = nextEvents[nextEvents.length - 1]?.id;
+      setActiveTab("implementation");
     } catch (err) {
       setError(errorMessage(err));
     } finally {
@@ -386,6 +555,15 @@ export function App() {
           <WorkPackagePanel result={result} />
           <ApprovalPanel result={result} busy={busy} onResolve={resolveApproval} />
         </section>
+
+        <ImplementationPanel
+          busy={busy}
+          result={implementationResult}
+          workPackage={result?.work_package ?? null}
+          onApplyPatch={applyPatchSet}
+          onResolvePatch={resolvePatchSet}
+          onStart={startImplementation}
+        />
       </main>
 
       <aside className="activity-panel">
@@ -402,11 +580,19 @@ export function App() {
             <FileText size={15} />
             Artifacts
           </TabButton>
+          <TabButton
+            active={activeTab === "implementation"}
+            onClick={() => setActiveTab("implementation")}
+          >
+            <GitPullRequest size={15} />
+            Impl
+          </TabButton>
         </div>
 
         {activeTab === "timeline" && <Timeline events={events} />}
         {activeTab === "trace" && <TracePanel trace={selectedTrace} />}
         {activeTab === "artifacts" && <ArtifactsPanel artifacts={selectedArtifacts} />}
+        {activeTab === "implementation" && <Timeline events={implementationEvents} />}
       </aside>
     </div>
   );
@@ -492,6 +678,136 @@ function ApprovalPanel({
         </>
       ) : (
         <span className="muted">No approval request</span>
+      )}
+    </section>
+  );
+}
+
+function ImplementationPanel({
+  busy,
+  result,
+  workPackage,
+  onApplyPatch,
+  onResolvePatch,
+  onStart
+}: {
+  busy: boolean;
+  result: ImplementationRunResult | null;
+  workPackage: WorkPackage | null;
+  onApplyPatch: () => void;
+  onResolvePatch: (status: "approve" | "reject") => void;
+  onStart: () => void;
+}) {
+  const plan = result?.implementation_plan;
+  const patchSet = result?.patch_set;
+  const canStart = workPackage?.status === "approved" && !result;
+  const hasDelete = patchSet?.files.some((file) => file.operation === "delete") ?? false;
+
+  return (
+    <section className="panel implementation-panel">
+      <div className="panel-title">
+        <Code2 size={16} />
+        <span>Implementation</span>
+        {result && <StatusPill label={result.implementation_run.status} />}
+      </div>
+      <div className="implementation-toolbar">
+        <button className="primary-button" disabled={busy || !canStart} onClick={onStart} type="button">
+          <Play size={16} />
+          Start
+        </button>
+        {result && <span className="run-id">{result.implementation_run.id}</span>}
+      </div>
+
+      {!result && <span className="muted">Approved Work Package required</span>}
+
+      {plan && (
+        <div className="implementation-section">
+          <h2>Plan</h2>
+          <p>{plan.goal}</p>
+          <FieldGroup title="Target Files" values={plan.target_files} />
+          <FieldGroup title="Steps" values={plan.steps} />
+        </div>
+      )}
+
+      {patchSet && (
+        <div className="implementation-section">
+          <div className="subsection-heading">
+            <h2>Patch</h2>
+            <StatusPill label={patchSet.approval_status} />
+          </div>
+          <p>{patchSet.summary}</p>
+          <div className="diff-list">
+            {patchSet.files.map((file) => (
+              <article className="diff-file" key={file.id}>
+                <div className="diff-file-head">
+                  <strong>{file.path}</strong>
+                  <span>{file.operation}</span>
+                  <span className={`risk-pill ${file.risk_level}`}>{file.risk_level}</span>
+                </div>
+                <p>{file.rationale}</p>
+                <pre className="diff-block">{file.diff || "No diff"}</pre>
+              </article>
+            ))}
+          </div>
+          <div className="action-row">
+            <button
+              className="approve-button"
+              disabled={busy || patchSet.approval_status !== "pending"}
+              onClick={() => onResolvePatch("approve")}
+              type="button"
+            >
+              <Check size={16} />
+              Approve Patch
+            </button>
+            <button
+              className="reject-button"
+              disabled={busy || patchSet.approval_status !== "pending"}
+              onClick={() => onResolvePatch("reject")}
+              type="button"
+            >
+              <X size={16} />
+              Reject Patch
+            </button>
+            <button
+              className="command-button"
+              disabled={busy || patchSet.status !== "approved" || hasDelete}
+              onClick={onApplyPatch}
+              type="button"
+            >
+              <GitPullRequest size={16} />
+              Apply
+            </button>
+          </div>
+        </div>
+      )}
+
+      {!!result?.verification_runs.length && (
+        <div className="implementation-section">
+          <h2>Verification</h2>
+          <div className="verification-list">
+            {result.verification_runs.map((run) => (
+              <article className="verification-row" key={run.id}>
+                <div>
+                  <strong>{run.command || "not_run"}</strong>
+                  <StatusPill label={run.status} />
+                </div>
+                <code>{run.stderr || run.stdout || `exit ${run.exit_code ?? "n/a"}`}</code>
+              </article>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {result?.review_result && (
+        <div className="implementation-section">
+          <div className="subsection-heading">
+            <h2>Review</h2>
+            <StatusPill label={result.review_result.status} />
+          </div>
+          <p>{result.review_result.recommendation}</p>
+          <FieldGroup title="Findings" values={result.review_result.findings} />
+          <FieldGroup title="Residual Risks" values={result.review_result.residual_risks} />
+        </div>
       )}
     </section>
   );

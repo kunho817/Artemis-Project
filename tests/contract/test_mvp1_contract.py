@@ -248,6 +248,162 @@ class MVP1ContractTests(unittest.TestCase):
             self.assertGreaterEqual(len(artifacts), 3)
             self.assertEqual(polled[0]["id"], events[1]["id"])
 
+    def test_mvp3_implementation_pipeline_contract(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            project_root = root / "project"
+            project_root.mkdir()
+            (project_root / "README.md").write_text("Artemis test project", encoding="utf-8")
+            (project_root / "tests").mkdir()
+            (project_root / "tests" / "test_smoke.py").write_text(
+                "import unittest\n\n"
+                "class SmokeTest(unittest.TestCase):\n"
+                "    def test_smoke(self):\n"
+                "        self.assertTrue(True)\n",
+                encoding="utf-8",
+            )
+
+            store = SQLiteStore(root / "artemis.db", root / "events.jsonl")
+            service = ControlPlaneService(store, agent_backend=InProcessAgentBackendClient())
+            project = service.open_project(name="test", root_path=str(project_root))
+            session = service.create_session(project_id=project["id"], title="MVP3 test")
+            work_package_result = service.create_work_package_from_request(
+                project=project,
+                session=session,
+                user_request="Create an implementation pipeline test Work Package.",
+            )
+
+            with self.assertRaises(ValueError):
+                service.create_implementation_run(
+                    work_package_id=work_package_result["work_package_id"],
+                )
+
+            service.resolve_approval(
+                approval_id=work_package_result["approval_id"],
+                status="approved",
+            )
+            implementation_result = service.create_implementation_run(
+                work_package_id=work_package_result["work_package_id"],
+            )
+
+            implementation_run = implementation_result["implementation_run"]
+            patch_set = implementation_result["patch_set"]
+            self.assertEqual(implementation_run["status"], "pending_patch_approval")
+            self.assertEqual(patch_set["approval_status"], "pending")
+            self.assertEqual(patch_set["files"][0]["operation"], "create")
+
+            with self.assertRaises(ValueError):
+                service.apply_patch_set(patch_set_id=patch_set["id"])
+
+            approved_patch_set = service.resolve_patch_set(
+                patch_set_id=patch_set["id"],
+                status="approved",
+            )
+            self.assertEqual(approved_patch_set["approval_status"], "approved")
+
+            applied_patch_set = service.apply_patch_set(patch_set_id=patch_set["id"])
+            self.assertEqual(applied_patch_set["status"], "applied")
+            self.assertIn("docs/artemis_implementation_log.md", applied_patch_set["applied_files"])
+            self.assertIn(
+                work_package_result["work_package_id"],
+                (project_root / "docs" / "artemis_implementation_log.md").read_text(
+                    encoding="utf-8"
+                ),
+            )
+
+            final_result = service.get_implementation_run_result(implementation_run["id"])
+            event_types = {event["type"] for event in final_result["events"]}
+            self.assertEqual(final_result["implementation_run"]["status"], "completed")
+            self.assertEqual(final_result["verification_runs"][0]["status"], "passed")
+            self.assertEqual(final_result["review_result"]["status"], "pass")
+            self.assertIsNotNone(final_result["trace"])
+            self.assertIn("implementation_plan.created", event_types)
+            self.assertIn("patch_set.applied", event_types)
+            self.assertIn("verification.completed", event_types)
+            self.assertIn("review.completed", event_types)
+
+    def test_mvp3_patch_and_verification_policy_blocks_unsafe_actions(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            project_root = root / "project"
+            project_root.mkdir()
+            (project_root / "README.md").write_text("Artemis safety project", encoding="utf-8")
+
+            store = SQLiteStore(root / "artemis.db", root / "events.jsonl")
+            service = ControlPlaneService(store, agent_backend=InProcessAgentBackendClient())
+            project = service.open_project(name="test", root_path=str(project_root))
+            session = service.create_session(project_id=project["id"], title="MVP3 safety")
+            work_package_result = service.create_work_package_from_request(
+                project=project,
+                session=session,
+                user_request="Create a safety policy Work Package.",
+            )
+            service.resolve_approval(
+                approval_id=work_package_result["approval_id"],
+                status="approved",
+            )
+            run = store.create_implementation_run(
+                project_id=project["id"],
+                session_id=session["id"],
+                work_package_id=work_package_result["work_package_id"],
+            )
+
+            escape_patch = store.create_patch_set(
+                implementation_run_id=run.id,
+                patch_set={
+                    "summary": "Unsafe escape",
+                    "risk_level": "high",
+                    "files": [
+                        {
+                            "path": "../escape.txt",
+                            "operation": "update",
+                            "diff": "",
+                            "rationale": "policy test",
+                            "risk_level": "high",
+                            "replacement_content": "unsafe",
+                        }
+                    ],
+                },
+            )
+            store.update_patch_set(
+                escape_patch.id,
+                status="approved",
+                approval_status="approved",
+            )
+            with self.assertRaises(ValueError):
+                service.apply_patch_set(patch_set_id=escape_patch.id)
+
+            delete_patch = store.create_patch_set(
+                implementation_run_id=run.id,
+                patch_set={
+                    "summary": "Unsafe delete",
+                    "risk_level": "high",
+                    "files": [
+                        {
+                            "path": "README.md",
+                            "operation": "delete",
+                            "diff": "",
+                            "rationale": "policy test",
+                            "risk_level": "high",
+                            "replacement_content": "",
+                        }
+                    ],
+                },
+            )
+            store.update_patch_set(
+                delete_patch.id,
+                status="approved",
+                approval_status="approved",
+            )
+            with self.assertRaises(ValueError):
+                service.apply_patch_set(patch_set_id=delete_patch.id)
+
+            verification = service.run_verification(
+                implementation_run_id=run.id,
+                command="git reset --hard",
+            )
+            self.assertEqual(verification["status"], "blocked")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -145,3 +145,93 @@ class FinalAgentRunResult:
             "events": [event.to_dict() for event in self.events],
             "errors": list(self.errors),
         }
+
+
+@dataclass
+class ImplementationBackendRequest:
+    project_id: str
+    session_id: str
+    implementation_run_id: str
+    project_root: str
+    work_package: dict[str, Any]
+
+
+@dataclass
+class ImplementationPlanDraft:
+    goal: str
+    context_summary: str
+    target_files: list[str]
+    steps: list[str]
+    verification_strategy: list[str]
+    risks: list[dict[str, Any]]
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
+class PatchFileDraft:
+    path: str
+    operation: Literal["create", "update", "delete"]
+    diff: str
+    rationale: str
+    risk_level: RiskLevel
+    replacement_content: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
+class PatchSetDraft:
+    summary: str
+    risk_level: RiskLevel
+    files: list[PatchFileDraft]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "summary": self.summary,
+            "risk_level": self.risk_level,
+            "files": [file.to_dict() for file in self.files],
+        }
+
+
+@dataclass
+class ImplementationProposalResult:
+    status: Literal["completed", "failed"]
+    implementation_plan: ImplementationPlanDraft | None
+    patch_set: PatchSetDraft | None
+    trace_id: str
+    events: list[AgentBackendEvent]
+    errors: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "status": self.status,
+            "implementation_plan": self.implementation_plan.to_dict()
+            if self.implementation_plan
+            else None,
+            "patch_set": self.patch_set.to_dict() if self.patch_set else None,
+            "trace_id": self.trace_id,
+            "events": [event.to_dict() for event in self.events],
+            "errors": list(self.errors),
+        }
+
+
+@dataclass
+class ReviewBackendRequest:
+    implementation_run_id: str
+    work_package: dict[str, Any]
+    patch_set: dict[str, Any] | None
+    verification_runs: list[dict[str, Any]]
+
+
+@dataclass
+class ReviewResultDraft:
+    status: Literal["pass", "needs_changes", "blocked"]
+    findings: list[str]
+    residual_risks: list[str]
+    recommendation: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)

@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import os
 from pathlib import Path
 from typing import Any
 
@@ -10,6 +11,7 @@ from .storage import SQLiteStore
 
 
 TERMINAL_AGENT_RUN_STATES = {"completed", "failed", "canceled"}
+TERMINAL_IMPLEMENTATION_RUN_STATES = {"completed", "failed", "canceled"}
 
 
 def create_app(db_path: str = "data/artemis.db", agent_backend: Any | None = None) -> object:
@@ -20,10 +22,19 @@ def create_app(db_path: str = "data/artemis.db", agent_backend: Any | None = Non
     except ImportError as exc:
         raise RuntimeError("fastapi is required to run the Control Plane API") from exc
 
-    app = FastAPI(title="Artemis Control Plane", version="0.2.0")
+    app = FastAPI(title="Artemis Control Plane", version="0.3.0")
+    allow_origins = [
+        origin.strip()
+        for origin in os.environ.get(
+            "ARTEMIS_CONTROL_PLANE_ALLOW_ORIGINS",
+            "http://127.0.0.1:5173,http://localhost:5173",
+        ).split(",")
+        if origin.strip()
+    ]
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
+        allow_origins=allow_origins,
+        allow_origin_regex=r"^http://(127\.0\.0\.1|localhost):\d+$",
         allow_credentials=False,
         allow_methods=["*"],
         allow_headers=["*"],
@@ -144,6 +155,123 @@ def create_app(db_path: str = "data/artemis.db", agent_backend: Any | None = Non
     @app.post("/api/approvals/{approval_id}/reject")
     def reject(approval_id: str) -> dict[str, Any]:
         return service.resolve_approval(approval_id=approval_id, status="rejected")
+
+    @app.post("/api/implementation-runs")
+    def create_implementation_run(payload: dict[str, str]) -> dict[str, Any]:
+        from fastapi import HTTPException
+
+        try:
+            return service.create_implementation_run(work_package_id=payload["work_package_id"])
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.get("/api/implementation-runs/{implementation_run_id}")
+    def get_implementation_run(implementation_run_id: str) -> dict[str, Any]:
+        return store.get_implementation_run(implementation_run_id)
+
+    @app.get("/api/implementation-runs/{implementation_run_id}/result")
+    def get_implementation_run_result(implementation_run_id: str) -> dict[str, Any]:
+        return service.get_implementation_run_result(implementation_run_id)
+
+    @app.get("/api/implementation-runs/{implementation_run_id}/events")
+    def get_implementation_events(
+        implementation_run_id: str,
+        after: str | None = None,
+    ) -> list[dict[str, Any]]:
+        return store.list_events(implementation_run_id, after=after)
+
+    @app.get("/api/implementation-runs/{implementation_run_id}/events/stream")
+    def stream_implementation_events(implementation_run_id: str) -> object:
+        async def event_generator() -> Any:
+            last_event_id: str | None = None
+            while True:
+                events = store.list_events(implementation_run_id, after=last_event_id)
+                for event in events:
+                    last_event_id = event["id"]
+                    yield (
+                        f"id: {event['id']}\n"
+                        f"event: {event['type']}\n"
+                        f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+                    )
+
+                try:
+                    run = store.get_implementation_run(implementation_run_id)
+                except KeyError:
+                    run = None
+                if run is not None and run["status"] in TERMINAL_IMPLEMENTATION_RUN_STATES and not events:
+                    break
+                await asyncio.sleep(0.5)
+
+        return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+    @app.post("/api/implementation-runs/{implementation_run_id}/cancel")
+    def cancel_implementation_run(implementation_run_id: str) -> dict[str, Any]:
+        run = store.get_implementation_run(implementation_run_id)
+        store.update_implementation_run(
+            implementation_run_id,
+            status="canceled",
+            current_phase="canceled",
+        )
+        store.append_event(
+            project_id=run["project_id"],
+            session_id=run["session_id"],
+            agent_run_id=implementation_run_id,
+            event_type="implementation_run.canceled",
+            payload={"implementation_run_id": implementation_run_id},
+        )
+        return store.get_implementation_run(implementation_run_id)
+
+    @app.get("/api/implementation-runs/{implementation_run_id}/patch-set")
+    def get_implementation_patch_set(implementation_run_id: str) -> dict[str, Any]:
+        patch_set = store.get_patch_set_by_implementation_run(implementation_run_id)
+        if patch_set is None:
+            from fastapi import HTTPException
+
+            raise HTTPException(status_code=404, detail="PatchSet not found")
+        return patch_set
+
+    @app.get("/api/patch-sets/{patch_set_id}")
+    def get_patch_set(patch_set_id: str) -> dict[str, Any]:
+        return store.get_patch_set(patch_set_id)
+
+    @app.post("/api/patch-sets/{patch_set_id}/approve")
+    def approve_patch_set(patch_set_id: str) -> dict[str, Any]:
+        return service.resolve_patch_set(patch_set_id=patch_set_id, status="approved")
+
+    @app.post("/api/patch-sets/{patch_set_id}/reject")
+    def reject_patch_set(patch_set_id: str) -> dict[str, Any]:
+        return service.resolve_patch_set(patch_set_id=patch_set_id, status="rejected")
+
+    @app.post("/api/patch-sets/{patch_set_id}/apply")
+    def apply_patch_set(patch_set_id: str) -> dict[str, Any]:
+        from fastapi import HTTPException
+
+        try:
+            return service.apply_patch_set(patch_set_id=patch_set_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/api/implementation-runs/{implementation_run_id}/verification-runs")
+    def create_verification_run(
+        implementation_run_id: str,
+        payload: dict[str, str] | None = None,
+    ) -> dict[str, Any]:
+        return service.run_verification(
+            implementation_run_id=implementation_run_id,
+            command=(payload or {}).get("command"),
+        )
+
+    @app.get("/api/implementation-runs/{implementation_run_id}/verification-runs")
+    def list_verification_runs(implementation_run_id: str) -> list[dict[str, Any]]:
+        return store.list_verification_runs(implementation_run_id)
+
+    @app.get("/api/implementation-runs/{implementation_run_id}/review-result")
+    def get_review_result(implementation_run_id: str) -> dict[str, Any] | None:
+        return store.get_review_result(implementation_run_id)
+
+    @app.get("/api/implementation-runs/{implementation_run_id}/trace")
+    def get_implementation_trace(implementation_run_id: str) -> dict[str, Any]:
+        return store.get_trace_summary(implementation_run_id)
 
     @app.get("/api/health")
     def health() -> dict[str, str]:

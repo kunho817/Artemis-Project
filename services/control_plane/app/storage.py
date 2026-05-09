@@ -13,10 +13,16 @@ from .models import (
     ApprovalRequest,
     Artifact,
     Event,
+    ImplementationPlan,
+    ImplementationRun,
+    PatchFile,
+    PatchSet,
     Project,
+    ReviewResult,
     Session,
     Trace,
     TraceStep,
+    VerificationRun,
     WorkPackage,
     new_id,
     utc_now,
@@ -141,10 +147,74 @@ class SQLiteStore:
                   started_at TEXT NOT NULL,
                   ended_at TEXT
                 );
+                CREATE TABLE IF NOT EXISTS implementation_runs (
+                  id TEXT PRIMARY KEY,
+                  project_id TEXT NOT NULL,
+                  session_id TEXT NOT NULL,
+                  work_package_id TEXT NOT NULL,
+                  status TEXT NOT NULL,
+                  current_phase TEXT,
+                  trace_id TEXT,
+                  created_at TEXT NOT NULL,
+                  updated_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS implementation_plans (
+                  id TEXT PRIMARY KEY,
+                  implementation_run_id TEXT NOT NULL,
+                  goal TEXT NOT NULL,
+                  context_summary TEXT NOT NULL,
+                  target_files TEXT NOT NULL,
+                  steps TEXT NOT NULL,
+                  verification_strategy TEXT NOT NULL,
+                  risks TEXT NOT NULL,
+                  created_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS patch_sets (
+                  id TEXT PRIMARY KEY,
+                  implementation_run_id TEXT NOT NULL,
+                  status TEXT NOT NULL,
+                  summary TEXT NOT NULL,
+                  risk_level TEXT NOT NULL,
+                  approval_status TEXT NOT NULL,
+                  applied_files TEXT NOT NULL,
+                  created_at TEXT NOT NULL,
+                  updated_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS patch_files (
+                  id TEXT PRIMARY KEY,
+                  patch_set_id TEXT NOT NULL,
+                  path TEXT NOT NULL,
+                  operation TEXT NOT NULL,
+                  diff TEXT NOT NULL,
+                  rationale TEXT NOT NULL,
+                  risk_level TEXT NOT NULL,
+                  replacement_content TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS verification_runs (
+                  id TEXT PRIMARY KEY,
+                  implementation_run_id TEXT NOT NULL,
+                  command TEXT NOT NULL,
+                  status TEXT NOT NULL,
+                  exit_code INTEGER,
+                  stdout TEXT NOT NULL,
+                  stderr TEXT NOT NULL,
+                  started_at TEXT NOT NULL,
+                  ended_at TEXT
+                );
+                CREATE TABLE IF NOT EXISTS review_results (
+                  id TEXT PRIMARY KEY,
+                  implementation_run_id TEXT NOT NULL,
+                  status TEXT NOT NULL,
+                  findings TEXT NOT NULL,
+                  residual_risks TEXT NOT NULL,
+                  recommendation TEXT NOT NULL,
+                  created_at TEXT NOT NULL
+                );
                 """
             )
             self._ensure_column(db, "agent_runs", "trace_id", "TEXT")
             self._ensure_column(db, "agent_runs", "external_trace_id", "TEXT")
+            self._ensure_column(db, "patch_sets", "applied_files", "TEXT NOT NULL DEFAULT '[]'")
 
     def _ensure_column(
         self,
@@ -557,7 +627,11 @@ class SQLiteStore:
         )
 
         steps: list[TraceStep] = []
-        phase_events = [event for event in events if event["type"] == "agent_run.phase_changed"]
+        phase_events = [
+            event
+            for event in events
+            if event["type"] in {"agent_run.phase_changed", "implementation_run.phase_changed"}
+        ]
         for index, event in enumerate(phase_events, start=1):
             phase = str(event.get("payload", {}).get("phase", f"phase_{index}"))
             steps.append(
@@ -676,4 +750,343 @@ class SQLiteStore:
         ):
             data[key] = json.loads(data[key])
         data["approval_required"] = bool(data["approval_required"])
+        return data
+
+    def create_implementation_run(
+        self,
+        *,
+        project_id: str,
+        session_id: str,
+        work_package_id: str,
+    ) -> ImplementationRun:
+        now = utc_now()
+        run = ImplementationRun(
+            id=new_id("impl"),
+            project_id=project_id,
+            session_id=session_id,
+            work_package_id=work_package_id,
+            status="queued",
+            current_phase=None,
+            trace_id=None,
+            created_at=now,
+            updated_at=now,
+        )
+        with self._connect() as db:
+            db.execute(
+                "INSERT INTO implementation_runs VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    run.id,
+                    run.project_id,
+                    run.session_id,
+                    run.work_package_id,
+                    run.status,
+                    run.current_phase,
+                    run.trace_id,
+                    run.created_at,
+                    run.updated_at,
+                ),
+            )
+        return run
+
+    def update_implementation_run(
+        self,
+        implementation_run_id: str,
+        *,
+        status: str | None = None,
+        current_phase: str | None = None,
+        trace_id: str | None = None,
+    ) -> None:
+        updates: dict[str, Any] = {"updated_at": utc_now()}
+        if status is not None:
+            updates["status"] = status
+        if current_phase is not None:
+            updates["current_phase"] = current_phase
+        if trace_id is not None:
+            updates["trace_id"] = trace_id
+        assignments = ", ".join(f"{key}=?" for key in updates)
+        with self._connect() as db:
+            db.execute(
+                f"UPDATE implementation_runs SET {assignments} WHERE id=?",
+                (*updates.values(), implementation_run_id),
+            )
+
+    def get_implementation_run(self, implementation_run_id: str) -> dict[str, Any]:
+        with self._connect() as db:
+            row = db.execute(
+                "SELECT * FROM implementation_runs WHERE id=?",
+                (implementation_run_id,),
+            ).fetchone()
+        if row is None:
+            raise KeyError(implementation_run_id)
+        return dict(row)
+
+    def create_implementation_plan(
+        self,
+        *,
+        implementation_run_id: str,
+        plan: dict[str, Any],
+    ) -> ImplementationPlan:
+        item = ImplementationPlan(
+            id=new_id("plan"),
+            implementation_run_id=implementation_run_id,
+            goal=plan["goal"],
+            context_summary=plan["context_summary"],
+            target_files=list(plan["target_files"]),
+            steps=list(plan["steps"]),
+            verification_strategy=list(plan["verification_strategy"]),
+            risks=list(plan["risks"]),
+            created_at=utc_now(),
+        )
+        with self._connect() as db:
+            db.execute(
+                "INSERT INTO implementation_plans VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    item.id,
+                    item.implementation_run_id,
+                    item.goal,
+                    item.context_summary,
+                    json.dumps(item.target_files, ensure_ascii=False),
+                    json.dumps(item.steps, ensure_ascii=False),
+                    json.dumps(item.verification_strategy, ensure_ascii=False),
+                    json.dumps(item.risks, ensure_ascii=False),
+                    item.created_at,
+                ),
+            )
+        return item
+
+    def get_implementation_plan(self, implementation_run_id: str) -> dict[str, Any] | None:
+        with self._connect() as db:
+            row = db.execute(
+                """
+                SELECT * FROM implementation_plans
+                WHERE implementation_run_id=?
+                ORDER BY created_at DESC
+                LIMIT 1
+                """,
+                (implementation_run_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        data = dict(row)
+        for key in ("target_files", "steps", "verification_strategy", "risks"):
+            data[key] = json.loads(data[key])
+        return data
+
+    def create_patch_set(
+        self,
+        *,
+        implementation_run_id: str,
+        patch_set: dict[str, Any],
+    ) -> PatchSet:
+        now = utc_now()
+        item = PatchSet(
+            id=new_id("patch"),
+            implementation_run_id=implementation_run_id,
+            status="pending_approval",
+            summary=patch_set["summary"],
+            risk_level=patch_set["risk_level"],
+            approval_status="pending",
+            applied_files=[],
+            created_at=now,
+            updated_at=now,
+        )
+        files = [
+            PatchFile(
+                id=new_id("pfile"),
+                patch_set_id=item.id,
+                path=file["path"],
+                operation=file["operation"],
+                diff=file["diff"],
+                rationale=file["rationale"],
+                risk_level=file["risk_level"],
+                replacement_content=file.get("replacement_content", ""),
+            )
+            for file in patch_set["files"]
+        ]
+        with self._connect() as db:
+            db.execute(
+                "INSERT INTO patch_sets VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    item.id,
+                    item.implementation_run_id,
+                    item.status,
+                    item.summary,
+                    item.risk_level,
+                    item.approval_status,
+                    json.dumps(item.applied_files, ensure_ascii=False),
+                    item.created_at,
+                    item.updated_at,
+                ),
+            )
+            db.executemany(
+                "INSERT INTO patch_files VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                [
+                    (
+                        file.id,
+                        file.patch_set_id,
+                        file.path,
+                        file.operation,
+                        file.diff,
+                        file.rationale,
+                        file.risk_level,
+                        file.replacement_content,
+                    )
+                    for file in files
+                ],
+            )
+        return item
+
+    def get_patch_set(self, patch_set_id: str) -> dict[str, Any]:
+        with self._connect() as db:
+            row = db.execute("SELECT * FROM patch_sets WHERE id=?", (patch_set_id,)).fetchone()
+            if row is None:
+                raise KeyError(patch_set_id)
+            file_rows = db.execute(
+                "SELECT * FROM patch_files WHERE patch_set_id=? ORDER BY id ASC",
+                (patch_set_id,),
+            ).fetchall()
+        data = dict(row)
+        data["applied_files"] = json.loads(data["applied_files"])
+        data["files"] = [dict(file_row) for file_row in file_rows]
+        return data
+
+    def get_patch_set_by_implementation_run(
+        self,
+        implementation_run_id: str,
+    ) -> dict[str, Any] | None:
+        with self._connect() as db:
+            row = db.execute(
+                """
+                SELECT id FROM patch_sets
+                WHERE implementation_run_id=?
+                ORDER BY created_at DESC
+                LIMIT 1
+                """,
+                (implementation_run_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return self.get_patch_set(row["id"])
+
+    def update_patch_set(
+        self,
+        patch_set_id: str,
+        *,
+        status: str | None = None,
+        approval_status: str | None = None,
+        applied_files: list[str] | None = None,
+    ) -> None:
+        updates: dict[str, Any] = {"updated_at": utc_now()}
+        if status is not None:
+            updates["status"] = status
+        if approval_status is not None:
+            updates["approval_status"] = approval_status
+        if applied_files is not None:
+            updates["applied_files"] = json.dumps(applied_files, ensure_ascii=False)
+        assignments = ", ".join(f"{key}=?" for key in updates)
+        with self._connect() as db:
+            db.execute(
+                f"UPDATE patch_sets SET {assignments} WHERE id=?",
+                (*updates.values(), patch_set_id),
+            )
+
+    def create_verification_run(
+        self,
+        *,
+        implementation_run_id: str,
+        command: str,
+        status: str,
+        exit_code: int | None,
+        stdout: str,
+        stderr: str,
+        started_at: str | None = None,
+        ended_at: str | None = None,
+    ) -> VerificationRun:
+        started = started_at or utc_now()
+        item = VerificationRun(
+            id=new_id("verify"),
+            implementation_run_id=implementation_run_id,
+            command=command,
+            status=status,
+            exit_code=exit_code,
+            stdout=stdout,
+            stderr=stderr,
+            started_at=started,
+            ended_at=ended_at or utc_now(),
+        )
+        with self._connect() as db:
+            db.execute(
+                "INSERT INTO verification_runs VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    item.id,
+                    item.implementation_run_id,
+                    item.command,
+                    item.status,
+                    item.exit_code,
+                    item.stdout,
+                    item.stderr,
+                    item.started_at,
+                    item.ended_at,
+                ),
+            )
+        return item
+
+    def list_verification_runs(self, implementation_run_id: str) -> list[dict[str, Any]]:
+        with self._connect() as db:
+            rows = db.execute(
+                """
+                SELECT * FROM verification_runs
+                WHERE implementation_run_id=?
+                ORDER BY started_at ASC
+                """,
+                (implementation_run_id,),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def create_review_result(
+        self,
+        *,
+        implementation_run_id: str,
+        review: dict[str, Any],
+    ) -> ReviewResult:
+        item = ReviewResult(
+            id=new_id("review"),
+            implementation_run_id=implementation_run_id,
+            status=review["status"],
+            findings=list(review["findings"]),
+            residual_risks=list(review["residual_risks"]),
+            recommendation=review["recommendation"],
+            created_at=utc_now(),
+        )
+        with self._connect() as db:
+            db.execute(
+                "INSERT INTO review_results VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (
+                    item.id,
+                    item.implementation_run_id,
+                    item.status,
+                    json.dumps(item.findings, ensure_ascii=False),
+                    json.dumps(item.residual_risks, ensure_ascii=False),
+                    item.recommendation,
+                    item.created_at,
+                ),
+            )
+        return item
+
+    def get_review_result(self, implementation_run_id: str) -> dict[str, Any] | None:
+        with self._connect() as db:
+            row = db.execute(
+                """
+                SELECT * FROM review_results
+                WHERE implementation_run_id=?
+                ORDER BY created_at DESC
+                LIMIT 1
+                """,
+                (implementation_run_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        data = dict(row)
+        data["findings"] = json.loads(data["findings"])
+        data["residual_risks"] = json.loads(data["residual_risks"])
         return data

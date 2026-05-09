@@ -303,6 +303,107 @@ textarea:focus {
   gap: 16px;
 }
 
+.implementation-panel {
+  margin-top: 16px;
+}
+
+.implementation-toolbar,
+.subsection-heading,
+.diff-file-head,
+.verification-row > div {
+  display: flex;
+  align-items: center;
+}
+
+.implementation-toolbar {
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.implementation-section {
+  padding-top: 14px;
+  margin-top: 14px;
+  border-top: 1px solid #d7dfdb;
+}
+
+.implementation-section h2 {
+  margin: 0 0 8px;
+  font-size: 15px;
+  line-height: 1.2;
+}
+
+.implementation-section p {
+  margin: 0 0 10px;
+  color: #465550;
+  line-height: 1.45;
+}
+
+.subsection-heading {
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.diff-list,
+.verification-list {
+  display: grid;
+  gap: 10px;
+}
+
+.diff-file,
+.verification-row {
+  display: grid;
+  gap: 8px;
+  padding: 11px;
+  border: 1px solid #d7dfdb;
+  border-radius: 8px;
+  background: #fbfdfc;
+}
+
+.diff-file-head {
+  gap: 8px;
+  min-width: 0;
+}
+
+.diff-file-head strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.diff-file-head > span:not(.risk-pill) {
+  color: #60706a;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.diff-block {
+  max-height: 280px;
+  margin: 0;
+  overflow: auto;
+  padding: 10px;
+  color: #1f3a2f;
+  background: #eef4f0;
+  border-radius: 7px;
+  font-size: 12px;
+  line-height: 1.45;
+  white-space: pre;
+}
+
+.verification-row > div {
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.verification-row code {
+  display: block;
+  color: #43514c;
+  background: #f1f4f2;
+  border-radius: 6px;
+  padding: 8px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .work-package-panel h1 {
   margin: 0 0 8px;
   font-size: 22px;
@@ -363,6 +464,9 @@ textarea:focus {
 .risk-pill.low,
 .status-pill.completed,
 .status-pill.approved,
+.status-pill.applied,
+.status-pill.pass,
+.status-pill.passed,
 .status-badge.online {
   color: #1d6b35;
   background: #e6f4e8;
@@ -371,6 +475,12 @@ textarea:focus {
 .risk-pill.medium,
 .status-pill.pending,
 .status-pill.pending_approval,
+.status-pill.pending_patch_approval,
+.status-pill.patch_proposed,
+.status-pill.planning,
+.status-pill.verifying,
+.status-pill.reviewing,
+.status-pill.not_run,
 .status-pill.running,
 .status-pill.queued,
 .status-badge.checking {
@@ -382,6 +492,8 @@ textarea:focus {
 .risk-pill.critical,
 .status-pill.failed,
 .status-pill.rejected,
+.status-pill.blocked,
+.status-pill.needs_changes,
 .status-badge.offline {
   color: #a23421;
   background: #fff0ec;

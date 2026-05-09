@@ -3,9 +3,13 @@ import type {
   AgentRunResult,
   Artifact,
   EventRecord,
+  ImplementationRun,
+  ImplementationRunResult,
+  PatchSet,
   Project,
   Session,
   TraceSummary,
+  VerificationRun,
   WorkPackageRequestResponse
 } from "./types";
 
@@ -88,8 +92,61 @@ export class ControlPlaneApi {
     });
   }
 
+  async createImplementationRun(workPackageId: string): Promise<ImplementationRunResult> {
+    return this.request("/api/implementation-runs", {
+      method: "POST",
+      body: { work_package_id: workPackageId }
+    });
+  }
+
+  async getImplementationRun(implementationRunId: string): Promise<ImplementationRun> {
+    return this.request(`/api/implementation-runs/${implementationRunId}`);
+  }
+
+  async getImplementationRunResult(
+    implementationRunId: string
+  ): Promise<ImplementationRunResult> {
+    return this.request(`/api/implementation-runs/${implementationRunId}/result`);
+  }
+
+  async listImplementationEvents(
+    implementationRunId: string,
+    after?: string
+  ): Promise<EventRecord[]> {
+    const suffix = after ? `?after=${encodeURIComponent(after)}` : "";
+    return this.request(`/api/implementation-runs/${implementationRunId}/events${suffix}`);
+  }
+
+  async resolvePatchSet(patchSetId: string, status: "approve" | "reject"): Promise<PatchSet> {
+    return this.request(`/api/patch-sets/${patchSetId}/${status}`, {
+      method: "POST",
+      body: {}
+    });
+  }
+
+  async applyPatchSet(patchSetId: string): Promise<PatchSet> {
+    return this.request(`/api/patch-sets/${patchSetId}/apply`, {
+      method: "POST",
+      body: {}
+    });
+  }
+
+  async runVerification(
+    implementationRunId: string,
+    command?: string
+  ): Promise<VerificationRun> {
+    return this.request(`/api/implementation-runs/${implementationRunId}/verification-runs`, {
+      method: "POST",
+      body: command ? { command } : {}
+    });
+  }
+
   eventStreamUrl(agentRunId: string): string {
     return `${this.baseUrl}/api/agent-runs/${agentRunId}/events/stream`;
+  }
+
+  implementationEventStreamUrl(implementationRunId: string): string {
+    return `${this.baseUrl}/api/implementation-runs/${implementationRunId}/events/stream`;
   }
 
   private async request<T>(path: string, init: { method?: string; body?: unknown } = {}): Promise<T> {

@@ -138,3 +138,84 @@ export type WorkPackageRequestResponse = {
   status: AgentRunStatus;
   events_url: string;
 };
+
+export type ImplementationRun = {
+  id: string;
+  project_id: string;
+  session_id: string;
+  work_package_id: string;
+  status: string;
+  current_phase: string | null;
+  trace_id: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type ImplementationPlan = {
+  id: string;
+  implementation_run_id: string;
+  goal: string;
+  context_summary: string;
+  target_files: string[];
+  steps: string[];
+  verification_strategy: string[];
+  risks: RiskHint[];
+  created_at: string;
+};
+
+export type PatchFile = {
+  id: string;
+  patch_set_id: string;
+  path: string;
+  operation: "create" | "update" | "delete";
+  diff: string;
+  rationale: string;
+  risk_level: string;
+  replacement_content: string;
+};
+
+export type PatchSet = {
+  id: string;
+  implementation_run_id: string;
+  status: string;
+  summary: string;
+  risk_level: string;
+  approval_status: "not_required" | "pending" | "approved" | "rejected";
+  applied_files: string[];
+  files: PatchFile[];
+  created_at: string;
+  updated_at: string;
+};
+
+export type VerificationRun = {
+  id: string;
+  implementation_run_id: string;
+  command: string;
+  status: "not_run" | "running" | "passed" | "failed" | "blocked";
+  exit_code: number | null;
+  stdout: string;
+  stderr: string;
+  started_at: string;
+  ended_at: string | null;
+};
+
+export type ReviewResult = {
+  id: string;
+  implementation_run_id: string;
+  status: "pass" | "needs_changes" | "blocked";
+  findings: string[];
+  residual_risks: string[];
+  recommendation: string;
+  created_at: string;
+};
+
+export type ImplementationRunResult = {
+  implementation_run: ImplementationRun;
+  work_package: WorkPackage;
+  implementation_plan: ImplementationPlan | null;
+  patch_set: PatchSet | null;
+  verification_runs: VerificationRun[];
+  review_result: ReviewResult | null;
+  trace: TraceSummary | null;
+  events: EventRecord[];
+};
