@@ -25,6 +25,18 @@ React GUI
 -> local trace and artifact viewer
 ```
 
+MVP 3 is planned as the first implementation pipeline slice:
+
+```text
+approved WorkPackage
+-> ImplementationRun
+-> Implementation Plan
+-> Patch Proposal / Diff Viewer
+-> patch approval and apply
+-> VerificationRun
+-> ReviewResult
+```
+
 The old Go TUI implementation is preserved on the `legacy/go-tui` branch.
 
 ## MVP 1 Scope
