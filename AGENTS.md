@@ -144,12 +144,14 @@ Each mapping can be overridden with `ARTEMIS_GLM_MODEL_<ROLE>`.
 - [x] MVP 5 Memory / Decision Log vertical slice added: ProjectMemoryItem, MemorySourceLink, MemoryExtractionRun, MemoryCandidate, DecisionRecord promotion, manual Project Rules, Session Summary, Failure Memory, SQLite/FTS search, selected memory context, backend contracts, and GUI Memory View.
 - [x] MVP 5 verification passed: `.venv` compileall, full unittest, FastAPI smoke, GUI build, npm audit, and `scripts/smoke_mvp5_gui.py`.
 - [x] MVP 5 verification rerun passed: implementation coverage, backend contracts, FastAPI smoke, GUI build/audit, and GUI e2e smoke were rechecked.
+- [x] MVP 5 planning-side revalidation passed: Memory / Decision Log structure, source-linked memory policy, API/GUI boundaries, safety policy, contracts, FastAPI smoke, GUI build/audit, and GUI e2e smoke were rechecked. Selected memory is exposed through explicit context APIs; automatic injection into later requests remains out of scope.
 
 ### Pending
 
 - [ ] Replace deterministic Work Package fallback with LLM-generated structured output where appropriate.
 - [ ] Replace deterministic MVP 3 implementation proposal/log patch with LLM-generated structured PatchSet output when policy and review gates are ready.
 - [ ] Add real LangGraph checkpointing after MVP 1 contracts stabilize.
+- [ ] Decide whether selected memory snapshots should be attached to later Work Package or Brainstorming requests in MVP 6, or remain an explicit context API only.
 
 ## Session History
 
@@ -176,6 +178,7 @@ Each mapping can be overridden with `ARTEMIS_GLM_MODEL_<ROLE>`.
 | #58 | 2026-05-09 | Planning session created MVP 5 design document. MVP 5 scope fixed as local-first Memory / Decision Log: ProjectMemoryItem, source-linked memory, DecisionRecord promotion, Project Rules, Session Summary, Failure Memory, SQLite/FTS search, selected memory context, and GUI Memory View, with vector DB, external embeddings, automatic RAG, hidden context injection, file writes, and command execution excluded. |
 | #59 | 2026-05-09 | MVP 5 implementation session completed the Memory / Decision Log vertical slice. Added Control Plane memory storage/API/service support, Agent Backend MemoryCandidate generation, DecisionRecord promotion, Project Rules, Session Summary, Failure Memory, SQLite/FTS search, selected memory context, GUI Memory View, backend contracts, and `scripts/smoke_mvp5_gui.py`; verification passed with compileall, full unittest, FastAPI smoke, GUI build, npm audit, and MVP 5 GUI e2e smoke. |
 | #60 | 2026-05-09 | MVP 5 verification rerun completed. Rechecked Memory / Decision Log implementation coverage against `docs/artemis_mvp5.md`; `.venv` compileall, full unittest, FastAPI smoke, GUI build, npm audit, and `scripts/smoke_mvp5_gui.py` passed again. |
+| #61 | 2026-05-09 | Planning-side MVP 5 revalidation completed. Rechecked `docs/artemis_mvp5.md` completion conditions against Control Plane, Agent Backend, GUI, contract tests, and smoke scripts; selected memory currently remains an explicit context API rather than automatic request injection; compileall, full unittest, FastAPI smoke, GUI build, npm audit, and MVP 5 GUI e2e smoke passed again. |
 
 ## Session Rules
 
