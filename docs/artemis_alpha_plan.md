@@ -14,13 +14,14 @@ Session #68 started the Alpha 0.1 stabilization track:
 - WorkPackage generation now prefers GLM structured output when credentials are configured and records deterministic fallback reasons in `work_package.generation_path`.
 - SQLite schema migration metadata is recorded and exposed through `GET /api/storage/schema`.
 - Command Center summary data is exposed through `GET /api/projects/{project_id}/command-center` and shown in the GUI.
+- Session #70 re-ran the full Alpha verification matrix with `scripts/verify_alpha.py --profile full`; compileall, unittest, FastAPI smoke, GUI build, npm audit, Alpha dogfood smoke, and MVP 2 through MVP 6 GUI smokes passed.
 
 Still pending:
 
 - LLM structured PatchSet proposal path.
 - LangGraph checkpointing.
 - Deeper migration recovery UX beyond schema status metadata.
-- Full Alpha matrix rerun after the remaining code tracks land.
+- Another full Alpha matrix rerun after future remaining code tracks land.
 
 ---
 
