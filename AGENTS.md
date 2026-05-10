@@ -159,6 +159,7 @@ Each mapping can be overridden with `ARTEMIS_GLM_MODEL_<ROLE>`.
 - [x] WorkPackage generation now prefers GLM structured JSON output when credentials are configured and records deterministic fallback reasons through `work_package.generation_path`.
 - [x] Alpha storage migration metadata added with `schema_migrations`, `schema_metadata`, and `GET /api/storage/schema`.
 - [x] Command Center summary added in Control Plane and GUI for pending approvals, recent runs, open risks, selected memory, quality snapshot, and next recommended action.
+- [x] Alpha 0.1 full verification rerun passed. GUI smoke scripts now run deterministic WorkPackage fallback by default for reproducible local verification and MVP 2/MVP 3 scripts execute only their target specs.
 
 ### Pending
 
@@ -199,6 +200,7 @@ Each mapping can be overridden with `ARTEMIS_GLM_MODEL_<ROLE>`.
 | #66 | 2026-05-10 | Central planning document refresh completed. Updated `docs/artemis_planning.md` to mark MVP 1 through MVP 6 as completed baseline work, add a current implementation status section, annotate the MVP roadmap with completion criteria, and replace the old bootstrap task list with post-MVP6 follow-up priorities. |
 | #67 | 2026-05-10 | Alpha 0.1 stabilization planning completed. Created `docs/artemis_alpha_plan.md` to define the post-MVP baseline hardening scope: baseline freeze, dogfooding, LLM structured WorkPackage and PatchSet paths, LangGraph checkpointing, SQLite migrations, Command Center UX, verification matrix, documentation refresh, and Alpha completion criteria. |
 | #68 | 2026-05-10 | Alpha 0.1 kickoff implementation completed. Refreshed current docs, added Alpha dogfooding runbook and baseline release note, added quick/full verification matrix and dogfooding smoke, switched WorkPackage generation to GLM structured output with explicit deterministic fallback events, added schema migration metadata/API, and added Command Center backend/GUI summary. Verification passed: compileall, full unittest, FastAPI smoke, GUI build, npm audit, Alpha quick matrix, Alpha dogfood smoke, and MVP 6 GUI smoke. |
+| #69 | 2026-05-10 | Alpha 0.1 full verification rerun completed. Initial full matrix exposed GUI smoke reproducibility issues when `.env` GLM credentials caused live WorkPackage generation latency, plus strict Playwright locator collisions in MVP 3 and MVP 5. GUI smoke scripts now force deterministic fallback during local verification, MVP 2/MVP 3 scripts run only their target specs, and the MVP 3/MVP 5 locators were narrowed. Full Alpha matrix passed: compileall, unittest, FastAPI smoke, GUI build, npm audit, Alpha dogfood smoke, and MVP 2 through MVP 6 GUI smokes. |
 
 ## Session Rules
 

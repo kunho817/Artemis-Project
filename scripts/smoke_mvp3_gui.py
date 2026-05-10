@@ -67,6 +67,9 @@ def run() -> dict[str, Any]:
     env["VITE_CONTROL_PLANE_URL"] = control_url
     env["ARTEMIS_GUI_PORT"] = str(gui_port)
     env["ARTEMIS_GUI_URL"] = gui_url
+    env["ZAI_API_KEY"] = ""
+    env["ZHIPU_API_KEY"] = ""
+    env["GLM_API_KEY"] = ""
 
     with tempfile.TemporaryDirectory(prefix="artemis-mvp3-gui-") as tmp_dir:
         tmp_root = Path(tmp_dir)
@@ -96,7 +99,7 @@ def run() -> dict[str, Any]:
             wait_for_url(f"{agent_url}/internal/health")
             wait_for_url(f"{control_url}/api/health")
             completed = subprocess.run(
-                ["npm.cmd", "run", "test:e2e"],
+                ["npm.cmd", "run", "test:e2e", "--", "tests/mvp3-smoke.spec.ts"],
                 cwd=GUI_DIR,
                 env=env,
                 check=False,

@@ -40,7 +40,7 @@ test("runs the MVP 3 implementation pipeline through patch apply and review", as
   await page.getByRole("button", { name: "Approve", exact: true }).click();
   await expect(page.getByText("approved").first()).toBeVisible();
 
-  await page.getByRole("button", { name: "Start" }).click();
+  await page.getByRole("button", { name: "Start", exact: true }).click();
   await expect(page.getByText("patch_set.pending_approval").first()).toBeVisible({
     timeout: 25_000
   });

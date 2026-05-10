@@ -47,9 +47,13 @@ def run() -> dict[str, Any]:
 
     env = os.environ.copy()
     env["ARTEMIS_AGENT_BACKEND_URL"] = agent_url
+    env["ARTEMIS_CONTROL_PLANE_ALLOW_ORIGINS"] = gui_url
     env["VITE_CONTROL_PLANE_URL"] = control_url
     env["ARTEMIS_GUI_PORT"] = str(gui_port)
     env["ARTEMIS_GUI_URL"] = gui_url
+    env["ZAI_API_KEY"] = ""
+    env["ZHIPU_API_KEY"] = ""
+    env["GLM_API_KEY"] = ""
 
     with tempfile.TemporaryDirectory(prefix="artemis-mvp2-gui-") as tmp_dir:
         db_path = str(Path(tmp_dir) / "artemis.db")
@@ -76,7 +80,7 @@ def run() -> dict[str, Any]:
             wait_for_url(f"{agent_url}/internal/health")
             wait_for_url(f"{control_url}/api/health")
             completed = subprocess.run(
-                ["npm.cmd", "run", "test:e2e"],
+                ["npm.cmd", "run", "test:e2e", "--", "tests/mvp2-smoke.spec.ts"],
                 cwd=GUI_DIR,
                 env=env,
                 check=False,

@@ -64,7 +64,7 @@ test("runs the MVP 5 memory decision log and selected context flow", async ({ pa
   await expect(page.getByText("GUI calls Control Plane only").first()).toBeVisible();
 
   await page.getByTitle("Remove").click();
-  await expect(page.getByText("No selected memory")).toBeVisible();
+  await expect(page.locator(".selected-memory-strip").getByText("No selected memory")).toBeVisible();
 
   await page.getByRole("button", { name: "Archive" }).click();
   await expect(page.getByRole("button", { name: "Restore" })).toBeVisible();

@@ -64,6 +64,9 @@ def run() -> dict[str, Any]:
     env["VITE_CONTROL_PLANE_URL"] = control_url
     env["ARTEMIS_GUI_PORT"] = str(gui_port)
     env["ARTEMIS_GUI_URL"] = gui_url
+    env["ZAI_API_KEY"] = ""
+    env["ZHIPU_API_KEY"] = ""
+    env["GLM_API_KEY"] = ""
 
     with tempfile.TemporaryDirectory(prefix="artemis-mvp6-gui-") as tmp_dir:
         tmp_root = Path(tmp_dir)
