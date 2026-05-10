@@ -98,8 +98,18 @@ def assert_event(event_types: list[str], expected: str) -> None:
         raise AssertionError(f"missing event {expected!r}; got {event_types}")
 
 
-def run(agent_port: int | None = None, control_port: int | None = None) -> dict[str, Any]:
+def run(
+    agent_port: int | None = None,
+    control_port: int | None = None,
+    *,
+    live_llm: bool = False,
+) -> dict[str, Any]:
     uvicorn = require_runtime()
+
+    if not live_llm:
+        os.environ["ZAI_API_KEY"] = ""
+        os.environ["ZHIPU_API_KEY"] = ""
+        os.environ["GLM_API_KEY"] = ""
 
     import services
     from services.agent_backend.app.api import create_app as create_agent_app
@@ -147,6 +157,11 @@ def run(agent_port: int | None = None, control_port: int | None = None) -> dict[
             result_view = request_json("GET", f"{control_base}/api/agent-runs/{work['agent_run_id']}/result")
             trace = request_json("GET", f"{control_base}/api/agent-runs/{work['agent_run_id']}/trace")
             artifacts = request_json("GET", f"{control_base}/api/agent-runs/{work['agent_run_id']}/artifacts")
+            command_center = request_json(
+                "GET",
+                f"{control_base}/api/projects/{project['id']}/command-center?session_id={session['id']}",
+            )
+            schema_status = request_json("GET", f"{control_base}/api/storage/schema")
             backend_events = request_json(
                 "GET",
                 f"{agent_base}/internal/agent-runs/{work['agent_run_id']}/events",
@@ -161,9 +176,13 @@ def run(agent_port: int | None = None, control_port: int | None = None) -> dict[
             assert approval["status"] == "approved"
             assert_event(event_types, "agent_run.graph_runtime")
             assert_event(event_types, "artifact.created")
+            assert_event(event_types, "work_package.generation_path")
             assert_event(event_types, "work_package.pending_approval")
             assert_event(event_types, "approval.requested")
             assert_event(backend_event_types, "agent_run.graph_runtime")
+            assert command_center["next_action"]["kind"] == "approval"
+            assert schema_status["status"] == "ok"
+            assert schema_status["migrations"]
             trace_event = next(
                 (event for event in backend_events if event["type"] == "trace.linked"),
                 None,
@@ -182,6 +201,8 @@ def run(agent_port: int | None = None, control_port: int | None = None) -> dict[
                 "trace_id": work["trace_id"],
                 "external_trace_id": work["external_trace_id"],
                 "trace_event": trace_event["payload"] if trace_event else None,
+                "command_center_next_action": command_center["next_action"],
+                "schema_status": schema_status,
                 "event_types": event_types,
                 "backend_event_types": backend_event_types,
             }
@@ -196,10 +217,19 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--agent-port", type=int)
     parser.add_argument("--control-port", type=int)
+    parser.add_argument(
+        "--live-llm",
+        action="store_true",
+        help="Allow smoke_api to use configured GLM credentials instead of deterministic fallback.",
+    )
     args = parser.parse_args()
 
     try:
-        result = run(agent_port=args.agent_port, control_port=args.control_port)
+        result = run(
+            agent_port=args.agent_port,
+            control_port=args.control_port,
+            live_llm=args.live_llm,
+        )
     except Exception as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1

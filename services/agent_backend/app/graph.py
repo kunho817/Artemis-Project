@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import json
 import re
-from typing import Any, TypedDict
+from typing import Any, Callable, TypedDict
 
 from .config import model_for_role
+from .llm import GLMChatClient
 from .observability import LangSmithTracer
 from .schemas import (
     AgentBackendEvent,
@@ -55,8 +57,13 @@ def build_langgraph(runner: "MVP1GraphRunner") -> object | None:
 
 
 class MVP1GraphRunner:
-    def __init__(self, tracer: LangSmithTracer | None = None) -> None:
+    def __init__(
+        self,
+        tracer: LangSmithTracer | None = None,
+        work_package_client_factory: Callable[[str], GLMChatClient] | None = None,
+    ) -> None:
         self.tracer = tracer or LangSmithTracer()
+        self.work_package_client_factory = work_package_client_factory or GLMChatClient
 
     def run(self, request: AgentBackendRequest) -> FinalAgentRunResult:
         trace = self.tracer.start_trace(
@@ -169,11 +176,12 @@ class MVP1GraphRunner:
         request = state["request"]
         intent = state["intent_result"]
         context = state["context_summary"]
-        work_package = self.create_work_package(request, intent, context)
+        work_package, generation = self._create_work_package_with_metadata(request, intent, context)
         return {
             "events": [
                 *state.get("events", []),
                 AgentBackendEvent("agent_run.phase_changed", {"phase": "create_work_package"}),
+                AgentBackendEvent("work_package.generation_path", generation),
                 AgentBackendEvent(
                     "work_package.draft_created",
                     {
@@ -291,6 +299,82 @@ class MVP1GraphRunner:
         intent: IntentResult,
         context: ContextSummary,
     ) -> WorkPackageDraft:
+        return self._create_work_package_with_metadata(request, intent, context)[0]
+
+    def _create_work_package_with_metadata(
+        self,
+        request: AgentBackendRequest,
+        intent: IntentResult,
+        context: ContextSummary,
+    ) -> tuple[WorkPackageDraft, dict[str, Any]]:
+        client = self.work_package_client_factory("work_package_writer")
+        if client.configured:
+            try:
+                response = client.invoke(
+                    [
+                        {
+                            "role": "system",
+                            "content": (
+                                "You create Artemis WorkPackageDraft JSON only. "
+                                "Return one JSON object, no markdown. The object must include: "
+                                "title, goal, background, scope, out_of_scope, related_files, "
+                                "required_agents, implementation_steps, verification, risks, "
+                                "approval_required, completion_criteria. risks must be objects "
+                                "with level low|medium|high|critical and description."
+                            ),
+                        },
+                        {
+                            "role": "user",
+                            "content": json.dumps(
+                                {
+                                    "user_request": request.user_request,
+                                    "intent": intent.to_dict(),
+                                    "context_summary": context.to_dict(),
+                                    "policy": {
+                                        "control_plane_owns_state": True,
+                                        "approval_required_before_execution": True,
+                                        "mvp1_tools_are_read_only": True,
+                                        "hidden_memory_injection": False,
+                                    },
+                                },
+                                ensure_ascii=False,
+                            ),
+                        },
+                    ]
+                )
+                work_package = _work_package_from_model_content(response.content)
+                errors = work_package.validate()
+                if errors:
+                    raise ValueError("; ".join(errors))
+                return work_package, {
+                    "path": "llm_structured",
+                    "model": response.model,
+                    "role": response.role,
+                    "fallback_reason": None,
+                }
+            except Exception as exc:
+                fallback = self._deterministic_work_package(request, intent, context)
+                return fallback, {
+                    "path": "deterministic_fallback",
+                    "model": client.selection.model,
+                    "role": client.selection.role,
+                    "fallback_reason": f"{type(exc).__name__}: {exc}",
+                }
+
+        fallback = self._deterministic_work_package(request, intent, context)
+        return fallback, {
+            "path": "deterministic_fallback",
+            "model": client.selection.model,
+            "role": client.selection.role,
+            "fallback_reason": "ZAI_API_KEY is not configured",
+        }
+
+    def _deterministic_work_package(
+        self,
+        request: AgentBackendRequest,
+        intent: IntentResult,
+        context: ContextSummary,
+    ) -> WorkPackageDraft:
         title = self._title_from_request(request.user_request)
         required_agents = self._required_agents(intent.intent)
         risk_level = self._risk_level(intent.intent)
@@ -369,3 +453,70 @@ class MVP1GraphRunner:
         if intent == "architecture_question":
             return "high"
         return "low"
+
+
+def _work_package_from_model_content(content: str) -> WorkPackageDraft:
+    payload = _extract_json_object(content)
+    risks = [
+        RiskHint(
+            level=_risk_level_from_payload(item),
+            description=_string_value(item.get("description"), "Model supplied risk."),
+        )
+        for item in _dict_list(payload.get("risks"))
+    ]
+    return WorkPackageDraft(
+        title=_string_value(payload.get("title"), ""),
+        goal=_string_value(payload.get("goal"), ""),
+        background=_string_value(payload.get("background"), ""),
+        scope=_string_list(payload.get("scope")),
+        out_of_scope=_string_list(payload.get("out_of_scope")),
+        related_files=_string_list(payload.get("related_files")),
+        required_agents=_string_list(payload.get("required_agents")),
+        implementation_steps=_string_list(payload.get("implementation_steps")),
+        verification=_string_list(payload.get("verification")),
+        risks=risks,
+        approval_required=bool(payload.get("approval_required", True)),
+        completion_criteria=_string_list(payload.get("completion_criteria")),
+    )
+
+
+def _extract_json_object(content: str) -> dict[str, Any]:
+    text = content.strip()
+    if text.startswith("```"):
+        text = re.sub(r"^```(?:json)?", "", text, flags=re.IGNORECASE).strip()
+        text = re.sub(r"```$", "", text).strip()
+    start = text.find("{")
+    end = text.rfind("}")
+    if start < 0 or end <= start:
+        raise ValueError("model response did not contain a JSON object")
+    payload = json.loads(text[start : end + 1])
+    if not isinstance(payload, dict):
+        raise ValueError("model response JSON must be an object")
+    return payload
+
+
+def _string_value(value: object, fallback: str) -> str:
+    if isinstance(value, str):
+        return value.strip()
+    if value is None:
+        return fallback
+    return str(value).strip()
+
+
+def _string_list(value: object) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [_string_value(item, "") for item in value if _string_value(item, "")]
+
+
+def _dict_list(value: object) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    return [item for item in value if isinstance(item, dict)]
+
+
+def _risk_level_from_payload(payload: dict[str, Any]) -> str:
+    level = _string_value(payload.get("level"), "medium").lower()
+    if level in {"low", "medium", "high", "critical"}:
+        return level
+    return "medium"

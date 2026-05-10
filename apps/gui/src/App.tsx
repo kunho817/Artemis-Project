@@ -28,6 +28,7 @@ import type {
   BrainstormingMode,
   BrainstormingResult,
   BrainstormingSourceType,
+  CommandCenterSummary,
   DecisionRecord,
   EventRecord,
   ImplementationRunResult,
@@ -206,6 +207,7 @@ export function App() {
   const [riskScanResult, setRiskScanResult] = useState<RiskScanResult | null>(null);
   const [riskRadar, setRiskRadar] = useState<RiskRadar | null>(null);
   const [qualitySnapshot, setQualitySnapshot] = useState<QualitySnapshot | null>(null);
+  const [commandCenter, setCommandCenter] = useState<CommandCenterSummary | null>(null);
   const [riskEvents, setRiskEvents] = useState<EventRecord[]>([]);
   const [riskDetail, setRiskDetail] = useState<RiskFinding | null>(null);
   const [includeRiskMemory, setIncludeRiskMemory] = useState(true);
@@ -290,6 +292,7 @@ export function App() {
     setRiskScanResult(null);
     setRiskRadar(null);
     setQualitySnapshot(null);
+    setCommandCenter(null);
     setRiskEvents([]);
     setRiskDetail(null);
     lastEventIdRef.current = undefined;
@@ -344,6 +347,28 @@ export function App() {
   useEffect(() => {
     void refreshRisk().catch((err) => setError(errorMessage(err)));
   }, [refreshRisk]);
+
+  const refreshCommandCenter = useCallback(async () => {
+    if (!currentProject) {
+      setCommandCenter(null);
+      return;
+    }
+    const summary = await controlPlaneApi.getCommandCenter(
+      currentProject.id,
+      currentSession?.id
+    );
+    setCommandCenter(summary);
+  }, [currentProject, currentSession]);
+
+  useEffect(() => {
+    void refreshCommandCenter().catch((err) => setError(errorMessage(err)));
+  }, [
+    refreshCommandCenter,
+    result?.agent_run.updated_at,
+    implementationResult?.implementation_run.updated_at,
+    riskRadar?.latest_scan?.id,
+    selectedMemory?.selected_memory.length
+  ]);
 
   useEffect(() => {
     if (!agentRun?.id) return;
@@ -1157,6 +1182,8 @@ export function App() {
       </aside>
 
       <main className="workspace">
+        <CommandCenterPanel summary={commandCenter} />
+
         <section className="request-panel">
           <div className="section-heading">
             <div>
@@ -1321,6 +1348,109 @@ export function App() {
         {activeTab === "memory" && <Timeline events={memoryEvents} />}
         {activeTab === "risk" && <Timeline events={riskEvents} />}
       </aside>
+    </div>
+  );
+}
+
+function CommandCenterPanel({ summary }: { summary: CommandCenterSummary | null }) {
+  const counts = summary?.counts;
+  return (
+    <section className="panel command-center-panel">
+      <div className="panel-title">
+        <ShieldCheck size={16} />
+        <span>Command Center</span>
+        {summary?.quality.health && <StatusPill label={summary.quality.health.overall_status} />}
+      </div>
+      <div className="command-center-grid">
+        <div className="command-action">
+          <span>Next Action</span>
+          <strong>{summary?.next_action.label ?? "Open or create a project"}</strong>
+          <p>{summary?.next_action.reason ?? "Connect the Control Plane to load project state."}</p>
+        </div>
+        <MetricTile label="Approvals" value={counts?.pending_approvals ?? 0} />
+        <MetricTile label="Open Risks" value={counts?.open_risk_findings ?? 0} />
+        <MetricTile label="Memory" value={counts?.selected_memory ?? 0} />
+        <MetricTile label="Recent Runs" value={(counts?.recent_agent_runs ?? 0) + (counts?.recent_implementation_runs ?? 0)} />
+        <MetricTile label="Failures" value={counts?.failed_or_canceled_runs ?? 0} />
+      </div>
+      <div className="command-center-lists">
+        <MiniList
+          title="Pending Approvals"
+          items={(summary?.pending_approvals ?? []).map((item) => ({
+            id: item.id,
+            title: item.target_type,
+            detail: item.reason,
+            status: item.status
+          }))}
+          empty="No pending approvals"
+        />
+        <MiniList
+          title="Top Risks"
+          items={(summary?.top_risk_findings ?? []).map((item) => ({
+            id: item.id,
+            title: item.title,
+            detail: item.summary,
+            status: item.severity
+          }))}
+          empty="No open risk findings"
+        />
+        <MiniList
+          title="Recent Runs"
+          items={[
+            ...(summary?.recent_agent_runs ?? []).map((item) => ({
+              id: item.id,
+              title: item.intent ?? "work_package",
+              detail: item.current_phase ?? item.user_request,
+              status: item.status
+            })),
+            ...(summary?.recent_implementation_runs ?? []).map((item) => ({
+              id: item.id,
+              title: "implementation",
+              detail: item.current_phase ?? item.work_package_id,
+              status: item.status
+            }))
+          ].slice(0, 5)}
+          empty="No recent runs"
+        />
+      </div>
+    </section>
+  );
+}
+
+function MetricTile({ label, value }: { label: string; value: number }) {
+  return (
+    <div className="metric-tile">
+      <span>{label}</span>
+      <strong>{value}</strong>
+    </div>
+  );
+}
+
+function MiniList({
+  title,
+  items,
+  empty
+}: {
+  title: string;
+  items: Array<{ id: string; title: string; detail: string; status: string }>;
+  empty: string;
+}) {
+  return (
+    <div className="mini-list">
+      <span>{title}</span>
+      {items.length ? (
+        items.map((item) => (
+          <article key={item.id}>
+            <div>
+              <strong>{item.title}</strong>
+              <StatusPill label={item.status} />
+            </div>
+            <p>{item.detail}</p>
+          </article>
+        ))
+      ) : (
+        <small>{empty}</small>
+      )}
     </div>
   );
 }

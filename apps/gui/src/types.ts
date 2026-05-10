@@ -529,3 +529,29 @@ export type RiskFindingConversionResult = {
   work_package: WorkPackage;
   approval: Approval | null;
 };
+
+export type CommandCenterSummary = {
+  project: Project;
+  session: Session | null;
+  counts: {
+    pending_approvals: number;
+    open_risk_findings: number;
+    selected_memory: number;
+    recent_agent_runs: number;
+    recent_implementation_runs: number;
+    failed_or_canceled_runs: number;
+  };
+  pending_approvals: Approval[];
+  recent_agent_runs: AgentRun[];
+  recent_implementation_runs: ImplementationRun[];
+  top_risk_findings: RiskFinding[];
+  selected_memory: SelectedMemoryItem[];
+  quality: QualitySnapshot;
+  next_action: {
+    kind: string;
+    label: string;
+    target_type: string;
+    target_id: string;
+    reason: string;
+  };
+};

@@ -45,6 +45,15 @@ from .models import (
 )
 
 
+SCHEMA_VERSION = 1
+SCHEMA_MIGRATIONS: tuple[tuple[str, str], ...] = (
+    (
+        "0001_alpha_schema_version",
+        "Record the MVP 1-6 baseline schema as an Alpha-managed local store.",
+    ),
+)
+
+
 class SQLiteStore:
     def __init__(self, db_path: str | Path, event_log_path: str | Path | None = None) -> None:
         self.db_path = Path(db_path)
@@ -67,6 +76,17 @@ class SQLiteStore:
         with self._connect() as db:
             db.executescript(
                 """
+                CREATE TABLE IF NOT EXISTS schema_migrations (
+                  id TEXT PRIMARY KEY,
+                  version INTEGER NOT NULL,
+                  description TEXT NOT NULL,
+                  applied_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS schema_metadata (
+                  key TEXT PRIMARY KEY,
+                  value TEXT NOT NULL,
+                  updated_at TEXT NOT NULL
+                );
                 CREATE TABLE IF NOT EXISTS projects (
                   id TEXT PRIMARY KEY,
                   name TEXT NOT NULL,
@@ -446,6 +466,7 @@ class SQLiteStore:
             self._ensure_column(db, "agent_runs", "trace_id", "TEXT")
             self._ensure_column(db, "agent_runs", "external_trace_id", "TEXT")
             self._ensure_column(db, "patch_sets", "applied_files", "TEXT NOT NULL DEFAULT '[]'")
+            self._record_schema_migrations(db)
 
     def _ensure_column(
         self,
@@ -457,6 +478,47 @@ class SQLiteStore:
         columns = {row["name"] for row in db.execute(f"PRAGMA table_info({table_name})").fetchall()}
         if column_name not in columns:
             db.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_type}")
+
+    def _record_schema_migrations(self, db: sqlite3.Connection) -> None:
+        now = utc_now()
+        for migration_id, description in SCHEMA_MIGRATIONS:
+            db.execute(
+                """
+                INSERT OR IGNORE INTO schema_migrations (
+                  id,
+                  version,
+                  description,
+                  applied_at
+                )
+                VALUES (?, ?, ?, ?)
+                """,
+                (migration_id, SCHEMA_VERSION, description, now),
+            )
+        db.execute(
+            """
+            INSERT INTO schema_metadata (key, value, updated_at)
+            VALUES ('schema_version', ?, ?)
+            ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at
+            """,
+            (str(SCHEMA_VERSION), now),
+        )
+
+    def get_schema_status(self) -> dict[str, Any]:
+        with self._connect() as db:
+            metadata_rows = db.execute("SELECT key, value, updated_at FROM schema_metadata").fetchall()
+            migration_rows = db.execute(
+                "SELECT * FROM schema_migrations ORDER BY applied_at ASC, id ASC"
+            ).fetchall()
+        metadata = {
+            row["key"]: {"value": row["value"], "updated_at": row["updated_at"]}
+            for row in metadata_rows
+        }
+        return {
+            "current_version": SCHEMA_VERSION,
+            "stored_version": int(metadata.get("schema_version", {"value": "0"})["value"]),
+            "status": "ok",
+            "migrations": [dict(row) for row in migration_rows],
+        }
 
     def create_project(self, name: str, root_path: str) -> Project:
         now = utc_now()
@@ -969,6 +1031,36 @@ class SQLiteStore:
         data = dict(row)
         data.setdefault("external_trace_id", None)
         return data
+
+    def list_agent_runs_by_project(
+        self,
+        *,
+        project_id: str,
+        session_id: str | None = None,
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        clauses = ["project_id=?"]
+        params: list[Any] = [project_id]
+        if session_id:
+            clauses.append("session_id=?")
+            params.append(session_id)
+        params.append(max(1, min(limit, 200)))
+        with self._connect() as db:
+            rows = db.execute(
+                f"""
+                SELECT * FROM agent_runs
+                WHERE {" AND ".join(clauses)}
+                ORDER BY created_at DESC
+                LIMIT ?
+                """,
+                params,
+            ).fetchall()
+        results: list[dict[str, Any]] = []
+        for row in rows:
+            data = dict(row)
+            data.setdefault("external_trace_id", None)
+            results.append(data)
+        return results
 
     def get_work_package(self, package_id: str) -> dict[str, Any]:
         with self._connect() as db:

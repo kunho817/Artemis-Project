@@ -7,6 +7,7 @@ import type {
   BrainstormingSession,
   BrainstormingSessionResponse,
   BrainstormingSourceType,
+  CommandCenterSummary,
   DecisionConversionResult,
   EventRecord,
   ImplementationRun,
@@ -54,6 +55,13 @@ export class ControlPlaneApi {
 
   async listProjects(): Promise<Project[]> {
     return this.request("/api/projects");
+  }
+
+  async getCommandCenter(projectId: string, sessionId?: string): Promise<CommandCenterSummary> {
+    const params = new URLSearchParams();
+    if (sessionId) params.set("session_id", sessionId);
+    const suffix = params.toString() ? `?${params.toString()}` : "";
+    return this.request(`/api/projects/${projectId}/command-center${suffix}`);
   }
 
   async createSession(projectId: string, title: string): Promise<Session> {

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 import tempfile
 import time
@@ -7,6 +8,7 @@ import unittest
 
 from services.agent_backend.app.config import model_for_role
 from services.agent_backend.app.graph import MVP1GraphRunner, build_langgraph
+from services.agent_backend.app.llm import GLMResponse
 from services.agent_backend.app.schemas import (
     AgentBackendRequest,
     BrainstormingContributionDraft,
@@ -91,20 +93,23 @@ class MVP1ContractTests(unittest.TestCase):
 
     def test_langgraph_validation_failure_path(self) -> None:
         class InvalidDraftRunner(MVP1GraphRunner):
-            def create_work_package(self, request, intent, context) -> WorkPackageDraft:
-                return WorkPackageDraft(
-                    title="",
-                    goal="",
-                    background="",
-                    scope=[],
-                    out_of_scope=[],
-                    related_files=[],
-                    required_agents=[],
-                    implementation_steps=[],
-                    verification=[],
-                    risks=[],
-                    approval_required=True,
-                    completion_criteria=[],
+            def _create_work_package_with_metadata(self, request, intent, context):
+                return (
+                    WorkPackageDraft(
+                        title="",
+                        goal="",
+                        background="",
+                        scope=[],
+                        out_of_scope=[],
+                        related_files=[],
+                        required_agents=[],
+                        implementation_steps=[],
+                        verification=[],
+                        risks=[],
+                        approval_required=True,
+                        completion_criteria=[],
+                    ),
+                    {"path": "test_invalid", "model": "test", "role": "test", "fallback_reason": None},
                 )
 
         result = InvalidDraftRunner().run(
@@ -120,6 +125,96 @@ class MVP1ContractTests(unittest.TestCase):
         self.assertEqual(result.status, "failed")
         self.assertTrue(result.errors)
         self.assertIn("work_package.validation_failed", {event.type for event in result.events})
+
+    def test_llm_structured_work_package_path_when_configured(self) -> None:
+        class FakeSelection:
+            model = "glm-5"
+            role = "work_package_writer"
+
+        class FakeClient:
+            configured = True
+            selection = FakeSelection()
+
+            def invoke(self, messages):
+                return GLMResponse(
+                    content=json.dumps(
+                        {
+                            "title": "LLM Draft Work Package",
+                            "goal": "Use structured model output for Work Package creation.",
+                            "background": "Alpha makes the model path the default when configured.",
+                            "scope": ["Parse model JSON", "Validate schema"],
+                            "out_of_scope": ["Apply patches without approval"],
+                            "related_files": ["services/agent_backend/app/graph.py"],
+                            "required_agents": ["Planner", "QA"],
+                            "implementation_steps": ["Create draft", "Validate draft"],
+                            "verification": ["contract test"],
+                            "risks": [{"level": "low", "description": "Malformed output can fall back."}],
+                            "approval_required": True,
+                            "completion_criteria": ["Generation path is recorded"],
+                        }
+                    ),
+                    model="glm-5",
+                    role="work_package_writer",
+                )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "README.md").write_text("Artemis Alpha test", encoding="utf-8")
+            runner = MVP1GraphRunner(work_package_client_factory=lambda _role: FakeClient())
+            result = runner.run(
+                request=AgentBackendRequest(
+                    project_id="project",
+                    session_id="session",
+                    agent_run_id="run",
+                    user_request="Create an Alpha Work Package with model output",
+                    project_root=str(root),
+                )
+            )
+
+        generation_event = next(
+            event for event in result.events if event.type == "work_package.generation_path"
+        )
+        self.assertEqual(result.status, "completed")
+        self.assertEqual(result.work_package.title, "LLM Draft Work Package")
+        self.assertEqual(generation_event.payload["path"], "llm_structured")
+        self.assertIsNone(generation_event.payload["fallback_reason"])
+
+    def test_malformed_llm_work_package_output_records_fallback_reason(self) -> None:
+        class FakeSelection:
+            model = "glm-5"
+            role = "work_package_writer"
+
+        class FakeClient:
+            configured = True
+            selection = FakeSelection()
+
+            def invoke(self, messages):
+                return GLMResponse(
+                    content="not-json",
+                    model="glm-5",
+                    role="work_package_writer",
+                )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "README.md").write_text("Artemis Alpha fallback test", encoding="utf-8")
+            runner = MVP1GraphRunner(work_package_client_factory=lambda _role: FakeClient())
+            result = runner.run(
+                request=AgentBackendRequest(
+                    project_id="project",
+                    session_id="session",
+                    agent_run_id="run",
+                    user_request="Plan the fallback path",
+                    project_root=str(root),
+                )
+            )
+
+        generation_event = next(
+            event for event in result.events if event.type == "work_package.generation_path"
+        )
+        self.assertEqual(result.status, "completed")
+        self.assertEqual(generation_event.payload["path"], "deterministic_fallback")
+        self.assertIn("ValueError", generation_event.payload["fallback_reason"])
 
     def test_control_plane_agent_backend_contract(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -194,6 +289,53 @@ class MVP1ContractTests(unittest.TestCase):
             self.assertEqual(result_view["approval"]["status"], "approved")
             self.assertEqual(result_view["work_package"]["id"], result["work_package_id"])
             self.assertEqual(result_view["trace"]["trace"]["id"], result["trace_id"])
+
+    def test_alpha_schema_status_is_recorded_idempotently(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "artemis.db"
+            first = SQLiteStore(db_path)
+            first_status = first.get_schema_status()
+            second = SQLiteStore(db_path)
+            second_status = second.get_schema_status()
+
+        self.assertEqual(first_status["status"], "ok")
+        self.assertEqual(first_status["current_version"], first_status["stored_version"])
+        self.assertEqual(len(first_status["migrations"]), 1)
+        self.assertEqual(len(second_status["migrations"]), 1)
+        self.assertEqual(second_status["migrations"][0]["id"], "0001_alpha_schema_version")
+
+    def test_alpha_command_center_summarizes_next_action(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            project_root = root / "project"
+            project_root.mkdir()
+            (project_root / "README.md").write_text("Artemis Alpha command center", encoding="utf-8")
+
+            store = SQLiteStore(root / "artemis.db", root / "events.jsonl")
+            service = ControlPlaneService(store, agent_backend=InProcessAgentBackendClient())
+            project = service.open_project(name="test", root_path=str(project_root))
+            session = service.create_session(project_id=project["id"], title="Alpha command center")
+
+            empty_center = service.get_command_center(
+                project_id=project["id"],
+                session_id=session["id"],
+            )
+            self.assertEqual(empty_center["next_action"]["kind"], "memory")
+            self.assertEqual(empty_center["counts"]["pending_approvals"], 0)
+
+            result = service.create_work_package_from_request(
+                project=project,
+                session=session,
+                user_request="Create an Alpha verification Work Package.",
+            )
+            center = service.get_command_center(
+                project_id=project["id"],
+                session_id=session["id"],
+            )
+
+        self.assertEqual(center["counts"]["pending_approvals"], 1)
+        self.assertEqual(center["next_action"]["kind"], "approval")
+        self.assertEqual(center["pending_approvals"][0]["target_id"], result["work_package_id"])
 
     def test_control_plane_mvp2_async_api_contract(self) -> None:
         try:

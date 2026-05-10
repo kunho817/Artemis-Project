@@ -2,6 +2,26 @@
 
 > MVP 1~6은 기능 축을 검증했다. Alpha 0.1의 목표는 새 기능을 크게 늘리는 것이 아니라, Artemis를 실제로 계속 실행하고 자기 자신을 관리하는 도구로 안정화하는 것이다.
 
+## Alpha Progress
+
+Session #68 started the Alpha 0.1 stabilization track:
+
+- README, getting-started, configuration, and architecture docs now describe the Python/FastAPI/React implementation.
+- `docs/alpha_verification_matrix.md` defines quick/full verification profiles.
+- `docs/alpha_dogfooding_runbook.md` defines the dogfooding flow.
+- `scripts/verify_alpha.py` runs the Alpha verification matrix.
+- `scripts/smoke_alpha_dogfood.py` runs an in-process dogfooding smoke.
+- WorkPackage generation now prefers GLM structured output when credentials are configured and records deterministic fallback reasons in `work_package.generation_path`.
+- SQLite schema migration metadata is recorded and exposed through `GET /api/storage/schema`.
+- Command Center summary data is exposed through `GET /api/projects/{project_id}/command-center` and shown in the GUI.
+
+Still pending:
+
+- LLM structured PatchSet proposal path.
+- LangGraph checkpointing.
+- Deeper migration recovery UX beyond schema status metadata.
+- Full Alpha matrix rerun after the remaining code tracks land.
+
 ---
 
 ## 0. 목적

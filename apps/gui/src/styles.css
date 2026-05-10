@@ -311,6 +311,102 @@ textarea:focus {
   gap: 16px;
 }
 
+.command-center-panel {
+  margin-bottom: 16px;
+}
+
+.command-center-grid {
+  display: grid;
+  grid-template-columns: minmax(260px, 1.6fr) repeat(5, minmax(92px, 1fr));
+  gap: 10px;
+}
+
+.command-action,
+.metric-tile,
+.mini-list article {
+  min-width: 0;
+  padding: 11px;
+  border: 1px solid #d7dfdb;
+  border-radius: 8px;
+  background: #fbfdfc;
+}
+
+.command-action {
+  display: grid;
+  gap: 5px;
+}
+
+.command-action span,
+.metric-tile span,
+.mini-list > span {
+  color: #60706a;
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.command-action strong {
+  overflow-wrap: anywhere;
+  font-size: 18px;
+  line-height: 1.2;
+}
+
+.command-action p,
+.mini-list p {
+  margin: 0;
+  color: #465550;
+  line-height: 1.35;
+}
+
+.metric-tile {
+  display: grid;
+  align-content: center;
+  gap: 4px;
+  min-height: 82px;
+}
+
+.metric-tile strong {
+  font-size: 26px;
+  line-height: 1;
+}
+
+.command-center-lists {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.mini-list {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  min-width: 0;
+}
+
+.mini-list article {
+  display: grid;
+  gap: 7px;
+}
+
+.mini-list article > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+.mini-list strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mini-list small {
+  color: #60706a;
+}
+
 .implementation-panel {
   margin-top: 16px;
 }
@@ -1115,6 +1211,14 @@ textarea:focus {
     border-left: 0;
     border-top: 1px solid #cbd5d0;
   }
+
+  .command-center-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .command-action {
+    grid-column: 1 / -1;
+  }
 }
 
 @media (max-width: 760px) {
@@ -1139,6 +1243,8 @@ textarea:focus {
 
   .brainstorming-compose,
   .brainstorming-grid,
+  .command-center-grid,
+  .command-center-lists,
   .risk-toolbar,
   .risk-health-grid,
   .risk-layout,

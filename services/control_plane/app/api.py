@@ -66,6 +66,10 @@ def create_app(db_path: str = "data/artemis.db", agent_backend: Any | None = Non
     def get_project(project_id: str) -> dict[str, Any]:
         return store.get_project(project_id)
 
+    @app.get("/api/projects/{project_id}/command-center")
+    def get_command_center(project_id: str, session_id: str | None = None) -> dict[str, Any]:
+        return service.get_command_center(project_id=project_id, session_id=session_id)
+
     @app.post("/api/sessions")
     def create_session(payload: dict[str, str]) -> dict[str, Any]:
         return service.create_session(project_id=payload["project_id"], title=payload["title"])
@@ -742,5 +746,9 @@ def create_app(db_path: str = "data/artemis.db", agent_backend: Any | None = Non
     @app.get("/api/health")
     def health() -> dict[str, str]:
         return {"status": "ok"}
+
+    @app.get("/api/storage/schema")
+    def storage_schema() -> dict[str, Any]:
+        return store.get_schema_status()
 
     return app

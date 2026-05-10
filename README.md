@@ -1,87 +1,71 @@
 # Artemis
 
-Artemis is being rebuilt as a backend foundation for a personal AI development organization.
+Artemis is a local-first AI development operations tool. The current codebase is the
+new Python/FastAPI/React foundation, not the legacy Go TUI. The old Go
+implementation is preserved on the `legacy/go-tui` branch for reference only.
 
-MVP 1 established one backend vertical slice:
+## Current Baseline
 
-```text
-user request
--> Control Plane AgentRun
--> Agent Backend LangGraph-style workflow
--> WorkPackageDraft
--> pending approval state
--> event log
--> local trace correlation id
-```
-
-MVP 2 adds the first GUI + event stream slice:
+MVP 1 through MVP 6 are treated as the baseline for Alpha 0.1:
 
 ```text
-React GUI
--> Control Plane async Work Package request
--> AgentRun event polling / SSE stream
--> WorkPackage detail
--> approval controls
--> local trace and artifact viewer
+MVP 1: Work Package backend foundation
+MVP 2: React GUI + event stream
+MVP 3: ImplementationRun, PatchSet, verification, review
+MVP 4: Brainstorming Room + Decision Record
+MVP 5: Memory / Decision Log
+MVP 6: Risk Radar / Quality Center
+Alpha: stabilization, dogfooding, schema versioning, Command Center, verification matrix
 ```
 
-MVP 3 is planned as the first implementation pipeline slice:
+The default operating model is explicit and local:
 
-```text
-approved WorkPackage
--> ImplementationRun
--> Implementation Plan
--> Patch Proposal / Diff Viewer
--> patch approval and apply
--> VerificationRun
--> ReviewResult
-```
-
-The old Go TUI implementation is preserved on the `legacy/go-tui` branch.
-
-## MVP 1 Scope
-
-- Control Plane owns product state, approvals, events, and artifacts.
-- Agent Backend owns intent classification, read-only context collection, Work Package draft creation, and validation.
-- LangGraph is used for the root workflow when installed; a sequential fallback keeps local contract tests dependency-light.
-- Tool access is read-only: `read_file`, `list_files`, `grep`, `git_status`.
-- Z.AI GLM Coding Plan is the model provider for LangChain-backed calls.
-- Deterministic fallback behavior is available when no API key is configured.
-- Observability is default, but the default backend should be local trace storage.
-- LangSmith Cloud is not a default dependency; self-hosted/Cloud endpoints are explicit opt-in integrations.
+- Control Plane owns canonical product state, approvals, events, artifacts, and local storage.
+- Agent Backend returns structured candidates and does not own canonical product state.
+- Work Package and PatchSet execution still require approval gates.
+- Local trace storage is the default observability path.
+- LangSmith self-hosted or Cloud tracing is opt-in.
+- Hidden memory injection, hidden patch apply, automatic git push, package install, and deployment are out of scope.
 
 ## Layout
 
 ```text
-services/
-  agent_backend/       # Intelligence plane
-  control_plane/       # Product state and API plane
-tests/
-  contract/            # MVP 1 contract tests
-docs/                  # Planning and design documents
-apps/
-  gui/                 # MVP 2 React GUI
+apps/gui/                  React/Vite GUI
+services/control_plane/    FastAPI product state and orchestration API
+services/agent_backend/    LangGraph/LangChain intelligence plane
+scripts/                   Startup, smoke, and verification scripts
+tests/contract/            Contract tests for MVP and Alpha behavior
+docs/                      Architecture, plans, runbooks, and verification notes
 ```
 
-## Run Contract Tests
+## Setup
 
-```powershell
-python -m unittest discover -s tests
-```
-
-For a clean local runtime, use the project virtual environment:
+Use the project virtual environment:
 
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install --upgrade pip
 .\.venv\Scripts\python.exe -m pip install fastapi annotated-doc uvicorn langchain langchain-openai langgraph langsmith pydantic python-dotenv httpx
-.\.venv\Scripts\python.exe -m unittest discover -s tests
-.\.venv\Scripts\python.exe scripts\smoke_api.py
 ```
 
-## Run MVP 2 GUI
+Install GUI dependencies:
 
-Start the backend services:
+```powershell
+cd apps\gui
+npm install
+```
+
+Copy `.env.example` to `.env` when you want live GLM calls:
+
+```powershell
+Copy-Item .env.example .env
+```
+
+`ZAI_API_KEY` enables GLM Coding Plan structured output. Without it, Artemis uses explicit deterministic fallback paths that are marked in events and traces.
+
+## Run Locally
+
+Start Agent Backend and Control Plane:
 
 ```powershell
 .\.venv\Scripts\python.exe scripts\start_mvp2_services.py
@@ -91,32 +75,43 @@ Start the GUI in another shell:
 
 ```powershell
 cd apps\gui
-npm install
 npm run dev
 ```
 
-The default GUI expects Control Plane at `http://127.0.0.1:8000`. Override with
-`VITE_CONTROL_PLANE_URL` when needed.
+Defaults:
 
-## GUI Build
+- Control Plane: `http://127.0.0.1:8000`
+- Agent Backend: `http://127.0.0.1:8765`
+- GUI: `http://127.0.0.1:5173`
+
+## Verification
+
+Quick Alpha matrix:
 
 ```powershell
+.\.venv\Scripts\python.exe scripts\verify_alpha.py --profile quick
+```
+
+Full Alpha matrix:
+
+```powershell
+.\.venv\Scripts\python.exe scripts\verify_alpha.py --profile full
+```
+
+Individual checks:
+
+```powershell
+.\.venv\Scripts\python.exe -m compileall services tests scripts
+.\.venv\Scripts\python.exe -m unittest discover -s tests
+.\.venv\Scripts\python.exe scripts\smoke_api.py
+.\.venv\Scripts\python.exe scripts\smoke_alpha_dogfood.py
 cd apps\gui
 npm run build
 npm audit --omit=dev
 ```
 
-Run the full MVP 2 browser smoke with isolated backend and GUI ports:
-
-```powershell
-.\.venv\Scripts\python.exe scripts\smoke_mvp2_gui.py
-```
-
-To verify an explicitly enabled LangSmith endpoint without changing `.env`, run:
-
-```powershell
-$env:LANGSMITH_TRACING="true"; .\.venv\Scripts\python.exe scripts\smoke_api.py
-```
+GUI smoke scripts are available at `scripts/smoke_mvp2_gui.py` through
+`scripts/smoke_mvp6_gui.py`.
 
 ## GLM Model Routing
 
@@ -126,7 +121,7 @@ Default Coding Plan endpoint:
 https://api.z.ai/api/coding/paas/v4
 ```
 
-Supported MVP profiles:
+Supported profiles:
 
 - `glm-5.1`
 - `glm-5`
@@ -136,7 +131,7 @@ Supported MVP profiles:
 - `glm-4.5-air`
 - `glm-4.5-flash`
 
-Role-level environment overrides use `ARTEMIS_GLM_MODEL_<ROLE>`, for example:
+Role-level overrides use `ARTEMIS_GLM_MODEL_<ROLE>`, for example:
 
 ```powershell
 $env:ARTEMIS_GLM_MODEL_ARCHITECT="glm-5.1"

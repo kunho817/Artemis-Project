@@ -110,6 +110,71 @@ class ControlPlaneService:
         session = self.store.create_session(project_id=project_id, title=title)
         return session.to_dict()
 
+    def get_command_center(
+        self,
+        *,
+        project_id: str,
+        session_id: str | None = None,
+    ) -> dict[str, Any]:
+        project = self.store.get_project(project_id)
+        session = self.store.get_session(session_id) if session_id else None
+        pending_approvals = self.store.list_approval_requests(
+            project_id=project_id,
+            status="pending",
+            limit=10,
+        )
+        agent_runs = self.store.list_agent_runs_by_project(
+            project_id=project_id,
+            session_id=session_id,
+            limit=8,
+        )
+        implementation_runs = self.store.list_implementation_runs_by_project(
+            project_id=project_id,
+            session_id=session_id,
+            limit=8,
+        )
+        risk_findings = self.store.list_risk_findings(
+            project_id=project_id,
+            status="open",
+            limit=8,
+        )
+        selected_memory = self.store.list_selected_memory(session_id) if session_id else []
+        quality = self.get_quality_snapshot(project_id=project_id)
+        failures = [
+            {"type": "agent_run", **run}
+            for run in agent_runs
+            if run["status"] in {"failed", "canceled"}
+        ] + [
+            {"type": "implementation_run", **run}
+            for run in implementation_runs
+            if run["status"] in {"failed", "canceled"}
+        ]
+        return {
+            "project": project,
+            "session": session,
+            "counts": {
+                "pending_approvals": len(pending_approvals),
+                "open_risk_findings": len(risk_findings),
+                "selected_memory": len(selected_memory),
+                "recent_agent_runs": len(agent_runs),
+                "recent_implementation_runs": len(implementation_runs),
+                "failed_or_canceled_runs": len(failures),
+            },
+            "pending_approvals": pending_approvals,
+            "recent_agent_runs": agent_runs,
+            "recent_implementation_runs": implementation_runs,
+            "top_risk_findings": risk_findings[:5],
+            "selected_memory": selected_memory,
+            "quality": quality,
+            "next_action": self._command_center_next_action(
+                pending_approvals=pending_approvals,
+                risk_findings=risk_findings,
+                failures=failures,
+                selected_memory=selected_memory,
+                session=session,
+            ),
+        }
+
     def start_work_package_request(
         self,
         *,
@@ -2203,6 +2268,61 @@ class ControlPlaneService:
             if normalized and normalized not in tags:
                 tags.append(normalized)
         return tags or ["memory"]
+
+    def _command_center_next_action(
+        self,
+        *,
+        pending_approvals: list[dict[str, Any]],
+        risk_findings: list[dict[str, Any]],
+        failures: list[dict[str, Any]],
+        selected_memory: list[dict[str, Any]],
+        session: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        if pending_approvals:
+            approval = pending_approvals[0]
+            return {
+                "kind": "approval",
+                "label": "Review pending approval",
+                "target_type": approval["target_type"],
+                "target_id": approval["target_id"],
+                "reason": approval["reason"],
+            }
+        high_risk = next(
+            (finding for finding in risk_findings if finding["severity"] in {"critical", "high"}),
+            None,
+        )
+        if high_risk:
+            return {
+                "kind": "risk_finding",
+                "label": "Triage highest risk finding",
+                "target_type": "risk_finding",
+                "target_id": high_risk["id"],
+                "reason": high_risk["summary"],
+            }
+        if failures:
+            failed = failures[0]
+            return {
+                "kind": "failed_run",
+                "label": "Inspect failed run trace",
+                "target_type": failed["type"],
+                "target_id": failed["id"],
+                "reason": f"{failed['type']} is {failed['status']}.",
+            }
+        if session is not None and not selected_memory:
+            return {
+                "kind": "memory",
+                "label": "Select memory context",
+                "target_type": "session",
+                "target_id": session["id"],
+                "reason": "No explicit memory context is selected for this session.",
+            }
+        return {
+            "kind": "work_package",
+            "label": "Create or continue a Work Package",
+            "target_type": "session" if session else "project",
+            "target_id": session["id"] if session else "",
+            "reason": "No blocking approval, high risk, or failed run is currently visible.",
+        }
 
     def _contains_secret(self, text: str) -> bool:
         lowered = text.lower()

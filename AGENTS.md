@@ -155,11 +155,14 @@ Each mapping can be overridden with `ARTEMIS_GLM_MODEL_<ROLE>`.
 - [x] MVP 6 planning-side revalidation passed: Risk Radar / Quality Center structure, explicit selected-memory RiskScan boundary, API/GUI boundaries, read-only analysis policy, backend contracts, FastAPI smoke, GUI build/audit, and GUI e2e smoke were rechecked.
 - [x] Central planning document updated so `docs/artemis_planning.md` treats MVP 1 through MVP 6 as completed baseline work as of 2026-05-10.
 - [x] Alpha 0.1 stabilization plan created at `docs/artemis_alpha_plan.md`.
+- [x] Alpha 0.1 kickoff slice completed: current README/getting-started/configuration/architecture docs, Alpha dogfooding runbook, baseline release note, quick/full verification matrix, `scripts/verify_alpha.py`, and `scripts/smoke_alpha_dogfood.py`.
+- [x] WorkPackage generation now prefers GLM structured JSON output when credentials are configured and records deterministic fallback reasons through `work_package.generation_path`.
+- [x] Alpha storage migration metadata added with `schema_migrations`, `schema_metadata`, and `GET /api/storage/schema`.
+- [x] Command Center summary added in Control Plane and GUI for pending approvals, recent runs, open risks, selected memory, quality snapshot, and next recommended action.
 
 ### Pending
 
-- [ ] Execute Alpha 0.1 stabilization plan: docs refresh, dogfooding runbook, LLM structured output paths, checkpointing, migrations, Command Center UX, and verification matrix.
-- [ ] Replace deterministic Work Package fallback with LLM-generated structured output where appropriate.
+- [ ] Continue Alpha 0.1 stabilization plan: LLM structured PatchSet path, LangGraph checkpointing, migration recovery UX, and full Alpha matrix after remaining code tracks land.
 - [ ] Replace deterministic MVP 3 implementation proposal/log patch with LLM-generated structured PatchSet output when policy and review gates are ready.
 - [ ] Add real LangGraph checkpointing after MVP 1 contracts stabilize.
 
@@ -195,6 +198,7 @@ Each mapping can be overridden with `ARTEMIS_GLM_MODEL_<ROLE>`.
 | #65 | 2026-05-10 | Planning-side MVP 6 revalidation completed. Rechecked `docs/artemis_mvp6.md` completion conditions against Control Plane, Agent Backend, GUI, contract tests, and smoke scripts; RiskScan selected-memory attachment remains explicit-only and RiskScan analysis remains read-only; compileall, full unittest, FastAPI smoke, GUI build, npm audit, and MVP 6 GUI e2e smoke passed again. |
 | #66 | 2026-05-10 | Central planning document refresh completed. Updated `docs/artemis_planning.md` to mark MVP 1 through MVP 6 as completed baseline work, add a current implementation status section, annotate the MVP roadmap with completion criteria, and replace the old bootstrap task list with post-MVP6 follow-up priorities. |
 | #67 | 2026-05-10 | Alpha 0.1 stabilization planning completed. Created `docs/artemis_alpha_plan.md` to define the post-MVP baseline hardening scope: baseline freeze, dogfooding, LLM structured WorkPackage and PatchSet paths, LangGraph checkpointing, SQLite migrations, Command Center UX, verification matrix, documentation refresh, and Alpha completion criteria. |
+| #68 | 2026-05-10 | Alpha 0.1 kickoff implementation completed. Refreshed current docs, added Alpha dogfooding runbook and baseline release note, added quick/full verification matrix and dogfooding smoke, switched WorkPackage generation to GLM structured output with explicit deterministic fallback events, added schema migration metadata/API, and added Command Center backend/GUI summary. Verification passed: compileall, full unittest, FastAPI smoke, GUI build, npm audit, Alpha quick matrix, Alpha dogfood smoke, and MVP 6 GUI smoke. |
 
 ## Session Rules
 
