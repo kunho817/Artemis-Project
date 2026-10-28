@@ -1,1 +1,0 @@
-"""Artemis Agent Backend application."""
