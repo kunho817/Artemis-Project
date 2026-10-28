@@ -1,4 +1,4 @@
-# AGENTS.md - Artemis Project
+# AGENTS.md - Artemis
 
 > Read this file at session start and update it at the end of meaningful sessions.
 
@@ -7,7 +7,11 @@
 - The user requested a fresh start on 2026-10-28.
 - The previous implementation, documentation, runtime data, and dependencies have been backed up outside the repository.
 - This repository currently contains only project guidance and ignore rules. No application, dependency configuration, or test suite is present.
-- New product requirements, architecture, technology stack, and model provider have not been selected.
+- The official product name is **Artemis**; the existing repository and local folder names remain unchanged.
+- The initial product direction is a multi-agent development harness. This is an early concept, not a detailed implementation specification.
+- GPT/Codex with OAuth authentication is a connection candidate. Official documentation describes a Sign in with ChatGPT / Codex app-server route; no authentication or inference test has been performed for Artemis. The exact model, integration, and deployment form remain undecided.
+- Obsidian is the intended way to organize macro-level project memory. Detailed memory storage, retrieval, updates, and agent sharing still need investigation.
+- Architecture, technology stack, UI, agent roles, and initial implementation scope have not been selected. `README.md` records the initial concept and official connection references.
 - Historical MVP plans and provider choices are reference material, not current requirements. Implement new functionality according to the user's next instructions.
 
 ## Preserved State
@@ -22,7 +26,7 @@
 ## Reset Verification
 
 - All 10,593 backup files matched their original sizes and SHA256 hashes, and `git bundle verify` passed.
-- The project root contains only `.git`, `.env`, `.gitignore`, `AGENTS.md`, and `README.md`.
+- At reset verification, the project root contained only `.git`, `.env`, `.gitignore`, `AGENTS.md`, and `README.md`. This structure remains unchanged after the initial planning documentation session.
 - The preserved `.env` hash is unchanged, `.env` remains ignored, and `git diff --check` passed.
 - Historical application tests were archived with the implementation; there is no current application test suite to run.
 
@@ -44,3 +48,4 @@ At meaningful completion:
 | Session | Date | Work |
 |---------|------|------|
 | #72 | 2026-10-28 | Reset the project for a fresh start at the user's request. Backed up all pre-reset working files and Git history outside the repository, verified the backup, preserved `.git` and `.env`, and replaced the previous implementation with minimal project guidance. Earlier session history is preserved in the backup and Git history. |
+| #73 | 2026-10-28 | Recorded the official name Artemis and the initial multi-agent development harness concept. Documented GPT/Codex OAuth as an untested connection candidate using official OpenAI references, Obsidian for macro memory, and detailed memory design as open research. No application code or dependencies added. Verified repository structure, `.env` exclusion, and `git diff --check`. |
