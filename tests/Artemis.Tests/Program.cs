@@ -239,6 +239,40 @@ Test("DPAPI store survives restart without plaintext tokens", () =>
     Check(!Encoding.UTF8.GetString(File.ReadAllBytes(Path.Combine(directory, "accounts.dat"))).Contains("fake-access-token"));
 });
 
+Test("Forced refresh rotates persisted tokens while ordinary access reuses a valid token", () =>
+{
+    var store = new CredentialStore(Path.Combine(temp, "refresh-store"));
+    var account = new Account("fixture-client", "sub", "test@example.invalid", "old-access", "old-refresh", null,
+        ["chatgpt.tokens.use.direct"], DateTimeOffset.UtcNow.AddHours(1));
+    store.Save(new("urn:uuid:" + Guid.NewGuid(), [account], account.ClientId));
+    var calls = 0;
+    using var http = new HttpClient(new FakeHttp(async request =>
+    {
+        calls++; var form = await request.Content!.ReadAsStringAsync();
+        Check(form.Contains("grant_type=refresh_token") && form.Contains("refresh_token=old-refresh") && form.Contains("client_id=fixture-client"));
+        return new(HttpStatusCode.OK) { Content = new StringContent("{\"token_type\":\"Bearer\",\"access_token\":\"rotated-access\",\"refresh_token\":\"rotated-refresh\",\"expires_in\":3600}") };
+    }));
+    using var auth = new Authentication(http, store, "Local\\Artemis.Test." + Guid.NewGuid());
+    Check(auth.AccessTokenAsync(ct).GetAwaiter().GetResult() == "old-access" && calls == 0);
+    Check(auth.AccessTokenAsync(ct, true).GetAwaiter().GetResult() == "rotated-access" && calls == 1);
+    var saved = store.Load().Accounts[0];
+    Check(saved.RefreshToken == "rotated-refresh" && saved.CanInvoke && saved.ExpiresAt > DateTimeOffset.UtcNow.AddMinutes(50));
+});
+Test("Signout clears credentials and retains registration after unconfirmed revocation", () =>
+{
+    var store = new CredentialStore(Path.Combine(temp, "signout-store"));
+    var account = new Account("fixture-client", "sub", "test@example.invalid", "fake-access", "fake-refresh", "fake-id",
+        ["chatgpt.tokens.use.direct"], DateTimeOffset.UtcNow.AddHours(1));
+    store.Save(new("urn:uuid:" + Guid.NewGuid(), [account], account.ClientId));
+    using var http = new HttpClient(new FakeHttp(request => Task.FromResult(request.Method == HttpMethod.Get
+        ? new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("{\"revocation_endpoint\":\"https://auth.openai.com/revoke\"}") }
+        : new HttpResponseMessage(HttpStatusCode.ServiceUnavailable))));
+    using var auth = new Authentication(http, store, "Local\\Artemis.Test." + Guid.NewGuid());
+    Check(!auth.SignOutAsync(ct).GetAwaiter().GetResult());
+    var saved = store.Load().Accounts[0];
+    Check(saved.ClientId == account.ClientId && saved.Subject == account.Subject && saved.AccessToken == null && saved.RefreshToken == null && saved.IdToken == null && !saved.CanInvoke);
+});
+
 var failed = 0;
 try
 {

@@ -10,7 +10,7 @@ namespace Artemis.Desktop;
 
 public partial class MainWindow : Window
 {
-    private readonly HttpClient http = new(new HttpClientHandler { AllowAutoRedirect = false }) { Timeout = Timeout.InfiniteTimeSpan };
+    private readonly HttpClient http;
     private Authentication? auth;
     private ResponsesClient? responses;
     private Harness? harness;
@@ -20,12 +20,16 @@ public partial class MainWindow : Window
     private IReadOnlySet<string> catalog = new HashSet<string>();
     private bool loadingAccounts;
     private bool closeAfterStop;
-    public MainWindow()
+    public MainWindow() : this(null, null) { }
+
+    // The separate UI verification executable supplies a synthetic transport and an isolated store.
+    public MainWindow(HttpClient? client, CredentialStore? credentials, string instanceLockName = "Local\\Artemis.Credentials.v1")
     {
+        http = client ?? new(new HttpClientHandler { AllowAutoRedirect = false }) { Timeout = Timeout.InfiniteTimeSpan };
         InitializeComponent();
         try
         {
-            auth = new(http, new CredentialStore(System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Artemis")));
+            auth = new(http, credentials ?? new CredentialStore(System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Artemis")), instanceLockName);
             responses = new(http, auth.AccessTokenAsync); ReloadAccounts();
             Loaded += async (_, _) => { if (auth.Active?.CanInvoke == true) await RefreshCatalog(); };
         }
@@ -123,8 +127,18 @@ public partial class MainWindow : Window
         catalog = new HashSet<string>(); catalog = await responses!.AvailableModelsAsync(ct);
         CatalogLabel.Text = string.Join("\n", ResponsesClient.Models.Select(m => $"{m}: {(catalog.Contains(m) ? "목록에 있음 · 실제 호출 미검증" : "현재 계정 목록에 없음")}"));
     }
-    private async Task RefreshCatalog() => await WithOperation(LoadCatalog);
+    private async Task RefreshCatalog() => await WithOperation(async ct =>
+    {
+        StatusLabel.Text = "모델 목록 확인 중";
+        await LoadCatalog(ct); StatusLabel.Text = "모델 목록 확인 완료";
+    });
     private async void RefreshCatalog_Click(object sender, RoutedEventArgs e) => await RefreshCatalog();
+    private async void RefreshToken_Click(object sender, RoutedEventArgs e) => await WithOperation(async ct =>
+    {
+        StatusLabel.Text = "연결 토큰 갱신 중";
+        await auth!.AccessTokenAsync(ct, true); ReloadAccounts();
+        await LoadCatalog(ct); StatusLabel.Text = "토큰 갱신 완료 · 모델 목록 확인 완료";
+    });
     private async void Send_Click(object sender, RoutedEventArgs e)
     {
         if (harness == null || auth?.Active?.CanInvoke != true) { StatusLabel.Text = "프로젝트 선택과 플랜 사용 권한이 있는 로그인이 필요합니다."; return; }
@@ -146,7 +160,7 @@ public partial class MainWindow : Window
     }
     private void SetBusy(bool busy)
     {
-        foreach (var control in new Control[] { ProjectButton, AccountPicker, SignInButton, SignOutButton, ModelPicker, SendButton, Prompt, CatalogButton, NewConversationButton }) control.IsEnabled = !busy;
+        foreach (var control in new Control[] { ProjectButton, AccountPicker, SignInButton, SignOutButton, RefreshTokenButton, ModelPicker, SendButton, Prompt, CatalogButton, NewConversationButton }) control.IsEnabled = !busy;
         StopButton.IsEnabled = busy;
     }
     private void Stop_Click(object sender, RoutedEventArgs e) { operation?.Cancel(); approval?.TrySetCanceled(); }

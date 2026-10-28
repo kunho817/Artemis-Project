@@ -40,10 +40,10 @@ public sealed class Authentication : IDisposable
     private readonly Mutex instanceLock;
     public AuthData Data { get; private set; }
     public Account? Active => Data.Accounts.Find(a => a.ClientId == Data.ActiveClientId);
-    public Authentication(HttpClient http, CredentialStore store)
+    public Authentication(HttpClient http, CredentialStore store, string instanceLockName = "Local\\Artemis.Credentials.v1")
     {
         this.http = http; this.store = store;
-        instanceLock = new Mutex(false, "Local\\Artemis.Credentials.v1");
+        instanceLock = new Mutex(false, instanceLockName);
         var acquired = false;
         try { acquired = instanceLock.WaitOne(0); } catch (AbandonedMutexException) { acquired = true; }
         if (!acquired) { instanceLock.Dispose(); throw new IOException("다른 Artemis 창이 실행 중입니다."); }
@@ -110,14 +110,16 @@ public sealed class Authentication : IDisposable
         finally { gate.Release(); }
     }
 
-    public async Task<string> AccessTokenAsync(CancellationToken ct)
+    public Task<string> AccessTokenAsync(CancellationToken ct) => AccessTokenAsync(ct, false);
+
+    public async Task<string> AccessTokenAsync(CancellationToken ct, bool forceRefresh)
     {
         await gate.WaitAsync(ct);
         try
         {
             var account = Active ?? throw new IOException("먼저 ChatGPT로 로그인하세요.");
             if (!account.CanInvoke) throw new IOException("ChatGPT 플랜 사용 권한이 없습니다. 다시 로그인하여 권한을 허용하세요.");
-            if (account.ExpiresAt <= DateTimeOffset.UtcNow.AddMinutes(2))
+            if (forceRefresh || account.ExpiresAt <= DateTimeOffset.UtcNow.AddMinutes(2))
             {
                 if (account.RefreshToken == null) throw new IOException("다시 로그인해야 합니다.");
                 var token = await Exchange(new() { ["grant_type"] = "refresh_token", ["client_id"] = account.ClientId,
