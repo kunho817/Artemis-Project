@@ -12,7 +12,7 @@
 |------|-----------|-----------|
 | 제품 | 멀티 에이전트 기반 복합 개발 하네스 | 기본 방향 확정 |
 | 사용 대상 | 개인·팀 범용, MVP는 개인용에 초점 | 방향 확정 |
-| LLM 실행·연결 | Artemis 직접 관리 Sign in with ChatGPT 인증, 모델 호출·답변 확인 설계 | 인증 방향 확정, 모델·실행 엔진 미확정 |
+| LLM 실행·연결 | Artemis 직접 관리 Sign in with ChatGPT + Responses API 직접 연동 | 인증·실행 엔진 확정, 모델 미확정 |
 | 메모리 | 작업 기억·공유 기억·거시 기억을 연결 | 큰 틀 정리 중, 세부 방식 미정 |
 | 에이전트 | 조정·작업·검증 역할로 협업 | 구성과 흐름 초안 |
 | 하네스 | 에이전트 실행·도구 사용·진행 상태·기억 연결 관리 | 역할 초안 |
@@ -31,9 +31,9 @@
 
 1차 마일스톤의 인증은 **Artemis가 직접 관리하는 Sign in with ChatGPT**로 정했습니다. 사용자가 Codex를 이미 설치했다고 가정하지 않으며, 인증을 위해 Codex나 별도 앱을 설치하도록 요구하지 않습니다. Artemis에서 로그인을 시작하고 시스템 브라우저 인증 후 돌아오는 흐름으로 설계합니다.
 
-모델과 실행 엔진은 미정입니다. Codex app-server 활용 여부와 필요 런타임의 동봉·배포 방식은 인증 선택과 구분해 결정합니다. 인증·모델 호출은 아직 검증하지 않았습니다.
+실행 엔진은 **Responses API 직접 연동으로 확정**했습니다. Artemis가 모델 호출·응답 처리·대화 맥락·도구 실행 흐름을 관리하며, Codex app-server·SDK와 Codex 런타임 설치·동봉을 전제로 하지 않습니다. 모델과 세부 실행 설계는 미정이며, 인증·모델 호출은 아직 검증하지 않았습니다.
 
-후속 검토 참고: [공식 Sign in with ChatGPT 등록·로그인](https://developers.openai.com/siwc/token-sharing-open-source/sign-in), [Codex app-server 토큰 연동](https://developers.openai.com/siwc/token-sharing-open-source/codex-app-server).
+후속 설계 참고: [공식 Sign in with ChatGPT 등록·로그인](https://developers.openai.com/siwc/token-sharing-open-source/sign-in), [Responses API 사용 요구사항·제약](https://developers.openai.com/siwc/token-sharing-open-source/preview-limitations).
 
 ### 에이전트 구성과 작동 방식
 
@@ -114,7 +114,7 @@ Artemis는 **로컬 기반으로 운영하며, 최적화를 고려해 데스크�
 
 - **목표:** 데스크톱 UI 기반 하네스 설계.
 - **핵심 기능:** Codex OAuth 연결, 모델 호출·답변 확인, 도구 사용.
-- **확정한 방향:** .NET + WPF + C#, Artemis 직접 관리 Sign in with ChatGPT, 인증을 위한 Codex 별도 설치 요구 없음.
+- **확정한 방향:** .NET + WPF + C#, Artemis 직접 관리 Sign in with ChatGPT, Responses API 직접 연동, 인증을 위한 Codex 별도 설치 요구 없음.
 - **설계 초안:** 단일 대화의 연결·호출·도구 실행 흐름과 사용자 제어를 우선 정리.
 - **산출물:** 기능 범위, 최소 화면 구성, 구성 요소별 책임, 동작·확인 시나리오.
 
