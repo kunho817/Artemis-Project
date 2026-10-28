@@ -157,6 +157,8 @@ dotnet run --project tests/Artemis.UiVerification -c Release
 
 검증 앱에서 테스트 폴더를 선택하고 `STREAM_DROP`, `USAGE_LIMIT`, `RETRY_429`, `HOLD`, `OK` 중 하나를 입력합니다. 각각 부분 출력 후 연결 종료, 부분 출력 후 사용량 제한, 429 최대 재시도, 스트리밍 대기/중단, 정상 완료를 재현합니다. 이 결과는 실제 서비스 장애·계정 한도 도달의 증거가 아닙니다. 실제 연결 해제 테스트 후에는 다시 로그인해야 합니다.
 
+작업 결과는 [Milestone 1 작업 보고서](docs/milestone-01-work-report.md)에 정리했습니다.
+
 ## 현재 파일
 
 - `README.md`: 프로젝트 상태
