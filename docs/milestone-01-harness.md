@@ -10,6 +10,20 @@
 
 이번 설계는 단일 대화에서 이 흐름을 연결하는 기반에 집중하는 안으로 정리한다. 멀티 에이전트 협업과 Obsidian 메모리 연동은 전체 MVP 범위로 유지하되, 이번 마일스톤의 구체화 대상과 분리한다. 이후 마일스톤은 사용자가 제시한다.
 
+## 확정한 기술·인증 방향 — 2026-10-28
+
+| 항목 | 사용자 결정 |
+|------|-------------|
+| 데스크톱 기술 | **.NET + WPF + C#** |
+| 인증 | **Artemis가 직접 관리하는 Sign in with ChatGPT** |
+| 설치 경험 | **사용자에게 인증을 위한 Codex 또는 별도 앱 설치를 요구하지 않음** |
+
+선택 이유는 사용자가 Codex를 이미 설치했다고 가정할 수 없으며, 인증을 위해 별도 앱 설치를 요구하면 진입 부담과 반감이 생길 수 있기 때문이다. 사용자는 Artemis에서 로그인을 시작하고 시스템 브라우저에서 인증한 뒤 Artemis로 돌아오는 흐름으로 설계한다.
+
+Artemis의 인증부가 OAuth 시작·콜백·토큰 검증·보관·갱신·연결 해제를 담당한다. 세부 저장 방식과 오류·복구 정책은 후속 설계에서 정한다. [공식 Sign in with ChatGPT 등록·로그인 문서](https://developers.openai.com/siwc/token-sharing-open-source/sign-in).
+
+**인증 선택과 모델·도구 실행 엔진 선택은 구분한다.** Codex app-server 사용 여부는 아직 확정하지 않는다. 추후 채택한다면 필요한 런타임의 동봉·배포 방식을 검토하며, 사용자가 미리 설치한 Codex에 의존하는 것을 요구사항으로 두지 않는다. Responses API 직접 연동도 비교 대상으로 남긴다. 이번 결정은 구현 시작 지시가 아니다.
+
 ## 기능별 설계 항목
 
 | 영역 | 설계할 내용 | 구현 후 확인할 동작 |
@@ -26,18 +40,20 @@
 ## 구조 초안
 
 ```text
-데스크톱 UI
+WPF 데스크톱 UI
     ↕ 요청·상태·답변·도구 실행 확인
-Artemis 하네스
-    ↕ 인증·대화·모델·도구 이벤트
-Codex 연동부
+Artemis 하네스 (C#)
+    ├─ 인증부 ↔ 시스템 브라우저 / Sign in with ChatGPT
+    ↕ 대화·모델·도구 이벤트
+모델·도구 연동부 (실행 엔진 미정)
     ↕
-Codex 런타임 / 모델 서비스 / 허용된 로컬 도구
+모델 서비스 / 실행 런타임 후보 / 허용된 로컬 도구
 ```
 
 - **UI:** 사용자 입력과 판단을 받고 현재 상태·결과를 표시한다.
 - **하네스:** 요청과 실행 상태를 관리하고 사용자 지시 범위 및 도구 허용 범위를 적용한다.
-- **Codex 연동부:** 로그인, 모델 호출, 응답·도구 이벤트를 하네스에 연결한다.
+- **인증부:** Artemis의 Sign in with ChatGPT 인증 수명주기를 관리한다.
+- **모델·도구 연동부:** 모델 호출, 응답·도구 이벤트를 하네스에 연결한다. app-server 채택 여부는 미정이다.
 
 로컬 기반은 데스크톱 앱과 하네스의 실행 위치를 뜻한다. OAuth 인증과 원격 모델 호출을 오프라인 기능으로 가정하지 않는다.
 
@@ -50,11 +66,11 @@ Codex 런타임 / 모델 서비스 / 허용된 로컬 도구
 | 도구 | 도구명·입력·대상 확인, 실행 판단, 결과·오류 |
 | 실행 상태 | 대기·실행·사용자 확인 대기·완료·실패·중단, 중단 요청과 재시도 횟수 |
 
-실제 화면 배치와 데스크톱 프레임워크는 미정이다. 전체 제품의 프로젝트 관리·메모리 탐색 등 화면은 이 최소 화면 설계와 구분한다.
+데스크톱 프레임워크는 WPF로 확정했고 실제 화면 배치는 미정이다. 전체 제품의 프로젝트 관리·메모리 탐색 등 화면은 이 최소 화면 설계와 구분한다.
 
 ## 기본 동작 흐름
 
-1. 사용자가 GUI에서 Codex 로그인을 시작하고 인증 결과를 확인한다.
+1. 사용자가 Artemis GUI에서 Sign in with ChatGPT를 시작하고 시스템 브라우저 인증 후 결과를 확인한다. Codex의 별도 설치를 요구하지 않는다.
 2. 사용할 모델을 선택하고 요청을 전송한다.
 3. 하네스는 답변을 수신하고 GUI에 진행 상태와 함께 표시한다.
 4. 도구가 필요하면 도구명·입력·대상을 보여주고 사용자 판단을 받는다.
@@ -67,9 +83,9 @@ Codex 런타임 / 모델 서비스 / 허용된 로컬 도구
 
 ## 연동 후보와 공식 문서 확인
 
-**Codex app-server를 우선 검토할 후보로 제안한다.** 공식 문서는 로컬 프로세스와 연결해 인증, 대화, 스트리밍, 도구 상태, 승인 요청과 중단을 처리하는 인터페이스를 제공한다. 관리형 ChatGPT 로그인은 `account/login/start`의 `chatgpt` 방식으로 브라우저 인증을 시작한다. [공식 app-server 문서](https://learn.chatgpt.com/docs/app-server)
+**Codex app-server는 모델·도구 실행 엔진 후보로 남긴다.** 공식 문서는 로컬 프로세스와 연결해 인증, 대화, 스트리밍, 도구 상태, 승인 요청과 중단을 처리하는 인터페이스를 제공한다. 관리형 ChatGPT 로그인은 `account/login/start`의 `chatgpt` 방식으로 브라우저 인증을 시작하지만, Artemis가 선택한 인증은 앱 직접 관리 방식이다. [공식 app-server 문서](https://learn.chatgpt.com/docs/app-server)
 
-앞서 조사한 Sign in with ChatGPT 토큰을 앱이 직접 관리해 app-server에 공급하는 경로도 별도로 있다. 두 경로를 혼용하지 않고, 구현 설계 시 인증 수명주기를 누가 관리할지 정한다. 모델 목록 표시만으로 사용 권한을 확인했다고 보지 않으며 실제 요청의 정상 완료로 검증한다. [공식 OAuth 토큰 연동 문서](https://developers.openai.com/siwc/token-sharing-open-source/codex-app-server)
+Sign in with ChatGPT 토큰을 앱이 직접 관리해 app-server에 공급하는 경로도 별도로 있다. Artemis가 인증 수명주기를 관리하는 것으로 확정했고, app-server를 실행 엔진으로 채택할 때 이 경로를 검토한다. 모델 목록 표시만으로 사용 권한을 확인했다고 보지 않으며 실제 요청의 정상 완료로 검증한다. [공식 OAuth 토큰 연동 문서](https://developers.openai.com/siwc/token-sharing-open-source/codex-app-server)
 
 토큰 직접 공급 경로에는 도구 지원 제약이 있다. 로컬 도구와 호스팅 도구를 구분하고, 초기 도구가 해당 경로에서 동작하는지 확인한다. [공식 프리뷰 제약](https://developers.openai.com/siwc/token-sharing-open-source/preview-limitations)
 
@@ -81,6 +97,7 @@ Codex 런타임 / 모델 서비스 / 허용된 로컬 도구
 
 | 시나리오 | 확인 기준 |
 |----------|-----------|
+| Codex 미설치 환경에서 로그인 | Artemis에서 브라우저 인증을 시작·완료하며, 인증을 위한 별도 앱 설치를 요구하지 않음 |
 | OAuth 로그인·취소·실패·해제 | 상태가 구분되고 실패 원인이나 다음 행동을 확인 가능 |
 | 일반 요청과 후속 질문 | 선택 모델의 답변이 표시되고 대화 맥락이 이어짐 |
 | 정상 응답·통신 실패·중단 | 일부 출력이 있어도 실패·중단을 정상 완료로 표시하지 않음 |
@@ -92,27 +109,27 @@ Codex 런타임 / 모델 서비스 / 허용된 로컬 도구
 
 ## 데스크톱 기술·Codex 연동·인증 비교 — 2026-10-28
 
-상태: **선택지와 추천안이며 아직 채택하지 않음.** 아래 추천은 현재의 로컬 개인용 MVP와 마일스톤 1을 기준으로 한다. 비교 평가는 공식 문서의 구조·기능을 바탕으로 한 설계 판단이며, 실제 성능이나 Artemis 연결 성공을 검증한 결과가 아니다.
+상태: **사용자는 .NET + WPF + C# 및 Artemis 직접 관리 Sign in with ChatGPT를 선택했다.** 아래 표는 비교 참고자료이며, 이전의 Tauri·관리형 로그인 추천은 현재 채택 방향이 아니다. 비교 평가는 공식 문서의 구조·기능을 바탕으로 한 설계 판단이며, 실제 성능이나 Artemis 연결 성공을 검증한 결과가 아니다.
 
 ### 데스크톱 기술
 
 | 선택지 | 현재 목표에 맞는 점 | 부담·제약 | 판단 |
 |--------|---------------------|-----------|------|
-| **Tauri 2 + React·TypeScript + Rust** | OS WebView를 이용하는 작은 앱 셸, 대화·도구·진행 패널을 웹 UI로 구성, Rust에서 로컬 프로세스 제어 | 웹과 Rust 양쪽 개발 필요, 플랫폼별 WebView 차이와 외부 Codex 실행 파일 배포 고려 | **최적화를 고려하는 현재 방향에 우선 추천** |
+| Tauri 2 + React·TypeScript + Rust | OS WebView를 이용하는 작은 앱 셸, 대화·도구·진행 패널을 웹 UI로 구성, Rust에서 로컬 프로세스 제어 | 웹과 Rust 양쪽 개발 필요, 플랫폼별 WebView 차이와 외부 Codex 실행 파일 배포 고려 | 비교 참고, 미채택 |
 | Electron + React·TypeScript | Node.js에서 프로세스·스트림 처리 가능, UI와 하네스의 언어를 TypeScript로 통일하기 쉬움 | Chromium·Node.js를 함께 배포, 앱 셸의 배포 크기와 자원 부담 고려 | 개발 속도와 단일 언어 운영을 더 중시하면 대안 |
-| .NET + WPF + C# | Windows 데스크톱 UI와 로컬 시스템 기능에 적합 | Windows 전용, 웹 UI와 다른 XAML 구성 방식 | Windows 전용 제품으로 확정하고 C#을 선호할 때 대안 |
+| **.NET + WPF + C#** | Windows 데스크톱 UI와 로컬 시스템 기능에 적합 | Windows 전용, 웹 UI와 다른 XAML 구성 방식 | **사용자 선택으로 확정** |
 
 근거: [Tauri 구조](https://v2.tauri.app/concept/architecture/), [외부 실행 파일 연동](https://v2.tauri.app/develop/sidecar/), [Electron 구성](https://www.electronjs.org/docs/latest/), [Electron 프로세스 구조](https://www.electronjs.org/docs/latest/tutorial/process-model), [WPF 개요](https://learn.microsoft.com/en-us/dotnet/desktop/wpf/overview/).
 
-Tauri의 작은 배포 구조가 Artemis 전체의 메모리·CPU 우위를 보장하지는 않는다. Codex 프로세스와 실제 작업을 포함한 자원 사용은 구현 후 측정해야 한다. React·TypeScript는 대화와 여러 상태 패널을 구성하기 위한 추천이며, Codex 연동의 필수 조건은 아니다.
+Tauri의 작은 배포 구조가 Artemis 전체의 메모리·CPU 우위를 보장하지는 않는다. 실행 런타임과 실제 작업을 포함한 자원 사용은 구현 후 측정해야 한다. 현재 UI 구현 기술은 WPF이며 React·TypeScript는 채택하지 않았다.
 
 ### Codex 연동
 
 | 선택지 | 적합성 | 판단 |
 |--------|--------|------|
-| **Codex app-server + stdio** | 인증·대화 이력·스트리밍·승인 요청 등 GUI에 필요한 양방향 이벤트 제공 | **현재 하네스 UI에 추천** |
+| Codex app-server + stdio | 인증·대화 이력·스트리밍·승인 요청 등 GUI에 필요한 양방향 이벤트 제공 | 실행 엔진 후보, 채택 및 런타임 배포 방식 미정 |
 | Codex SDK | 프로그램에서 작업을 시작·계속·재개하는 자동화에 적합, TypeScript SDK는 Node.js 필요 | GUI 인증·승인 흐름이 핵심인 이번 단계에서는 후순위 |
-| Responses API 직접 연동 | 모델 요청과 도구 루프를 Artemis가 직접 설계·제어 | 도구 실행·대화·상태 처리를 더 많이 구현해야 하므로 이번 단계에서는 후순위 |
+| Responses API 직접 연동 | 모델 요청과 도구 루프를 Artemis가 직접 설계·제어 | 실행 엔진 후보, 구현 부담과 배포 경험을 비교해 결정 |
 
 공식 문서는 인증·대화·승인·스트리밍을 다루는 자체 클라이언트에는 app-server를, 작업 자동화에는 SDK를 안내한다. stdio는 부모·자식 프로세스의 표준 입출력으로 JSON 메시지를 교환하므로 초기 연결용 로컬 네트워크 리스너를 따로 만들지 않아도 된다. OAuth 로그인에는 별도의 루프백 콜백이 사용될 수 있다. [공식 app-server 문서](https://learn.chatgpt.com/docs/app-server), [공식 SDK 문서](https://learn.chatgpt.com/docs/codex-sdk).
 
@@ -122,30 +139,31 @@ app-server를 선택하면 Codex가 기본 에이전트 실행과 도구 루프�
 
 | 선택지 | 인증 책임 | 장점·제약 | 판단 |
 |--------|-----------|-----------|------|
-| **Codex 관리형 ChatGPT 로그인** | Codex가 OAuth·자격 증명 저장·자동 갱신 관리, Artemis는 로그인 시작과 상태 표시 | 마일스톤 1의 구현 부담이 작음. 공식 문서는 로컬·오픈소스 앱의 기존 사용을 안내하면서 Sign in with ChatGPT로의 전환을 권장 | **현재 개인용 검증에 우선 추천** |
-| Sign in with ChatGPT 직접 연동 + app-server | Artemis가 OAuth 등록·PKCE·토큰 검증·보관·갱신 담당, access token을 자식 프로세스에 전달 | 앱별 인증과 사용자 제어에 적합한 공식 권장 방향. 초기 작업이 늘고 해당 경로의 API·도구 제약 확인 필요 | 앱이 인증을 직접 소유할 때 대안 |
+| Codex 관리형 ChatGPT 로그인 | Codex가 OAuth·자격 증명 저장·자동 갱신 관리, Artemis는 로그인 시작과 상태 표시 | 마일스톤 1의 구현 부담이 작음. 공식 문서는 로컬·오픈소스 앱의 기존 사용을 안내하면서 Sign in with ChatGPT로의 전환을 권장 | 미채택 |
+| **Sign in with ChatGPT 직접 연동** | Artemis가 OAuth 등록·PKCE·토큰 검증·보관·갱신 담당 | 앱별 인증과 사용자 제어에 적합한 공식 권장 방향. 초기 작업이 늘고 해당 경로의 API·도구 제약 확인 필요 | **사용자 선택으로 확정**, 실행 엔진은 별도 결정 |
 | API 키 | API 키 기반 사용량 과금 접근 | Codex의 대안 인증이지만 사용자가 지정한 OAuth 목표를 충족하지 않음 | 이번 단계의 기본안에서 제외 |
 
-관리형 로그인은 `account/login/start`의 `type: "chatgpt"`로 시작하고 반환된 URL을 시스템 브라우저로 연다. 로그인 완료 이벤트와 계정 상태로 UI를 갱신한다. 자격 증명 저장은 Codex의 OS 자격 증명 저장소 설정을 우선 검토하고, Artemis UI나 프로젝트 파일에 토큰을 복사하지 않는 안을 추천한다. [app-server 인증](https://learn.chatgpt.com/docs/app-server#auth-endpoints), [Codex 인증·저장 방식](https://learn.chatgpt.com/docs/auth).
+비교 참고: 관리형 로그인은 `account/login/start`의 `type: "chatgpt"`로 시작하고 반환된 URL을 시스템 브라우저로 연다. Codex가 로그인 완료 이벤트와 계정 상태, 자격 증명 저장·갱신을 제공한다. 이 경로는 Artemis의 채택 인증이 아니다. [app-server 인증](https://learn.chatgpt.com/docs/app-server#auth-endpoints), [Codex 인증·저장 방식](https://learn.chatgpt.com/docs/auth).
 
-**적용 조건:** 공식 문서는 app-server 인증을 상용·호스팅 서비스에 허용하지 않는다고 명시한다. 따라서 관리형 로그인 추천을 외부 상용 서비스의 인증 선택으로 확장하지 않는다. 향후 배포 형태가 정해지면 그 형태에 맞는 공식 인증 경로를 별도로 확인한다. [공식 적용 범위](https://learn.chatgpt.com/docs/app-server#auth-endpoints).
+**적용 조건:** 공식 문서는 app-server 인증을 상용·호스팅 서비스에 허용하지 않는다고 명시한다. 이는 app-server를 모델·도구 실행 엔진으로 사용하는 선택과 구분한다. 향후 배포 형태가 정해지면 선택한 Sign in with ChatGPT 경로의 적용 조건을 별도로 확인한다. [공식 적용 범위](https://learn.chatgpt.com/docs/app-server#auth-endpoints).
 
 직접 연동의 오픈소스 경로에는 `dynamic_agent_client`를 이용한 동적 등록이 문서화되어 있으며, 이 경로는 client secret이나 파트너 API 키를 요구하지 않는다. 상용 파트너용 client ID 신청과는 구분한다. 이 문서가 존재한다는 사실만으로 Artemis의 배포 형태·계정에 적용 가능하거나 인증이 성공한다고 판단하지 않는다. [오픈소스 등록·로그인](https://developers.openai.com/siwc/token-sharing-open-source/sign-in), [상용 client ID 신청](https://developers.openai.com/siwc/request-client-id).
 
 직접 토큰을 공급하는 공식 provider 설정에서는 앱이 토큰을 갱신하고 app-server를 재시작한 뒤 대화를 재개한다. 로컬 shell·MCP 실행과 호스팅 도구 지원은 별개이며, 호스팅 MCP·파일 검색 등은 이 프리뷰 경로에서 지원하지 않는다. 이를 app-server 전체의 도구 제약으로 일반화하지 않는다. 이 provider 경로는 실험적 `chatgptAuthTokens` 로그인 모드와도 구분한다. [직접 토큰 연동](https://developers.openai.com/siwc/token-sharing-open-source/codex-app-server), [프리뷰 제약](https://developers.openai.com/siwc/token-sharing-open-source/preview-limitations).
 
-### 현재 추천 조합
+### 현재 채택 방향과 남은 선택
 
-**Tauri 2 + React·TypeScript UI → Rust 하네스·연동부 → stdio → 로컬 Codex app-server**, 인증은 **Codex 관리형 브라우저 로그인**을 추천한다.
+**WPF UI + C# 하네스**, 인증은 **Artemis 직접 관리 Sign in with ChatGPT**로 확정한다.
 
-- UI는 입력·답변·상태·사용자 판단을 다루고, Rust 측은 프로세스 수명주기와 요청·이벤트 연결을 맡는다.
-- Codex는 인증·모델 실행·기본 도구 루프를 맡는다. 도구별 허용 범위와 확인 단위는 이번 선택으로 확정하지 않는다.
-- Tauri의 capability는 UI에서 네이티브 명령에 접근하는 경계를 제어한다. Codex 자식 프로세스의 도구 실행 범위는 별도로 제한·검증해야 한다. [Tauri capability](https://v2.tauri.app/reference/acl/capability/).
-- 실제 채택·구현은 별도 결정하며, 인증·추론·도구 실행은 여전히 미검증 상태다.
+- WPF UI는 입력·답변·상태·사용자 판단을 다루고 C# 하네스가 인증과 실행 연동을 연결한다.
+- 인증을 위해 사용자가 Codex 또는 별도 앱을 설치할 필요가 없도록 설계한다.
+- 실행 엔진은 app-server 활용과 Responses API 직접 연동 등을 비교해 별도로 정한다. app-server 활용 시 런타임 동봉·배포 방식도 검토한다.
+- 도구별 허용 범위와 확인 단위, 인증 세부 구현은 미정이며, 인증·추론·도구 실행은 여전히 미검증 상태다.
 
 ## 후속 결정 사항
 
-- 위 데스크톱·연동·인증 추천 조합의 채택 여부.
+- .NET 대상 버전과 화면 배치, 선택한 Sign in with ChatGPT의 세부 인증 설계.
+- 모델·도구 실행 엔진: app-server 활용 또는 직접 API 연동, 필요 런타임의 배포 방식.
 - 기본 모델과 선택 가능한 모델의 표시 방식.
 - 최초 지원 도구, 작업 대상 범위, 사용자 확인 단위.
 - 재시도 카운트의 적용 단위와 재시도 방식, 진행 중 도구의 중단 처리.
