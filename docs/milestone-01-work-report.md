@@ -73,3 +73,7 @@ dotnet run --project tests/Artemis.UiVerification -c Release
 모의 UI 실행기에서는 테스트 폴더 선택 후 `STREAM_DROP`, `USAGE_LIMIT`, `RETRY_429`, `HOLD`, `OK`를 입력한다. 실제 앱과 창 제목·계정·저장소를 구분한다.
 
 세부 계약과 검증 근거는 [Milestone 1 설계·구현 기록](milestone-01-harness.md), 실행 안내는 [README](../README.md)에 정리되어 있다.
+
+## 후속 독립 검토
+
+2026-10-28 보고서·설계·소스 대조와 빌드·22개 회귀 재실행을 진행했다. 요청별 자동 읽기 범위 통제, 일부 원격 해제 오류에서의 로컬 자격 증명 잔존, 날짜 형식 Retry-After 처리 공백이 합성 검증에서 재현됐다. 상세 근거와 조치 방향은 [작업 보고서 검토](milestone-01-review.md)에 기록한다. 애플리케이션 소스와 기존 검증 결과는 변경하지 않았으며, 세 항목은 미해결 상태다.
