@@ -90,9 +90,62 @@ Codex 런타임 / 모델 서비스 / 허용된 로컬 도구
 
 첫 대표 도구는 프로젝트 내 파일 조회 또는 지정 명령 실행 등을 후보로 두며, 종류와 허용 범위는 아직 확정하지 않는다. 도구를 사용했다는 답변만으로 성공 처리하지 않고 실행 기록과 실제 결과를 확인한다.
 
+## 데스크톱 기술·Codex 연동·인증 비교 — 2026-10-28
+
+상태: **선택지와 추천안이며 아직 채택하지 않음.** 아래 추천은 현재의 로컬 개인용 MVP와 마일스톤 1을 기준으로 한다. 비교 평가는 공식 문서의 구조·기능을 바탕으로 한 설계 판단이며, 실제 성능이나 Artemis 연결 성공을 검증한 결과가 아니다.
+
+### 데스크톱 기술
+
+| 선택지 | 현재 목표에 맞는 점 | 부담·제약 | 판단 |
+|--------|---------------------|-----------|------|
+| **Tauri 2 + React·TypeScript + Rust** | OS WebView를 이용하는 작은 앱 셸, 대화·도구·진행 패널을 웹 UI로 구성, Rust에서 로컬 프로세스 제어 | 웹과 Rust 양쪽 개발 필요, 플랫폼별 WebView 차이와 외부 Codex 실행 파일 배포 고려 | **최적화를 고려하는 현재 방향에 우선 추천** |
+| Electron + React·TypeScript | Node.js에서 프로세스·스트림 처리 가능, UI와 하네스의 언어를 TypeScript로 통일하기 쉬움 | Chromium·Node.js를 함께 배포, 앱 셸의 배포 크기와 자원 부담 고려 | 개발 속도와 단일 언어 운영을 더 중시하면 대안 |
+| .NET + WPF + C# | Windows 데스크톱 UI와 로컬 시스템 기능에 적합 | Windows 전용, 웹 UI와 다른 XAML 구성 방식 | Windows 전용 제품으로 확정하고 C#을 선호할 때 대안 |
+
+근거: [Tauri 구조](https://v2.tauri.app/concept/architecture/), [외부 실행 파일 연동](https://v2.tauri.app/develop/sidecar/), [Electron 구성](https://www.electronjs.org/docs/latest/), [Electron 프로세스 구조](https://www.electronjs.org/docs/latest/tutorial/process-model), [WPF 개요](https://learn.microsoft.com/en-us/dotnet/desktop/wpf/overview/).
+
+Tauri의 작은 배포 구조가 Artemis 전체의 메모리·CPU 우위를 보장하지는 않는다. Codex 프로세스와 실제 작업을 포함한 자원 사용은 구현 후 측정해야 한다. React·TypeScript는 대화와 여러 상태 패널을 구성하기 위한 추천이며, Codex 연동의 필수 조건은 아니다.
+
+### Codex 연동
+
+| 선택지 | 적합성 | 판단 |
+|--------|--------|------|
+| **Codex app-server + stdio** | 인증·대화 이력·스트리밍·승인 요청 등 GUI에 필요한 양방향 이벤트 제공 | **현재 하네스 UI에 추천** |
+| Codex SDK | 프로그램에서 작업을 시작·계속·재개하는 자동화에 적합, TypeScript SDK는 Node.js 필요 | GUI 인증·승인 흐름이 핵심인 이번 단계에서는 후순위 |
+| Responses API 직접 연동 | 모델 요청과 도구 루프를 Artemis가 직접 설계·제어 | 도구 실행·대화·상태 처리를 더 많이 구현해야 하므로 이번 단계에서는 후순위 |
+
+공식 문서는 인증·대화·승인·스트리밍을 다루는 자체 클라이언트에는 app-server를, 작업 자동화에는 SDK를 안내한다. stdio는 부모·자식 프로세스의 표준 입출력으로 JSON 메시지를 교환하므로 초기 연결용 로컬 네트워크 리스너를 따로 만들지 않아도 된다. OAuth 로그인에는 별도의 루프백 콜백이 사용될 수 있다. [공식 app-server 문서](https://learn.chatgpt.com/docs/app-server), [공식 SDK 문서](https://learn.chatgpt.com/docs/codex-sdk).
+
+app-server를 선택하면 Codex가 기본 에이전트 실행과 도구 루프를 담당하고 Artemis가 UI·작업 제어·후속 조정을 연결하는 구조가 된다. 임의의 모델 API를 그대로 호출하는 구조와는 책임 범위가 다르다. 공식 문서는 app-server 명령과 WebSocket 전송을 실험적이며 프로덕션 워크로드 미지원으로 명시하므로, stdio 선택만으로 안정성이 보장된다고 가정하지 않는다. 초기 실험의 Codex 버전을 고정하고 연동부를 분리하는 안을 추천한다.
+
+### 인증 방식
+
+| 선택지 | 인증 책임 | 장점·제약 | 판단 |
+|--------|-----------|-----------|------|
+| **Codex 관리형 ChatGPT 로그인** | Codex가 OAuth·자격 증명 저장·자동 갱신 관리, Artemis는 로그인 시작과 상태 표시 | 마일스톤 1의 구현 부담이 작음. 공식 문서는 로컬·오픈소스 앱의 기존 사용을 안내하면서 Sign in with ChatGPT로의 전환을 권장 | **현재 개인용 검증에 우선 추천** |
+| Sign in with ChatGPT 직접 연동 + app-server | Artemis가 OAuth 등록·PKCE·토큰 검증·보관·갱신 담당, access token을 자식 프로세스에 전달 | 앱별 인증과 사용자 제어에 적합한 공식 권장 방향. 초기 작업이 늘고 해당 경로의 API·도구 제약 확인 필요 | 앱이 인증을 직접 소유할 때 대안 |
+| API 키 | API 키 기반 사용량 과금 접근 | Codex의 대안 인증이지만 사용자가 지정한 OAuth 목표를 충족하지 않음 | 이번 단계의 기본안에서 제외 |
+
+관리형 로그인은 `account/login/start`의 `type: "chatgpt"`로 시작하고 반환된 URL을 시스템 브라우저로 연다. 로그인 완료 이벤트와 계정 상태로 UI를 갱신한다. 자격 증명 저장은 Codex의 OS 자격 증명 저장소 설정을 우선 검토하고, Artemis UI나 프로젝트 파일에 토큰을 복사하지 않는 안을 추천한다. [app-server 인증](https://learn.chatgpt.com/docs/app-server#auth-endpoints), [Codex 인증·저장 방식](https://learn.chatgpt.com/docs/auth).
+
+**적용 조건:** 공식 문서는 app-server 인증을 상용·호스팅 서비스에 허용하지 않는다고 명시한다. 따라서 관리형 로그인 추천을 외부 상용 서비스의 인증 선택으로 확장하지 않는다. 향후 배포 형태가 정해지면 그 형태에 맞는 공식 인증 경로를 별도로 확인한다. [공식 적용 범위](https://learn.chatgpt.com/docs/app-server#auth-endpoints).
+
+직접 연동의 오픈소스 경로에는 `dynamic_agent_client`를 이용한 동적 등록이 문서화되어 있으며, 이 경로는 client secret이나 파트너 API 키를 요구하지 않는다. 상용 파트너용 client ID 신청과는 구분한다. 이 문서가 존재한다는 사실만으로 Artemis의 배포 형태·계정에 적용 가능하거나 인증이 성공한다고 판단하지 않는다. [오픈소스 등록·로그인](https://developers.openai.com/siwc/token-sharing-open-source/sign-in), [상용 client ID 신청](https://developers.openai.com/siwc/request-client-id).
+
+직접 토큰을 공급하는 공식 provider 설정에서는 앱이 토큰을 갱신하고 app-server를 재시작한 뒤 대화를 재개한다. 로컬 shell·MCP 실행과 호스팅 도구 지원은 별개이며, 호스팅 MCP·파일 검색 등은 이 프리뷰 경로에서 지원하지 않는다. 이를 app-server 전체의 도구 제약으로 일반화하지 않는다. 이 provider 경로는 실험적 `chatgptAuthTokens` 로그인 모드와도 구분한다. [직접 토큰 연동](https://developers.openai.com/siwc/token-sharing-open-source/codex-app-server), [프리뷰 제약](https://developers.openai.com/siwc/token-sharing-open-source/preview-limitations).
+
+### 현재 추천 조합
+
+**Tauri 2 + React·TypeScript UI → Rust 하네스·연동부 → stdio → 로컬 Codex app-server**, 인증은 **Codex 관리형 브라우저 로그인**을 추천한다.
+
+- UI는 입력·답변·상태·사용자 판단을 다루고, Rust 측은 프로세스 수명주기와 요청·이벤트 연결을 맡는다.
+- Codex는 인증·모델 실행·기본 도구 루프를 맡는다. 도구별 허용 범위와 확인 단위는 이번 선택으로 확정하지 않는다.
+- Tauri의 capability는 UI에서 네이티브 명령에 접근하는 경계를 제어한다. Codex 자식 프로세스의 도구 실행 범위는 별도로 제한·검증해야 한다. [Tauri capability](https://v2.tauri.app/reference/acl/capability/).
+- 실제 채택·구현은 별도 결정하며, 인증·추론·도구 실행은 여전히 미검증 상태다.
+
 ## 후속 결정 사항
 
-- 데스크톱 구현 기술과 Codex app-server 채택 여부, 인증 관리 방식.
+- 위 데스크톱·연동·인증 추천 조합의 채택 여부.
 - 기본 모델과 선택 가능한 모델의 표시 방식.
 - 최초 지원 도구, 작업 대상 범위, 사용자 확인 단위.
 - 재시도 카운트의 적용 단위와 재시도 방식, 진행 중 도구의 중단 처리.
