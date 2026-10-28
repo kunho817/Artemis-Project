@@ -97,8 +97,13 @@ public partial class MainWindow : Window
     {
         var picker = new OpenFolderDialog { Title = "Artemis 작업 프로젝트 선택" };
         if (picker.ShowDialog(this) != true) return;
-        try { files = new FileTools(picker.FolderName); RootLabel.Text = files.Root; ResetConversation(); StatusLabel.Text = "프로젝트 선택됨 · 새 대화"; }
+        try { SelectProject(picker.FolderName); }
         catch (Exception ex) { StatusLabel.Text = ex.Message; }
+    }
+    internal void SelectProject(string root)
+    {
+        files = new FileTools(root); RootLabel.Text = files.Root;
+        ResetConversation(); StatusLabel.Text = "프로젝트 선택됨 · 새 대화";
     }
     private async void SignIn_Click(object sender, RoutedEventArgs e) => await WithOperation(async ct =>
     {

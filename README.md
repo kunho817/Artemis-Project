@@ -138,6 +138,7 @@ Windows와 .NET 8 SDK 이상이 있는 개발 환경에서 프로젝트 루트 �
 ```powershell
 dotnet build Artemis.sln -c Release
 dotnet run --project tests/Artemis.Tests -c Release
+dotnet run --project tests/Artemis.RenderingTests -c Release
 dotnet run --project src/Artemis.Desktop -c Release
 ```
 
@@ -187,4 +188,4 @@ dotnet run --project tests/Artemis.UiVerification -c Release
 
 Git 이력과 원격 저장소 연결은 유지합니다. 이전 MVP 계획과 기술 선택은 기록으로 보존하며, 새 프로젝트의 요구사항은 앞으로 다시 정합니다.
 
-보고서 리뷰의 세 지적은 후속 수정과 29개 자동 회귀에 반영했습니다. 자세한 내용은 [리뷰 후속 조치](docs/milestone-01-review.md#후속-조치--2026-10-28)를 참고하세요. 새 요청 범위 UI와 변경한 인증·재시도 처리는 이번에 실계정/UI로 재검증하지 않았습니다.
+보고서 리뷰의 세 지적은 후속 수정과 29개 자동 회귀에 반영했습니다. 자세한 내용은 [리뷰 후속 조치](docs/milestone-01-review.md#후속-조치--2026-10-28)를 참고하세요. 새 요청 범위 UI는 창을 표시하지 않는 자동 검증으로 추가 확인했습니다. **16개 동작/검사기 검사와 54개 렌더링**, 동일 환경 이미지 반복 비교가 통과했습니다. 실행·갤러리·기준 이미지 비교와 한계는 [렌더링 검사 안내](docs/rendering-tests.md)를 참고하세요. 실계정·네이티브 창/모니터 동작 재검증은 포함하지 않습니다.

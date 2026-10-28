@@ -49,10 +49,10 @@
     <DockPanel Margin="0,0,0,14"><Button x:Name="NewConversationButton" DockPanel.Dock="Right" Content="새 대화" Click="NewConversation_Click" Margin="0" Padding="10,5"/><TextBlock Text="대화" FontSize="18" FontWeight="SemiBold" VerticalAlignment="Center"/></DockPanel>
     <TextBox Grid.Row="1" x:Name="Transcript" IsReadOnly="True" AcceptsReturn="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" BorderThickness="0" Background="#1A2331" Padding="0"/>
     <StackPanel Grid.Row="2" Margin="0,12,0,0">
-     <TextBlock Text="이번 요청의 파일 범위 · 비우면 파일 도구 사용 안 함" Foreground="#ADBED3" FontSize="12"/>
+     <TextBlock x:Name="ScopeLabel" Text="이번 요청의 파일 범위 · 비우면 파일 도구 사용 안 함" Foreground="#ADBED3" FontSize="12"/>
      <TextBox x:Name="ScopePaths" Height="52" AcceptsReturn="True" VerticalScrollBarVisibility="Auto" Margin="0,6,0,6" ToolTip="한 줄에 상대 경로 하나. 파일은 notes.txt, 폴더 하위 전체는 docs/, 프로젝트 전체는 . 을 명시하세요. 자연어 요청과 일치하도록 좁게 지정하세요."/>
      <WrapPanel><CheckBox x:Name="ReadScope" Content="목록·읽기·검색 허용" IsChecked="True" Foreground="#ADBED3" Margin="0,0,12,0"/><CheckBox x:Name="WriteScope" Content="범위 내 변경 제안 허용" Foreground="#ADBED3"/></WrapPanel>
-     <TextBlock Text="범위가 바뀌면 모델 대화 맥락 초기화 · 변경 적용은 파일별 별도 확인" Foreground="#8FA2BD" FontSize="11" Margin="0,4,0,0"/>
+     <TextBlock x:Name="ScopeHint" Text="범위가 바뀌면 모델 대화 맥락 초기화 · 변경 적용은 파일별 별도 확인" Foreground="#8FA2BD" FontSize="11" Margin="0,4,0,0"/>
     </StackPanel>
     <TextBox Grid.Row="3" x:Name="Prompt" AcceptsReturn="True" TextWrapping="Wrap" Height="112" Margin="0,12,0,12" VerticalScrollBarVisibility="Auto" ToolTip="작업을 입력한 후 요청 전송 버튼으로 실행하세요."/>
     <DockPanel Grid.Row="4"><StackPanel DockPanel.Dock="Right" Orientation="Horizontal"><Button x:Name="StopButton" Content="중단" Click="Stop_Click" IsEnabled="False"/><Button x:Name="SendButton" Content="요청 전송 →" Click="Send_Click" Background="#98C6FF" Margin="0"/></StackPanel><TextBlock Text="대화는 이 창에서만 유지됩니다." Foreground="#8FA2BD" FontSize="12" VerticalAlignment="Center"/></DockPanel>
