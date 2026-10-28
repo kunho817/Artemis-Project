@@ -10,6 +10,7 @@ public sealed class Harness(IModelClient model, FileTools files)
 {
     private readonly JsonArray history = [];
     private int busy;
+    private string? historyScope;
     public RunState State { get; private set; } = RunState.Idle;
     public event Action<RunState>? StateChanged;
     public event Action<string>? TextDelta;
@@ -18,12 +19,16 @@ public sealed class Harness(IModelClient model, FileTools files)
     public Func<ChangeProposal, CancellationToken, Task<bool>> Confirm { get; set; } = (_, _) => Task.FromResult(false);
     private void SetState(RunState state) { State = state; StateChanged?.Invoke(state); }
 
-    public async Task RunAsync(string request, string selectedModel, CancellationToken ct)
+    public async Task RunAsync(string request, string selectedModel, RequestScope scope, CancellationToken ct)
     {
         if (Interlocked.Exchange(ref busy, 1) != 0) throw new InvalidOperationException("이미 실행 중입니다.");
         try
         {
             ct.ThrowIfCancellationRequested(); SetState(RunState.Running);
+            scope.EnsureProject(files);
+            // Narrowing scope must not replay previous file contents from a wider turn.
+            if (historyScope != scope.Description) history.Clear();
+            historyScope = scope.Description;
             var input = (JsonArray)history.DeepClone();
             input.Add(new JsonObject { ["role"] = "user", ["content"] = request });
             var instructions = """
@@ -35,6 +40,7 @@ public sealed class Harness(IModelClient model, FileTools files)
             Report denied/error/conflict results honestly; never claim a change without successful tool output.
             Ask the user when task scope is unclear. Do not invent extra tasks or broaden access.
             """;
+            instructions += "\nAuthoritative per-request tool scope: " + scope.Description;
             while (true)
             {
                 ct.ThrowIfCancellationRequested();
@@ -55,7 +61,7 @@ public sealed class Harness(IModelClient model, FileTools files)
                     var id = call["call_id"]?.GetValue<string>() ?? throw new IOException("도구 호출 ID 누락.");
                     var name = call["name"]?.GetValue<string>() ?? "";
                     var ns = call["namespace"]?.GetValue<string>();
-                    var result = await Execute(name, ns, call["arguments"]?.GetValue<string>() ?? "", ct);
+                    var result = await Execute(name, ns, call["arguments"]?.GetValue<string>() ?? "", scope, ct);
                     input.Add(new JsonObject { ["type"] = "function_call_output", ["call_id"] = id, ["output"] = result });
                 }
             }
@@ -65,7 +71,7 @@ public sealed class Harness(IModelClient model, FileTools files)
         finally { Volatile.Write(ref busy, 0); }
     }
 
-    private async Task<string> Execute(string name, string? ns, string arguments, CancellationToken ct)
+    private async Task<string> Execute(string name, string? ns, string arguments, RequestScope scope, CancellationToken ct)
     {
         var path = ""; string result;
         try
@@ -85,9 +91,10 @@ public sealed class Harness(IModelClient model, FileTools files)
             switch (name)
             {
                 case "list_files":
-                    var entries = files.List(path, ct);
+                    var entries = files.List(path, ct, scope);
                     result = JsonSerializer.Serialize(new { status = "success", entries = entries.Entries, truncated = entries.Truncated }); break;
                 case "read_text_file":
+                    scope.EnsureFile(files, path);
                     var start = a.GetProperty("start_line").GetInt32(); var max = a.GetProperty("max_lines").GetInt32();
                     if (start < 1 || max is < 1 or > 500) throw new ArgumentException("행 범위 오류.");
                     var lines = files.Read(path).Split('\n');
@@ -95,9 +102,10 @@ public sealed class Harness(IModelClient model, FileTools files)
                     result = JsonSerializer.Serialize(new { status = "success", start_line = start, total_lines = lines.Length,
                         text = text[..Math.Min(text.Length, 32000)], truncated = (long)start - 1 + max < lines.Length || text.Length > 32000 }); break;
                 case "search_text":
-                    var matches = files.Search(path, a.GetProperty("query").GetString()!, ct);
+                    var matches = files.Search(path, a.GetProperty("query").GetString()!, ct, scope);
                     result = JsonSerializer.Serialize(new { status = "success", hits = matches.Hits, truncated = matches.Truncated }); break;
                 default:
+                    scope.EnsureFile(files, path, write: true);
                     var proposal = files.Propose(path, a.GetProperty("content").GetString()!);
                     SetState(RunState.AwaitingApproval);
                     var approved = await Confirm(proposal, ct); ct.ThrowIfCancellationRequested();

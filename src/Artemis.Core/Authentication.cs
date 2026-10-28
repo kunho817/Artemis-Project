@@ -173,8 +173,18 @@ public sealed class Authentication : IDisposable
                     revoked = response.IsSuccessStatusCode;
                 }
             }
-            catch (Exception ex) when (ex is HttpRequestException or IOException or OperationCanceledException) { revoked = false; }
-            Save(account with { AccessToken = null, RefreshToken = null, IdToken = null, Scopes = [], ExpiresAt = default });
+            catch (Exception ex) when (ex is HttpRequestException or IOException or OperationCanceledException or
+                JsonException or KeyNotFoundException or InvalidOperationException or ArgumentException or FormatException)
+            { revoked = false; }
+            finally
+            {
+                // Stop using credentials in memory even if persisting the local signout fails.
+                var cleared = account with { AccessToken = null, RefreshToken = null, IdToken = null, Scopes = [], ExpiresAt = default };
+                Data = Data with { Accounts = Data.Accounts.Select(a => a.ClientId == account.ClientId ? cleared : a).ToList() };
+                try { store.Save(Data); }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or CryptographicException)
+                { throw new IOException("메모리에서 연결 해제했지만 로컬 토큰 제거를 저장하지 못했습니다. 저장소 권한·디스크 상태를 확인하세요.", ex); }
+            }
             return revoked;
         }
         finally { gate.Release(); }

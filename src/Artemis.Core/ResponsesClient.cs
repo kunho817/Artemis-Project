@@ -12,8 +12,10 @@ public interface IModelClient
         Action<string> delta, Action<int> retry, CancellationToken ct);
 }
 
-public sealed class ResponsesClient(HttpClient http, Func<CancellationToken, Task<string>> accessToken) : IModelClient
+public sealed class ResponsesClient(HttpClient http, Func<CancellationToken, Task<string>> accessToken,
+    TimeProvider? timeProvider = null) : IModelClient
 {
+    private readonly TimeProvider clock = timeProvider ?? TimeProvider.System;
     public static readonly string[] Models = ["gpt-6.1-sol", "gpt-6.1-terra"];
     public static JsonArray Tools => JsonNode.Parse("""
     [{"type":"namespace","name":"project","description":"Local project text tools. User scope only; writes require individual approval.","tools":[
@@ -54,8 +56,9 @@ public sealed class ResponsesClient(HttpClient http, Func<CancellationToken, Tas
             if ((response.StatusCode == HttpStatusCode.TooManyRequests || (int)response.StatusCode >= 500) && attempt < 5)
             {
                 retry(attempt + 1);
-                var delay = response.Headers.RetryAfter?.Delta ?? TimeSpan.FromSeconds(Math.Pow(2, attempt));
-                await Task.Delay(delay, ct); continue;
+                var after = response.Headers.RetryAfter;
+                var delay = after?.Delta ?? (after?.Date is { } date ? date - clock.GetUtcNow() : TimeSpan.FromSeconds(Math.Pow(2, attempt)));
+                await Task.Delay(delay < TimeSpan.Zero ? TimeSpan.Zero : delay, clock, ct); continue;
             }
             if (!response.IsSuccessStatusCode) throw await Failure(response, ct);
             using var stream = await response.Content.ReadAsStreamAsync(ct);

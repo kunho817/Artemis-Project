@@ -131,8 +131,9 @@ public sealed class FileTools
         return Decode(Bytes(stream));
     }
 
-    public (IReadOnlyList<string> Entries, bool Truncated) List(string path, CancellationToken ct)
+    public (IReadOnlyList<string> Entries, bool Truncated) List(string path, CancellationToken ct, RequestScope? scope = null)
     {
+        scope?.EnsureDirectory(this, path);
         var full = Resolve(path);
         using var lease = Lease(full);
         var result = new List<string>();
@@ -145,6 +146,8 @@ public sealed class FileTools
                 var attr = File.GetAttributes(entry);
                 if ((attr & FileAttributes.ReparsePoint) != 0) continue;
                 Resolve(relative, (attr & FileAttributes.Directory) == 0);
+                if (scope != null && ((attr & FileAttributes.Directory) != 0
+                    ? !scope.AllowsDirectory(this, relative) : !scope.AllowsFile(this, relative))) continue;
                 if (result.Count == 1000) return (result, true);
                 result.Add(relative + ((attr & FileAttributes.Directory) != 0 ? "/" : ""));
             }
@@ -153,7 +156,7 @@ public sealed class FileTools
         return (result, false);
     }
 
-    public (IReadOnlyList<SearchHit> Hits, bool Truncated) Search(string path, string query, CancellationToken ct)
+    public (IReadOnlyList<SearchHit> Hits, bool Truncated) Search(string path, string query, CancellationToken ct, RequestScope? scope = null)
     {
         if (query.Length is 0 or > 1000) throw new ArgumentException("검색어는 1~1000자여야 합니다.");
         var hits = new List<SearchHit>();
@@ -162,7 +165,7 @@ public sealed class FileTools
         while (pending.TryPop(out var directory))
         {
             ct.ThrowIfCancellationRequested();
-            var list = List(directory, ct); truncated |= list.Truncated;
+            var list = List(directory, ct, scope); truncated |= list.Truncated;
             foreach (var entry in list.Entries)
             {
                 ct.ThrowIfCancellationRequested();

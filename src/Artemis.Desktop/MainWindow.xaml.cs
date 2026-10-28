@@ -90,6 +90,7 @@ public partial class MainWindow : Window
 
     private void ResetConversation()
     {
+        ScopePaths.Clear(); ReadScope.IsChecked = true; WriteScope.IsChecked = false;
         Transcript.Clear(); ToolLog.Clear(); ChangePreview.Text = "승인할 변경이 없습니다."; RebuildHarness();
     }
     private void ChooseProject_Click(object sender, RoutedEventArgs e)
@@ -107,8 +108,13 @@ public partial class MainWindow : Window
     });
     private async void SignOut_Click(object sender, RoutedEventArgs e) => await WithOperation(async ct =>
     {
-        var revoked = await auth!.SignOutAsync(ct); catalog = new HashSet<string>(); ReloadAccounts(); ResetConversation();
-        CatalogLabel.Text = "연결 해제됨";
+        bool revoked;
+        try { revoked = await auth!.SignOutAsync(ct); }
+        finally
+        {
+            catalog = new HashSet<string>(); ReloadAccounts(); ResetConversation();
+            CatalogLabel.Text = auth!.Active?.CanInvoke == true ? "모델 목록을 다시 확인하세요." : "연결 해제됨";
+        }
         StatusLabel.Text = revoked ? "연결 해제 완료" : "로컬 연결 해제 완료 · 원격 해제는 확인되지 않았습니다. ChatGPT 설정에서 앱을 해제할 수 있습니다.";
     });
     private async void AccountPicker_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -145,8 +151,12 @@ public partial class MainWindow : Window
         var model = ((ComboBoxItem)ModelPicker.SelectedItem).Content.ToString()!;
         if (!catalog.Contains(model)) { StatusLabel.Text = "계정 모델 목록에 없습니다. 로그인·모델 목록을 확인하세요."; return; }
         var text = Prompt.Text.Trim(); if (text.Length == 0) return;
-        Prompt.Clear(); Transcript.AppendText($"\n사용자\n{text}\n\nArtemis · {model}\n");
-        await WithOperation(ct => Task.Run(() => harness.RunAsync(text, model, ct), ct));
+        RequestScope scope;
+        try { scope = new(files!, ScopePaths.Text.Split('\n'), ReadScope.IsChecked == true, WriteScope.IsChecked == true); }
+        catch (Exception ex) { StatusLabel.Text = "요청 범위 오류 · " + ex.Message; return; }
+        Prompt.Clear(); ScopePaths.Clear(); WriteScope.IsChecked = false;
+        Transcript.AppendText($"\n사용자\n{text}\n파일 범위: {scope.Description}\n\nArtemis · {model}\n");
+        await WithOperation(ct => Task.Run(() => harness.RunAsync(text, model, scope, ct), ct));
         Transcript.AppendText("\n");
     }
     private async Task WithOperation(Func<CancellationToken, Task> action)
@@ -160,7 +170,7 @@ public partial class MainWindow : Window
     }
     private void SetBusy(bool busy)
     {
-        foreach (var control in new Control[] { ProjectButton, AccountPicker, SignInButton, SignOutButton, RefreshTokenButton, ModelPicker, SendButton, Prompt, CatalogButton, NewConversationButton }) control.IsEnabled = !busy;
+        foreach (var control in new Control[] { ProjectButton, AccountPicker, SignInButton, SignOutButton, RefreshTokenButton, ModelPicker, SendButton, Prompt, ScopePaths, ReadScope, WriteScope, CatalogButton, NewConversationButton }) control.IsEnabled = !busy;
         StopButton.IsEnabled = busy;
     }
     private void Stop_Click(object sender, RoutedEventArgs e) { operation?.Cancel(); approval?.TrySetCanceled(); }

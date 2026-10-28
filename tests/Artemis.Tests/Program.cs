@@ -20,6 +20,7 @@ File.WriteAllText(Path.Combine(root, "sample.txt"), "alpha\nbeta\nalpha\n", new 
 File.WriteAllText(Path.Combine(outside, "outside.txt"), "outside");
 var files = new FileTools(root);
 var ct = CancellationToken.None;
+var fullScope = new RequestScope(files, ["."], true, true);
 
 Test("Volume-root project resolves child paths correctly", () =>
 {
@@ -166,7 +167,7 @@ AsyncTest("Both exact models complete function-result loop and retain followup c
             if (turn == 3) Check(input.Count == 5 && input[3]!["phase"]!.ToString() == "final_answer");
             return Answer();
         });
-        var h = new Harness(fake, files); await h.RunAsync("read sample", model, ct); await h.RunAsync("follow up", model, ct);
+        var h = new Harness(fake, files); await h.RunAsync("read sample", model, fullScope, ct); await h.RunAsync("follow up", model, fullScope, ct);
         Check(h.State == RunState.Completed && turn == 3);
     }
 });
@@ -176,7 +177,7 @@ AsyncTest("Denied write produces denied call output without mutation", async () 
     var fake = new FakeModel((_, input, _) => ++turn == 1 ? new(Call("write_text_file", new { path = "denied.txt", content = "no" })) :
         input.Last()!["output"]!.ToString().Contains("denied") ? Answer() : throw new Exception("Missing denial"));
     var h = new Harness(fake, files) { Confirm = (p, _) => { Check(p.Before == null && !File.Exists(Path.Combine(root, p.Path))); confirmed = true; return Task.FromResult(false); } };
-    await h.RunAsync("write", "gpt-6.1-sol", ct); Check(confirmed && !File.Exists(Path.Combine(root, "denied.txt")));
+    await h.RunAsync("write", "gpt-6.1-sol", fullScope, ct); Check(confirmed && !File.Exists(Path.Combine(root, "denied.txt")));
 });
 AsyncTest("Approved write uses actual verified contents and conflict errors", async () =>
 {
@@ -192,7 +193,7 @@ AsyncTest("Approved write uses actual verified contents and conflict errors", as
             return Answer();
         });
         var h = new Harness(fake, files) { Confirm = (_, _) => { if (conflict) File.WriteAllText(Path.Combine(root, "approved.txt"), "external"); return Task.FromResult(true); } };
-        await h.RunAsync("write", "gpt-6.1-sol", ct); Check(files.Read("approved.txt") == (conflict ? "external" : "after"));
+        await h.RunAsync("write", "gpt-6.1-sol", fullScope, ct); Check(files.Read("approved.txt") == (conflict ? "external" : "after"));
     }
 });
 AsyncTest("Malformed and unknown tools return errors tied to call IDs", async () =>
@@ -204,7 +205,7 @@ AsyncTest("Malformed and unknown tools return errors tied to call IDs", async ()
         var results = input.OfType<JsonObject>().Where(o => o["type"]?.ToString() == "function_call_output").ToList();
         Check(results.Count == 2 && results.All(r => r["output"]!.ToString().Contains("error"))); return Answer();
     });
-    await new Harness(fake, files).RunAsync("read", "gpt-6.1-sol", ct);
+    await new Harness(fake, files).RunAsync("read", "gpt-6.1-sol", fullScope, ct);
 });
 AsyncTest("Stop during approval prevents write, second tool and followup request", async () =>
 {
@@ -212,7 +213,7 @@ AsyncTest("Stop during approval prevents write, second tool and followup request
     var fake = new FakeModel((_, _, _) => { calls++; return new(Call("write_text_file", new { path = "stopped.txt", content = "no" }), Call("read_text_file", new { path = "sample.txt", start_line = 1, max_lines = 1 }, "c2")); });
     var h = new Harness(fake, files) { Confirm = (_, _) => { source.Cancel(); return Task.FromResult(true); } };
     h.ToolFinished += _ => results++;
-    await RejectAsync(() => h.RunAsync("write", "gpt-6.1-sol", source.Token));
+    await RejectAsync(() => h.RunAsync("write", "gpt-6.1-sol", fullScope, source.Token));
     Check(h.State == RunState.Stopped && calls == 1 && results == 0 && !File.Exists(Path.Combine(root, "stopped.txt")));
 });
 Test("OIDC signature, issuer, audience, expiry and nonce enforced", () =>
@@ -273,6 +274,142 @@ Test("Signout clears credentials and retains registration after unconfirmed revo
     Check(saved.ClientId == account.ClientId && saved.Subject == account.Subject && saved.AccessToken == null && saved.RefreshToken == null && saved.IdToken == null && !saved.CanInvoke);
 });
 
+AsyncTest("Request-scoped read/list/search reject unrelated files and writes before confirmation", async () =>
+{
+    Directory.CreateDirectory(Path.Combine(root, "scoped"));
+    File.WriteAllText(Path.Combine(root, "scoped/requested.txt"), "ALLOWED_BODY");
+    File.WriteAllText(Path.Combine(root, "scoped/unrelated.txt"), "FORBIDDEN_BODY");
+    var scope = new RequestScope(files, ["scoped/requested.txt"], true, false);
+    var turn = 0; var approvals = 0;
+    var fake = new FakeModel((_, input, _) =>
+    {
+        if (++turn == 1) return new(
+            Call("read_text_file", new { path = "scoped/unrelated.txt", start_line = 1, max_lines = 10 }, "out"),
+            Call("list_files", new { path = "scoped" }, "list"),
+            Call("search_text", new { path = ".", query = "BODY" }, "search"),
+            Call("read_text_file", new { path = "scoped/requested.txt", start_line = 1, max_lines = 10 }, "in"),
+            Call("write_text_file", new { path = "scoped/requested.txt", content = "wrong" }, "write"));
+        var results = input.OfType<JsonObject>().Where(o => o["type"]?.ToString() == "function_call_output")
+            .ToDictionary(o => o["call_id"]!.ToString(), o => JsonNode.Parse(o["output"]!.ToString())!);
+        Check(results["out"]["status"]!.ToString() == "error" && results["write"]["status"]!.ToString() == "error");
+        Check(results.Values.All(r => !r.ToJsonString().Contains("FORBIDDEN_BODY")));
+        Check(results["list"]["entries"]!.AsArray().Count == 1 && !results["list"].ToJsonString().Contains("unrelated"));
+        Check(results["search"]["hits"]!.AsArray().Count == 1 && !results["search"].ToJsonString().Contains("unrelated"));
+        Check(results["in"]["text"]!.ToString() == "ALLOWED_BODY"); return Answer();
+    });
+    var h = new Harness(fake, files) { Confirm = (_, _) => { approvals++; return Task.FromResult(true); } };
+    await h.RunAsync("Read only requested.txt; exclude unrelated.txt", "gpt-6.1-sol", scope, ct);
+    Check(approvals == 0 && files.Read("scoped/requested.txt") == "ALLOWED_BODY");
+});
+Test("Empty, read-disabled, directory-boundary and immutable request scopes", () =>
+{
+    var empty = new RequestScope(files, [], true, true);
+    Reject(() => empty.EnsureFile(files, "sample.txt")); Reject(() => files.List(".", ct, empty));
+    Reject(() => files.Search(".", "alpha", ct, empty)); Reject(() => empty.EnsureFile(files, "new.txt", true));
+    var writeOnly = new RequestScope(files, ["sample.txt"], false, true);
+    Reject(() => writeOnly.EnsureFile(files, "sample.txt")); Check(writeOnly.AllowsFile(files, "sample.txt", true));
+    var paths = new List<string> { "scoped/sub/" };
+    var folder = new RequestScope(files, paths, true, true); paths.Add(".");
+    Check(folder.AllowsFile(files, "scoped/sub/new.txt", true));
+    Check(!folder.AllowsFile(files, "scoped/sub-sibling/new.txt") && !folder.AllowsFile(files, "sample.txt"));
+    Directory.CreateDirectory(Path.Combine(root, "scoped/sub"));
+    Directory.CreateDirectory(Path.Combine(root, "scoped/sub-sibling"));
+    File.WriteAllText(Path.Combine(root, "scoped/sub/inside.txt"), "INSIDE_BODY");
+    File.WriteAllText(Path.Combine(root, "scoped/sub-sibling/outside.txt"), "OUTSIDE_BODY");
+    var hits = files.Search(".", "BODY", ct, folder).Hits;
+    Check(hits.Count == 1 && hits[0].Text == "INSIDE_BODY");
+    Reject(() => new RequestScope(files, ["../outside/"], true, true));
+});
+AsyncTest("Scope changes do not replay content from an earlier broader turn", async () =>
+{
+    var turn = 0;
+    var fake = new FakeModel((_, input, _) =>
+    {
+        turn++;
+        if (turn == 1) return new(Call("read_text_file", new { path = "scoped/unrelated.txt", start_line = 1, max_lines = 1 }));
+        if (turn == 2) Check(input.Last()!["output"]!.ToString().Contains("FORBIDDEN_BODY"));
+        if (turn == 3) Check(input.Count == 1 && !input.ToJsonString().Contains("FORBIDDEN_BODY"));
+        return Answer();
+    });
+    var h = new Harness(fake, files);
+    await h.RunAsync("Initial broad fixture read", "gpt-6.1-sol", fullScope, ct);
+    await h.RunAsync("Now only requested.txt", "gpt-6.1-sol", new RequestScope(files, ["scoped/requested.txt"], true, false), ct);
+    Check(turn == 3);
+    await RejectAsync(() => h.RunAsync("Wrong project scope", "gpt-6.1-sol", new RequestScope(new FileTools(outside), ["."], true, true), ct));
+    Check(turn == 3, "Mismatched project scope must be rejected before a model request");
+});
+Test("Malformed discovery metadata never skips local signout", () =>
+{
+    foreach (var body in new[] { "{}", "not-json", "[]", "{\"revocation_endpoint\":null}", "{\"revocation_endpoint\":17}",
+        "{\"revocation_endpoint\":\"not-a-uri\"}", "{\"revocation_endpoint\":\"https://untrusted.invalid/revoke\"}" })
+    {
+        var store = new CredentialStore(Path.Combine(temp, "malformed-logout-" + Guid.NewGuid().ToString("N")));
+        var account = new Account("fixture-client", "sub", "test@example.invalid", "fake-access", "fake-refresh", "fake-id",
+            ["chatgpt.tokens.use.direct"], DateTimeOffset.UtcNow.AddHours(1));
+        store.Save(new("urn:uuid:" + Guid.NewGuid(), [account], account.ClientId));
+        using var http = new HttpClient(new FakeHttp(_ => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(body) })));
+        using var auth = new Authentication(http, store, "Local\\Artemis.Test." + Guid.NewGuid());
+        Check(!auth.SignOutAsync(ct).GetAwaiter().GetResult());
+        var saved = store.Load().Accounts[0];
+        Check(saved.ClientId == account.ClientId && saved.Subject == account.Subject && saved.AccessToken == null && saved.RefreshToken == null && saved.IdToken == null && !auth.Active!.CanInvoke);
+    }
+});
+Test("Local signout storage failure is explicit and credentials are disabled in memory", () =>
+{
+    var directory = Path.Combine(temp, "blocked-logout"); var store = new CredentialStore(directory);
+    var account = new Account("fixture-client", "sub", "test@example.invalid", "fake-access", null, "fake-id",
+        ["chatgpt.tokens.use.direct"], DateTimeOffset.UtcNow.AddHours(1));
+    store.Save(new("urn:uuid:" + Guid.NewGuid(), [account], account.ClientId));
+    using var http = new HttpClient(new FakeHttp(_ => throw new Exception("No remote call expected")));
+    using var auth = new Authentication(http, store, "Local\\Artemis.Test." + Guid.NewGuid());
+    Directory.CreateDirectory(Path.Combine(directory, "accounts.dat.tmp"));
+    try { auth.SignOutAsync(ct).GetAwaiter().GetResult(); throw new Exception("Expected persistence failure"); }
+    catch (IOException ex) { Check(ex.Message.Contains("저장하지 못했습니다")); }
+    Check(auth.Active!.AccessToken == null && !auth.Active.CanInvoke);
+    Check(store.Load().Accounts[0].AccessToken == "fake-access", "The failed persistence must not be reported as successful removal");
+});
+AsyncTest("Retry-After HTTP dates prevent early retries and elapsed dates retry immediately", async () =>
+{
+    foreach (var future in new[] { true, false })
+    {
+        var clock = new ManualClock(); var calls = 0;
+        using var http = new HttpClient(new FakeHttp(_ =>
+        {
+            if (++calls > 1) return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(Complete(Answer())) });
+            var response = new HttpResponseMessage(HttpStatusCode.TooManyRequests);
+            response.Headers.RetryAfter = new(clock.GetUtcNow().AddSeconds(future ? 5 : -5)); return Task.FromResult(response);
+        }));
+        var client = new ResponsesClient(http, _ => Task.FromResult("fixture"), clock);
+        var pending = client.RespondAsync("gpt-6.1-sol", [], "", _ => { }, _ => { }, ct);
+        if (future)
+        {
+            Check(calls == 1 && !pending.IsCompleted && clock.Delays.Single() == TimeSpan.FromSeconds(5));
+            clock.Advance(TimeSpan.FromSeconds(4)); Check(calls == 1 && !pending.IsCompleted);
+            clock.Advance(TimeSpan.FromSeconds(1));
+        }
+        await pending.WaitAsync(TimeSpan.FromSeconds(5));
+        Check(calls == 2 && (future || clock.Delays.Count == 0));
+    }
+});
+AsyncTest("Retry-After delta, fallback backoff and waiting cancellation remain supported", async () =>
+{
+    foreach (var delta in new[] { true, false })
+    {
+        var clock = new ManualClock(); var calls = 0;
+        using var http = new HttpClient(new FakeHttp(_ =>
+        {
+            calls++; var response = new HttpResponseMessage(HttpStatusCode.ServiceUnavailable);
+            if (delta) response.Headers.RetryAfter = new(TimeSpan.FromSeconds(3)); return Task.FromResult(response);
+        }));
+        using var source = new CancellationTokenSource();
+        var pending = new ResponsesClient(http, _ => Task.FromResult("fixture"), clock)
+            .RespondAsync("gpt-6.1-sol", [], "", _ => { }, _ => { }, source.Token);
+        Check(clock.Delays.Single() == TimeSpan.FromSeconds(delta ? 3 : 1) && calls == 1);
+        source.Cancel(); await RejectAsync(() => pending);
+        clock.Advance(TimeSpan.FromHours(1)); Check(calls == 1);
+    }
+});
+
 var failed = 0;
 try
 {
@@ -297,4 +434,31 @@ sealed class FakeModel(Func<string, JsonArray, CancellationToken, JsonArray> run
 sealed class FakeHttp(Func<HttpRequestMessage, Task<HttpResponseMessage>> run) : HttpMessageHandler
 {
     protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct) => run(request);
+}
+
+sealed class ManualClock : TimeProvider
+{
+    private DateTimeOffset now = new(2026, 10, 28, 0, 0, 0, TimeSpan.Zero);
+    private readonly List<ManualTimer> timers = [];
+    public List<TimeSpan> Delays { get; } = [];
+    public override DateTimeOffset GetUtcNow() => now;
+    public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
+    {
+        if (period != Timeout.InfiniteTimeSpan) throw new NotSupportedException();
+        var timer = new ManualTimer(callback, state, now + dueTime); timers.Add(timer); Delays.Add(dueTime); return timer;
+    }
+    public void Advance(TimeSpan span)
+    {
+        now += span;
+        foreach (var timer in timers.ToArray()) if (!timer.Disposed && timer.Due <= now) timer.Fire();
+    }
+    private sealed class ManualTimer(TimerCallback callback, object? state, DateTimeOffset due) : ITimer
+    {
+        public DateTimeOffset Due { get; } = due;
+        public bool Disposed { get; private set; }
+        public void Fire() { Disposed = true; callback(state); }
+        public bool Change(TimeSpan dueTime, TimeSpan period) => throw new NotSupportedException();
+        public void Dispose() => Disposed = true;
+        public ValueTask DisposeAsync() { Dispose(); return ValueTask.CompletedTask; }
+    }
 }
